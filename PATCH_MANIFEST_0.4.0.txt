@@ -1,0 +1,22 @@
+Formal Contour Solver differential patch 0.4.0
+Base version: 0.3.1
+
+PATCH_NOTES_0.4.0.md
+README.md
+config/pizza3_geometry.json
+docs/ARCHITECTURE.md
+docs/OUTPUT_SCHEMA.md
+pyproject.toml
+run_pizza3_geometry.bat
+scripts/run_geometry.ps1
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/config.py
+src/formal_disk4/geometry/__init__.py
+src/formal_disk4/geometry/model.py
+src/formal_disk4/geometry/runner.py
+src/formal_disk4/geometry/solver.py
+src/formal_disk4/geometry/validation.py
+src/formal_disk4/pipeline/runner.py
+tests/test_geometry.py
+tests/test_pizza3.py

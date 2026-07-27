@@ -1,0 +1,33 @@
+{
+  "solver": {
+    "enabled": false
+  },
+  "limits": {
+    "max_assignments": null,
+    "max_nodes": null,
+    "max_placements": 100000,
+    "max_profiles": null,
+    "time_limit_seconds": 60
+  },
+  "output": {
+    "directory": "output/enumeration_only",
+    "write_placements": false,
+    "flush_every": 100,
+    "write_candidates": true,
+    "write_families": false,
+    "write_unsupported": false,
+    "write_word_cases": false,
+    "write_errors": true,
+    "max_error_records": 1000
+  },
+  "checkpoint": {
+    "enabled": true,
+    "resume": true,
+    "restart": false,
+    "file": "checkpoint.sqlite3",
+    "interval_seconds": 60
+  },
+  "progress": {
+    "percentage_step": 0.1
+  }
+}

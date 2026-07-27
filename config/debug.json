@@ -1,0 +1,50 @@
+{
+  "limits": {
+    "max_assignments": 2,
+    "max_nodes": 5000,
+    "max_placements": 10,
+    "max_profiles": 10,
+    "time_limit_seconds": 30,
+    "stop_on_first_profile": false
+  },
+  "solver": {
+    "mode": "exact_partial",
+    "max_graph_nodes_per_placement": 500,
+    "max_graph_edges_per_placement": 2000,
+    "max_families_per_placement": 4,
+    "max_expression_nodes": 800,
+    "validation_exponent": 2,
+    "family_expansion": {
+      "policy": "none",
+      "maximum_exponent": 1,
+      "max_specializations_per_family": 16
+    }
+  },
+  "output": {
+    "directory": "output/debug",
+    "write_placements": true,
+    "flush_every": 1,
+    "write_candidates": true,
+    "write_families": true,
+    "write_unsupported": true,
+    "write_word_cases": true,
+    "write_errors": true,
+    "max_family_records": 1000,
+    "max_unsupported_records": 1000,
+    "max_word_case_records": 1000,
+    "max_placement_records": 1000,
+    "max_error_records": 100
+  },
+  "progress": {
+    "enabled": true,
+    "interval_seconds": 2,
+    "percentage_step": 0.1
+  },
+  "checkpoint": {
+    "enabled": true,
+    "resume": true,
+    "restart": false,
+    "file": "checkpoint.sqlite3",
+    "interval_seconds": 60
+  }
+}

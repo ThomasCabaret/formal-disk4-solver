@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+from formal_disk4.config import load_config, load_geometry_config, load_visualization_config
+from formal_disk4.enumeration.assignments import AssignmentEnumerator
+from formal_disk4.enumeration.weak_orders import (
+    count_distinct_orders_all_peripheral_phases,
+    count_weak_orders_all_peripheral_phases,
+    count_weak_orders_fixed_phases,
+    count_weak_orders_for_lengths,
+)
+from formal_disk4.geometry.runner import GeometryRunner
+from formal_disk4.visualization.runner import VisualizationRunner
+from formal_disk4.maps.registry import available_maps, build_map
+from formal_disk4.pipeline.runner import SolverRunner
+
+
+def _apply_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
+    if getattr(args, "map", None) is not None:
+        config["maps"] = [str(args.map)]
+    if getattr(args, "output", None) is not None:
+        config["output"]["directory"] = str(args.output)
+    if getattr(args, "max_seconds", None) is not None:
+        config["limits"]["time_limit_seconds"] = args.max_seconds
+    if getattr(args, "max_nodes", None) is not None:
+        config["limits"]["max_nodes"] = args.max_nodes
+    if getattr(args, "max_placements", None) is not None:
+        config["limits"]["max_placements"] = args.max_placements
+    if getattr(args, "max_profiles", None) is not None:
+        config["limits"]["max_profiles"] = args.max_profiles
+    if getattr(args, "symmetry", None) is not None:
+        config["enumeration"]["symmetry_mode"] = args.symmetry
+    if getattr(args, "no_lengths", False):
+        config["enumeration"]["enable_length_filter"] = False
+    if getattr(args, "no_angles", False):
+        config["enumeration"]["enable_angle_filter"] = False
+    if getattr(args, "no_solver", False):
+        config["solver"]["enabled"] = False
+    if getattr(args, "restart", False):
+        config["checkpoint"]["restart"] = True
+        config["checkpoint"]["resume"] = False
+    if getattr(args, "no_resume", False):
+        config["checkpoint"]["resume"] = False
+
+
+def command_run(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    _apply_overrides(config, args)
+    summary = SolverRunner(config).run()
+    print(json.dumps(summary["statistics"], indent=2, ensure_ascii=False))
+    print(f"Output directory: {Path(config['output']['directory']).resolve()}")
+    return 0
+
+
+
+def _apply_geometry_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
+    if getattr(args, "input", None) is not None:
+        config["input"]["candidates_file"] = str(args.input)
+    if getattr(args, "output", None) is not None:
+        config["output"]["directory"] = str(args.output)
+    if getattr(args, "intermediate_points", None) is not None:
+        config["geometry"]["intermediate_points_per_generic_curve"] = int(
+            args.intermediate_points
+        )
+    if getattr(args, "max_restarts", None) is not None:
+        config["geometry"]["max_restarts"] = int(args.max_restarts)
+    if getattr(args, "max_candidates", None) is not None:
+        config["limits"]["max_candidates"] = int(args.max_candidates)
+    if getattr(args, "max_solutions", None) is not None:
+        config.setdefault("limits", {})["max_solutions"] = int(args.max_solutions)
+    if getattr(args, "seed", None) is not None:
+        config["geometry"]["random_seed"] = int(args.seed)
+    if getattr(args, "restart", False):
+        config["checkpoint"]["restart"] = True
+        config["checkpoint"]["resume"] = False
+    if getattr(args, "no_resume", False):
+        config["checkpoint"]["resume"] = False
+
+
+def command_geometry(args: argparse.Namespace) -> int:
+    config = load_geometry_config(args.config)
+    _apply_geometry_overrides(config, args)
+    summary = GeometryRunner(config).run()
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(f"Geometry output directory: {Path(config['output']['directory']).resolve()}")
+    return 0
+
+
+def _apply_visualization_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
+    if getattr(args, "input", None) is not None:
+        config["input"]["solutions_file"] = str(args.input)
+    if getattr(args, "max_solutions", None) is not None:
+        config.setdefault("limits", {})["max_solutions"] = int(args.max_solutions)
+    if getattr(args, "start_index", None) is not None:
+        config["viewer"]["start_index"] = max(0, int(args.start_index) - 1)
+
+
+def command_visualize(args: argparse.Namespace) -> int:
+    config = load_visualization_config(args.config)
+    _apply_visualization_overrides(config, args)
+    summary = VisualizationRunner(config).run(validate_only=bool(args.validate_only))
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return 0
+
+
+def command_counts(args: argparse.Namespace) -> int:
+    planar_map = build_map(args.map)
+    enumerator = AssignmentEnumerator(
+        planar_map,
+        allow_reflections=not args.direct_only,
+        symmetry_mode=args.symmetry,
+    )
+    assignments = tuple(enumerator.enumerate())
+    if assignments:
+        lengths = tuple(len(sequence) for sequence in assignments[0].sequences)
+        reference_index = assignments[0].piece_names.index(planar_map.reference_piece)
+        weak_per_assignment = count_weak_orders_for_lengths(lengths, reference_index)
+    else:
+        lengths = ()
+        weak_per_assignment = 0
+    result = {
+        "map": planar_map.name,
+        "contour_occurrence_lengths": list(lengths),
+        "raw_copy_assignments": enumerator.raw_assignment_count(),
+        "canonical_copy_assignments": len(assignments),
+        "raw_weak_orders_per_canonical_assignment": weak_per_assignment,
+        "estimated_raw_weak_orders_over_canonical_assignments": (
+            len(assignments) * weak_per_assignment
+        ),
+    }
+    if planar_map.name == "k4-central":
+        result.update(
+            {
+                "legacy_distinct_cyclic_orders_all_peripheral_offsets": count_distinct_orders_all_peripheral_phases(),
+                "legacy_weak_orders_fixed_offsets": count_weak_orders_fixed_phases(),
+                "legacy_weak_orders_all_peripheral_offsets": count_weak_orders_all_peripheral_phases(),
+            }
+        )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def command_map_info(args: argparse.Namespace) -> int:
+    planar_map = build_map(args.map)
+    print(json.dumps(planar_map.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def command_assignments(args: argparse.Namespace) -> int:
+    planar_map = build_map(args.map)
+    enumerator = AssignmentEnumerator(
+        planar_map,
+        allow_reflections=not args.direct_only,
+        symmetry_mode=args.symmetry,
+    )
+    assignments = list(enumerator.enumerate())
+    payload = {
+        "raw_count": enumerator.raw_assignment_count(),
+        "emitted_count": len(assignments),
+        "assignments": [
+            assignment.to_dict(enumerator.occurrence_names)
+            for assignment in assignments[: args.limit]
+        ],
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
+def command_self_test(_args: argparse.Namespace) -> int:
+    root = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", str(root / "tests"), "-v"],
+        check=False,
+    )
+    return completed.returncode
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="formal-disk4",
+        description="Formal contour solver prototype for congruent pieces tiling a disk.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Run the streaming pipeline")
+    run_parser.add_argument("--config", type=Path)
+    run_parser.add_argument(
+        "--map",
+        choices=available_maps(),
+        help="Override config.maps with one registered planar map.",
+    )
+    run_parser.add_argument("--output", type=Path)
+    run_parser.add_argument("--max-seconds", type=float)
+    run_parser.add_argument("--max-nodes", type=int)
+    run_parser.add_argument("--max-placements", type=int)
+    run_parser.add_argument("--max-profiles", type=int)
+    run_parser.add_argument("--symmetry", choices=("off", "assignment", "incremental"))
+    run_parser.add_argument("--no-lengths", action="store_true")
+    run_parser.add_argument("--no-angles", action="store_true")
+    run_parser.add_argument("--no-solver", action="store_true")
+    run_parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Discard the checkpoint and survivor database for this output directory.",
+    )
+    run_parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore an existing checkpoint without deleting it.",
+    )
+    run_parser.set_defaults(function=command_run)
+
+
+    geometry_parser = subparsers.add_parser(
+        "geometry",
+        help="Numerically realize decorated formal candidate contours",
+    )
+    geometry_parser.add_argument("--config", type=Path)
+    geometry_parser.add_argument("--input", type=Path)
+    geometry_parser.add_argument("--output", type=Path)
+    geometry_parser.add_argument("--intermediate-points", type=int)
+    geometry_parser.add_argument("--max-restarts", type=int)
+    geometry_parser.add_argument("--max-candidates", type=int)
+    geometry_parser.add_argument("--max-solutions", type=int)
+    geometry_parser.add_argument("--seed", type=int)
+    geometry_parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Discard geometry solutions and the geometry line checkpoint.",
+    )
+    geometry_parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore the existing geometry checkpoint without deleting it.",
+    )
+    geometry_parser.set_defaults(function=command_geometry)
+
+    visualization_parser = subparsers.add_parser(
+        "visualize",
+        help="Reconstruct mapped copies and display complete assemblies",
+    )
+    visualization_parser.add_argument("--config", type=Path)
+    visualization_parser.add_argument("--input", type=Path)
+    visualization_parser.add_argument("--max-solutions", type=int)
+    visualization_parser.add_argument(
+        "--start-index",
+        type=int,
+        help="One-based geometric solution index initially displayed.",
+    )
+    visualization_parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Reconstruct and validate assemblies without opening a window.",
+    )
+    visualization_parser.set_defaults(function=command_visualize)
+
+    counts_parser = subparsers.add_parser("counts", help="Print exact combinatorial counts")
+    counts_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    counts_parser.add_argument("--direct-only", action="store_true")
+    counts_parser.add_argument(
+        "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
+    )
+    counts_parser.set_defaults(function=command_counts)
+
+    map_parser = subparsers.add_parser("map-info", help="Inspect a registered planar map")
+    map_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    map_parser.set_defaults(function=command_map_info)
+
+    assignment_parser = subparsers.add_parser(
+        "assignments", help="Inspect phase/orientation assignment representatives"
+    )
+    assignment_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    assignment_parser.add_argument("--direct-only", action="store_true")
+    assignment_parser.add_argument(
+        "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
+    )
+    assignment_parser.add_argument("--limit", type=int, default=10)
+    assignment_parser.set_defaults(function=command_assignments)
+
+    test_parser = subparsers.add_parser("self-test", help="Run the bundled unit tests")
+    test_parser.set_defaults(function=command_self_test)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    return args.function(args)

@@ -1,0 +1,30 @@
+Formal Disk-4 Solver differential patch 0.2.1
+Base version: 0.2.0
+
+Extract directly into the project root and allow overwriting.
+
+Modified files:
+  README.md
+  pyproject.toml
+  config\benchmark.json
+  config\debug.json
+  config\enumeration_only.json
+  config\full_k4.json
+  docs\ARCHITECTURE.md
+  docs\BENCHMARK_NOTES.md
+  docs\OUTPUT_SCHEMA.md
+  src\formal_disk4\__init__.py
+  src\formal_disk4\cli.py
+  src\formal_disk4\config.py
+  src\formal_disk4\enumeration\weak_orders.py
+  src\formal_disk4\pipeline\output.py
+  src\formal_disk4\pipeline\runner.py
+  src\formal_disk4\pipeline\stats.py
+  src\formal_disk4\words\families.py
+  tests\test_integration.py
+
+Added files:
+  PATCH_NOTES_0.2.1.md
+  PATCH_MANIFEST_0.2.1.txt
+  src\formal_disk4\pipeline\checkpoint.py
+  tests\test_checkpoint.py

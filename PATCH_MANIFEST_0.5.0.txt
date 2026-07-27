@@ -1,0 +1,25 @@
+Formal Disk-4 Solver differential patch 0.5.0
+Base version: 0.4.0
+
+Modified files:
+- README.md
+- docs/ARCHITECTURE.md
+- docs/OUTPUT_SCHEMA.md
+- pyproject.toml
+- src/formal_disk4/__init__.py
+- src/formal_disk4/cli.py
+- src/formal_disk4/config.py
+
+Added files:
+- PATCH_NOTES_0.5.0.md
+- config/pizza3_visualizer.json
+- run_pizza3_pipeline.bat
+- run_pizza3_visualizer.bat
+- scripts/run_pizza3_pipeline.ps1
+- scripts/run_visualizer.ps1
+- src/formal_disk4/visualization/__init__.py
+- src/formal_disk4/visualization/assembly.py
+- src/formal_disk4/visualization/runner.py
+- src/formal_disk4/visualization/validate.py
+- src/formal_disk4/visualization/viewer.py
+- tests/test_visualization.py

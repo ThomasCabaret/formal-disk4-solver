@@ -1,0 +1,41 @@
+Formal Contour Solver differential patch 0.3.0
+Base version: 0.2.1
+
+Extract all files into the project root and allow overwriting.
+
+New files:
+  PATCH_NOTES_0.3.0.md
+  PATCH_MANIFEST_0.3.0.txt
+  config/pizza3.json
+  run_pizza3.bat
+  src/formal_disk4/maps/k3_pizza.py
+  tests/test_pizza3.py
+
+Modified files:
+  README.md
+  docs/ARCHITECTURE.md
+  docs/BENCHMARK_NOTES.md
+  docs/NEXT_STEPS.md
+  docs/OUTPUT_SCHEMA.md
+  pyproject.toml
+  setup.bat
+  run_benchmark.bat
+  run_debug.bat
+  run_enumeration_only.bat
+  run_full_k4.bat
+  run_tests.bat
+  scripts/run.ps1
+  scripts/setup.ps1
+  scripts/test.ps1
+  src/formal_disk4/__init__.py
+  src/formal_disk4/cli.py
+  src/formal_disk4/config.py
+  src/formal_disk4/enumeration/assignments.py
+  src/formal_disk4/maps/__init__.py
+  src/formal_disk4/maps/registry.py
+  src/formal_disk4/pipeline/runner.py
+  src/formal_disk4/profiles/build.py
+  src/formal_disk4/profiles/decorations.py
+  src/formal_disk4/profiles/filters.py
+  src/formal_disk4/profiles/model.py
+  src/formal_disk4/words/compile.py

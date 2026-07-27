@@ -1,0 +1,33 @@
+Formal Disk-4 Solver differential patch 0.2.0
+Base version: 0.1.1
+Apply by extracting this archive into the project root and overwriting files.
+
+Changed or added files: 27
+
+PATCH_NOTES_0.2.0.md
+README.md
+config/benchmark.json
+config/debug.json
+config/full_k4.json
+docs/ARCHITECTURE.md
+docs/BENCHMARK_NOTES.md
+docs/NEXT_STEPS.md
+docs/OUTPUT_SCHEMA.md
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/config.py
+src/formal_disk4/constraints/angle_lp.py
+src/formal_disk4/enumeration/assignments.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/pipeline/stats.py
+src/formal_disk4/profiles/build.py
+src/formal_disk4/profiles/decorations.py
+src/formal_disk4/profiles/filters.py
+src/formal_disk4/profiles/model.py
+src/formal_disk4/words/exact_partial.py
+src/formal_disk4/words/families.py
+tests/test_constraints.py
+tests/test_decorations.py
+tests/test_exact_partial.py
+tests/test_integration.py
