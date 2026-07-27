@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 from itertools import pairwise
 from typing import Dict, Iterable, Iterator, Mapping, Sequence, Tuple
 
@@ -23,6 +24,20 @@ class VertexSpec:
     kind: str  # "interior" or "outer"
     incident_pieces: Tuple[str, ...]
     angle_sum_pi: float
+
+    @property
+    def required_solid_angle_sum_pi(self) -> Fraction:
+        """Physical sum of polygonal interior angles at this map vertex.
+
+        The value is a topological property of the embedding in a disk: an
+        interior junction fills a full neighbourhood and an outer junction
+        fills a half-neighbourhood bounded by the disk tangent.
+        """
+        if self.kind == "interior":
+            return Fraction(2)
+        if self.kind == "outer":
+            return Fraction(1)
+        raise ValueError(f"Unknown map-vertex kind: {self.kind}")
 
 
 @dataclass(frozen=True)
@@ -158,6 +173,13 @@ class PlanarMap:
             )
             if actual != tuple(sorted(vertex.incident_pieces)):
                 raise ValueError(f"Incorrect incidence list for vertex {vertex.name}")
+            required_sum = vertex.required_solid_angle_sum_pi
+            declared_sum = Fraction(str(vertex.angle_sum_pi))
+            if declared_sum != required_sum:
+                raise ValueError(
+                    f"Vertex {vertex.name} has angle_sum_pi={declared_sum}, "
+                    f"but kind={vertex.kind!r} requires {required_sum}"
+                )
 
         for automorphism in self.automorphisms:
             piece_map = dict(automorphism.piece_map)

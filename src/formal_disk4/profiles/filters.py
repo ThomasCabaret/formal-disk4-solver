@@ -61,6 +61,20 @@ class SignedAngleClassFilter:
         return True, "pass"
 
 
+class JointAngularFeasibilityFilter:
+    name = "joint_point_curve_turn_feasibility"
+
+    def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
+        analysis = profile.joint_angular_feasibility
+        if not analysis.feasible:
+            return False, analysis.status
+        if analysis.strict_margin <= 0:
+            return False, "exact joint angular system has no strict margin"
+        if not any(item.kind == "prototype_total_turn" for item in analysis.equations):
+            return False, "missing prototype total-turn equation"
+        return True, f"pass:exact_margin={analysis.strict_margin}"
+
+
 class MappingCoverageFilter:
     name = "mapping_coverage"
 
@@ -151,6 +165,7 @@ class ProfileFilterPipeline:
         self.filters.extend([
             PositiveTerminalLengthFilter(),
             SignedAngleClassFilter(),
+            JointAngularFeasibilityFilter(),
             MappingCoverageFilter(),
             CurveTemplateCompatibilityFilter(),
             OuterCircleDecorationFilter(),

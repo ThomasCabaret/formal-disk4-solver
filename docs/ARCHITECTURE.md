@@ -1,4 +1,4 @@
-# Architecture 0.3
+# Architecture 0.6
 
 ## 1. Map-driven core
 
@@ -44,7 +44,7 @@ x_i >= epsilon
 
 Every resolved internal interface contributes one integral equality row.
 
-Each prototype point also carries a signed turn `t` in units of pi. A copy with orientation sign `s` sees interior angle `alpha = 1-s*t`. Vertex equations use the incidence and prescribed angle sum supplied by the map.
+Each prototype point also carries a signed point turn `tau` in units of pi. A copy with orientation sign `s` sees interior angle `alpha = 1-s*tau`. Vertex equations use the incidence and prescribed angle sum supplied by the map. These early placement oracles currently use SciPy HiGHS and serve only to prune partial weak orders.
 
 ## 5. Word compilation
 
@@ -76,11 +76,45 @@ The default expansion policy is `none`:
 
 ## 8. Terminal decorations
 
-Mappings induce signed endpoint classes and curve-template transformations. A signed union-find resolves equal, complementary and forced-zero turn classes. A second angle LP checks the terminal subdivisions introduced by the word solver.
+After a finite family is specialized, the terminal contour alternates decorated points and decorated curve occurrences.
 
-Curve variables are grouped under identity, reverse, mirror and mirror+reverse. Exterior words mark complete curve components as arcs of the common disk circle.
+### Point decorations
 
-The exported circle constraints are generic over the number of exterior arcs:
+Every terminal point has an interior-angle variable `alpha_Bi` in units of pi and a signed point turn
+
+```text
+tau_Bi = 1 - alpha_Bi
+```
+
+with the strict geometric domain
+
+```text
+-1 < tau_Bi < 1
+```
+
+or equivalently `0 < alpha_Bi < 2`. Mappings and physical map vertices induce exact rational equalities and complement relations between these point variables.
+
+### Curve decorations
+
+Mappings group terminal variables into curve-template components. Every component receives:
+
+- a positive normalized length variable `L_Ci`;
+- an unbounded signed total tangent-turn variable `K_Ci`, in units of pi;
+- a geometric type: generic curve, forced straight segment or arc of a named common circle.
+
+The sign with which a contour occurrence contributes `K_Ci` is determined by literal traversal and the mapping-induced template transform. Reversal or reflection reverses signed curve turn. A straight component, or a component identified with itself through a turn-sign-reversing transform, satisfies `K_Ci = 0`.
+
+These internal curve transforms do **not** place copies. Relative copy placement remains determined only by the complete oriented contact mappings and their direct/reflected parity.
+
+### Exterior circle
+
+Exterior words mark complete curve components as arcs of `disk_boundary`. With disk circumference normalized to one, a positively traversed exterior occurrence satisfies
+
+```text
+K_Ci = 2 * L_Ci
+```
+
+in pi units. The generic outer constraints are
 
 ```text
 sum(O_i) = C_disk
@@ -88,55 +122,68 @@ sum(theta_i) = 2
 theta_i * C_disk = 2 * O_i
 ```
 
-## 9. Local filters
+where `C_disk=1` in normalized expressions.
 
-Current exact local checks include nonempty contour, positive terminal component lengths, signed-angle bounds, complete map-dependent mapping coverage, curve-template compatibility and complete outer-circle decorations.
+## 9. Exact joint angular feasibility
+
+Before a profile is persisted, one exact rational system simultaneously contains:
+
+- all point-angle equations;
+- all terminal component-length equations;
+- all mapping-induced curve-turn sign equations;
+- zero-turn equations for straight or self-turn-reversing components;
+- exterior-circle length/turn equations;
+- the total-turn equation of the prototype contour:
+
+```text
+sum(signed curve occurrence turns) + sum(tau_Bi) = 2
+```
+
+The curve-turn variables are unbounded: a generic curve may spiral through any finite signed total turn. Only point turns have the strict `(-1,1)` bound.
+
+Exact Gaussian elimination first expresses all variables as affine rational functions of a minimal set of free parameters. A small two-phase simplex using `fractions.Fraction` then maximizes one common strict margin for:
+
+- `0 < alpha_Bi < 2`;
+- `L_Ci > 0`.
+
+If the exact optimum is zero or the equality system is inconsistent, the profile is rejected before SQLite, `candidates.jsonl` and numerical geometry. The exact affine solution and a rational strict witness are exported with every survivor.
+
+## 10. Local filters
+
+Current local checks include:
+
+- nonempty terminal contour;
+- positive terminal component lengths;
+- signed point-angle bounds;
+- exact joint point/curve-turn feasibility and total winding;
+- complete map-dependent mapping coverage;
+- curve-template compatibility;
+- complete outer-circle decorations.
 
 The old cyclic `A A^-1` rejection is disabled by default because equal variables denote congruent templates, not identical geometric occurrences. The three-sector contour `A^-1 B A` is a direct counterexample.
 
-## 10. Streaming and checkpointing
+## 11. Streaming and checkpointing
 
 Every placement is compiled, solved and filtered immediately. Only survivors are persisted by default. SQLite stores one compact DFS cursor and cumulative statistics, not the explored tree or rejected systems.
 
 The progress percentage credits the full raw descendant mass whenever a subtree is completed or rejected. It estimates combinatorial coverage, not remaining wall-clock time.
 
+## 12. Numerical single-piece contour stage
 
-## Exact terminal decoration layer
+The `geometry` command is downstream and independent of map assembly. It reads complete formal survivor records and solves only one piece boundary.
 
-After a finite family is specialized, the decoration layer builds two exact rational linear systems:
+A generic curve component is a shared local polyline template with a configurable number of intermediate points. The default is one intermediate point. Variable relations and literal inversion are applied as identity, reverse, mirror or mirror+reverse transformations of that local template.
 
-1. terminal interior-angle equations, combining mapping-induced equalities/full-turn complements with physical map-vertex sums;
-2. terminal curve-length equations, obtained by substituting terminal component counts into the placement length rows and normalizing the disk circumference to one.
+A circular component is represented analytically by local start point, start tangent, signed sweep, radius and center. Its sampled points are temporary and used only by the numerical simplicity validator.
 
-Exact row reduction produces solved rational values or affine expressions in named free parameters. A separate floating LP is used only to certify the existence of a strictly positive/interior witness. The two roles are deliberately separated in the output schema.
+Starting from a fixed origin and initial tangent removes global Euclidean motion. Each curve occurrence determines the next point and incoming tangent. The resolved interior angle determines the outgoing tangent. The optimizer chooses formal free parameters and generic-template shapes so the final point and tangent close. It now also enforces every exact formal component turn `K_Ci*pi`; generic-curve turn is no longer left unconstrained numerically.
 
-## 11. Numerical single-piece contour stage
+The emitted geometry remains linked to its formal input through `formal_profile_id`.
 
-The `geometry` command is intentionally downstream and independent of map
-assembly. It reads complete formal survivor records and solves only one piece
-boundary.
-
-A generic curve component is a shared local polyline template with a configurable
-number of intermediate points. The default is one intermediate point. Variable
-relations and literal inversion are applied as identity, reverse, mirror or
-mirror+reverse transformations of that local template.
-
-A circular component is represented analytically by local start point, start
-tangent, signed sweep, radius and center. Its sampled points are temporary and
-used only by the numerical simplicity validator.
-
-Starting from a fixed origin and initial tangent removes global Euclidean motion.
-Each curve occurrence determines the next point and incoming tangent. The resolved
-interior angle determines the outgoing tangent. The optimizer chooses formal free
-parameters and generic-template shapes so the final point and tangent close.
-
-The emitted geometry remains linked to its formal input through
-`formal_profile_id`. Assembly and rendering are deliberately deferred.
-
-## Visualization and assembly layer
+## 13. Visualization and assembly layer
 
 `formal_disk4.visualization` is downstream of the numerical single-piece geometry stage. It never changes the realized prototype contour.
 
 `assembly.py` treats every copy placement as an orthogonal matrix plus translation. The reference piece receives the identity transform. Each internal contact mapping gives a relation between directed terminal-segment samples on two copies and a determinant sign. The unknown copy transform is derived deterministically, propagated over the contact graph and checked on every graph cycle.
 
-`viewer.py` is deliberately thin. It indexes JSONL byte offsets, assembles the selected record on demand, and converts transformed piece polygons to Tk canvas coordinates. GUI imports are lazy so the solver and tests remain usable in headless environments.
+`viewer.py` indexes JSONL byte offsets, assembles the selected record on demand, and converts transformed piece polygons to Tk canvas coordinates. GUI imports are lazy so the solver and tests remain usable in headless environments.

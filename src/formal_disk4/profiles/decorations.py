@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
 from scipy.optimize import linprog
 
+from formal_disk4.constraints.rational_lp import maximize_free_variables
 from formal_disk4.enumeration.weak_orders import Placement
 from formal_disk4.maps.base import Occurrence, PlanarMap
 from formal_disk4.words.algebra import Literal, Word, substitute_word
@@ -17,7 +18,6 @@ from .exact_linear import (
     ExactLinearInfeasible,
     ExactLinearSolution,
     LinearExpression,
-    as_fraction,
     solve_exact_linear_system,
 )
 
@@ -111,6 +111,31 @@ class AngleEquationRecord:
 
 
 @dataclass(frozen=True)
+class AngularEquationRecord:
+    kind: str
+    terms: Tuple[Tuple[str, Fraction], ...]
+    rhs_pi: Fraction
+    sources: Tuple[str, ...]
+    relation: str
+
+
+@dataclass(frozen=True)
+class JointAngularFeasibility:
+    feasible: bool
+    status: str
+    strict_margin: Fraction
+    point_angle_variables: Tuple[str, ...]
+    curve_turn_variables: Tuple[str, ...]
+    length_variables: Tuple[str, ...]
+    equations: Tuple[AngularEquationRecord, ...]
+    exact_solution: ExactLinearSolution
+    witness: Tuple[Tuple[str, Fraction], ...]
+
+    def witness_map(self) -> Dict[str, Fraction]:
+        return dict(self.witness)
+
+
+@dataclass(frozen=True)
 class PointClassRecord:
     class_id: str
     representative_boundary: int
@@ -118,6 +143,7 @@ class PointClassRecord:
     forced_zero: bool
     turn_pi: float | None
     representative_angle_expression: LinearExpression
+    representative_turn_expression: LinearExpression
 
 
 @dataclass(frozen=True)
@@ -132,6 +158,7 @@ class PointRecord:
     prototype_turn_pi: float | None
     prototype_angle_pi: float | None
     prototype_angle_expression: LinearExpression
+    prototype_turn_expression: LinearExpression
     occurrence_angles_pi: Tuple[Tuple[str, float], ...]
     occurrence_angle_expressions: Tuple[Tuple[str, LinearExpression], ...]
     roles: Tuple[str, ...]
@@ -161,6 +188,9 @@ class CurveComponentRecord:
     length_parameter: str
     search_witness_normalized_length: float | None
     disk_normalized_length: LinearExpression
+    turn_parameter: str
+    curve_turn_pi: LinearExpression
+    curve_turn_pi_witness: Fraction
     disk_normalized_turn_pi: LinearExpression | None
 
 
@@ -182,6 +212,7 @@ class DecorationBundle:
     point_classes: Tuple[PointClassRecord, ...]
     angle_equations: Tuple[AngleEquationRecord, ...]
     exact_angle_solution: ExactLinearSolution
+    joint_angular_feasibility: JointAngularFeasibility
     curve_components: Tuple[CurveComponentRecord, ...]
     exact_length_solution: ExactLinearSolution
     template_relations: Tuple[TemplateRelationRecord, ...]
@@ -285,46 +316,74 @@ def _build_angle_decorations(
         )
 
     for mapping in mappings:
-        mirror = mapping.relative_parity == -1
-        for pair_index, (left_ref, right_ref) in enumerate(mapping.pairs):
-            left_literal = terminal_contour[left_ref.segment_index]
-            right_literal = terminal_contour[right_ref.segment_index]
-            reverse = _effective_orientation(left_literal, left_ref) != _effective_orientation(
-                right_literal, right_ref
+        # A contact mapping constrains only points strictly inside the mapped
+        # interval.  At either endpoint, the mapping contains only the tangent
+        # of the shared interface and says nothing about the other incident
+        # contour side, so it cannot determine the complete corner angle.
+        #
+        # This distinction is essential at map vertices.  For example, in the
+        # three-sector disk, the two outer angles of one prototype need only be
+        # complementary; the radial-interface mappings do not make them equal.
+        for internal_index in range(1, len(mapping.pairs)):
+            previous_left, previous_right = mapping.pairs[internal_index - 1]
+            next_left, next_right = mapping.pairs[internal_index]
+
+            _left_start, left_boundary = _directed_boundaries(
+                previous_left, segment_count
             )
-            transform = TemplateTransform(reverse=reverse, mirror=mirror)
-            left_start, left_end = _directed_boundaries(left_ref, segment_count)
-            right_start, right_end = _directed_boundaries(right_ref, segment_count)
-            for endpoint, left_boundary, right_boundary in (
-                ("start", left_start, right_start),
-                ("end", left_end, right_end),
-            ):
-                union.union(left_boundary, right_boundary, transform.turn_sign)
-                relation_terms: Dict[int, int] = defaultdict(int)
-                relation_terms[left_boundary] += 1
-                relation_terms[right_boundary] += -1 if transform.turn_sign == 1 else 1
-                if transform.turn_sign == 1:
-                    add_equation(
-                        "mapping_angle_equality",
-                        relation_terms,
-                        Fraction(0),
-                        f"{mapping.interface_name}:pair{pair_index}:{endpoint}",
-                        "equal_interior_angles",
-                    )
-                else:
-                    add_equation(
-                        "mapping_angle_full_turn_complement",
-                        relation_terms,
-                        Fraction(2),
-                        f"{mapping.interface_name}:pair{pair_index}:{endpoint}",
-                        "alpha_left + alpha_right = 2*pi",
-                    )
+            next_left_boundary, _left_end = _directed_boundaries(
+                next_left, segment_count
+            )
+            _right_start, right_boundary = _directed_boundaries(
+                previous_right, segment_count
+            )
+            next_right_boundary, _right_end = _directed_boundaries(
+                next_right, segment_count
+            )
+            if left_boundary != next_left_boundary:
+                raise DecorationInfeasible(
+                    "angle_classes",
+                    f"non-contiguous left mapping at {mapping.interface_name}:"
+                    f"boundary{internal_index}",
+                )
+            if right_boundary != next_right_boundary:
+                raise DecorationInfeasible(
+                    "angle_classes",
+                    f"non-contiguous right mapping at {mapping.interface_name}:"
+                    f"boundary{internal_index}",
+                )
+
+            left_orientation = 1 if previous_left.forward else -1
+            right_orientation = 1 if previous_right.forward else -1
+            relation_sign = (
+                mapping.relative_parity * left_orientation * right_orientation
+            )
+            union.union(left_boundary, right_boundary, relation_sign)
+            relation_terms: Dict[int, int] = defaultdict(int)
+            relation_terms[left_boundary] += 1
+            relation_terms[right_boundary] += -1 if relation_sign == 1 else 1
+            source = f"{mapping.interface_name}:internal-boundary{internal_index}"
+            if relation_sign == 1:
+                add_equation(
+                    "mapping_internal_turn_equality",
+                    relation_terms,
+                    Fraction(0),
+                    source,
+                    "equal_signed_turns_at_internal_mapped_point",
+                )
+            else:
+                add_equation(
+                    "mapping_internal_turn_opposition",
+                    relation_terms,
+                    Fraction(2),
+                    source,
+                    "opposite_signed_turns_at_internal_mapped_point",
+                )
     union.normalize()
 
     occurrence_index = {
         occurrence: index for index, occurrence in enumerate(planar_map.occurrences())
     }
-    piece_index = {name: index for index, name in enumerate(placement.assignment.piece_names)}
     block_boundary = {
         int(source[1]): boundary_index
         for boundary_index, source in enumerate(boundary_sources)
@@ -333,22 +392,19 @@ def _build_angle_decorations(
 
     for vertex in planar_map.vertices:
         terms: Dict[int, int] = defaultdict(int)
-        negative_orientation_count = 0
         for piece in vertex.incident_pieces:
             occurrence_id = occurrence_index[Occurrence(piece, vertex.name)]
             block_index = placement.positions[occurrence_id]
             boundary_index = block_boundary[block_index]
-            orientation = placement.assignment.orientation_signs[piece_index[piece]]
-            if orientation == 1:
-                terms[boundary_index] += 1
-            else:
-                terms[boundary_index] -= 1
-                negative_orientation_count += 1
-        rhs = as_fraction(vertex.angle_sum_pi) - Fraction(2 * negative_orientation_count)
+            # These are positive polygonal interior angles.  Reflection of a
+            # congruent copy preserves them; no orientation sign belongs in
+            # the physical vertex-sum equation.
+            terms[boundary_index] += 1
+        rhs = vertex.required_solid_angle_sum_pi
         nonzero_terms = {index: coefficient for index, coefficient in terms.items() if coefficient}
-        if vertex.kind == "outer" and all(coefficient == 1 for coefficient in nonzero_terms.values()) and rhs == 1:
+        if vertex.kind == "outer":
             relation = "incident_piece_angles_sum_to_pi"
-        elif vertex.kind == "interior" and rhs == 2:
+        elif vertex.kind == "interior":
             relation = "incident_piece_angles_sum_to_full_turn"
         else:
             relation = "physical_vertex_angle_sum"
@@ -421,16 +477,10 @@ def _build_angle_decorations(
         occurrence_angles = []
         occurrence_expressions = []
         for occurrence_name in source[2]:
-            piece = occurrence_name.split(":", 1)[0]
-            orientation = placement.assignment.orientation_signs[piece_index[piece]]
-            if orientation == 1:
-                occurrence_value = prototype_angle
-                occurrence_expression = prototype_expression
-            else:
-                occurrence_value = 2.0 - prototype_angle
-                occurrence_expression = LinearExpression.value(2) - prototype_expression
-            occurrence_angles.append((occurrence_name, occurrence_value))
-            occurrence_expressions.append((occurrence_name, occurrence_expression.normalized()))
+            # Isometries preserve the positive solid interior angle, including
+            # reflected isometries.
+            occurrence_angles.append((occurrence_name, prototype_angle))
+            occurrence_expressions.append((occurrence_name, prototype_expression))
         points.append(
             PointRecord(
                 boundary_index=boundary_index,
@@ -443,6 +493,7 @@ def _build_angle_decorations(
                 prototype_turn_pi=prototype_turn,
                 prototype_angle_pi=prototype_angle,
                 prototype_angle_expression=prototype_expression,
+                prototype_turn_expression=(LinearExpression.value(1) - prototype_expression).normalized(),
                 occurrence_angles_pi=tuple(occurrence_angles),
                 occurrence_angle_expressions=tuple(occurrence_expressions),
                 roles=source[3],
@@ -457,6 +508,9 @@ def _build_angle_decorations(
             forced_zero=root in union.zero_roots,
             turn_pi=1.0 - alpha_values[root],
             representative_angle_expression=exact_map[angle_names[root]],
+            representative_turn_expression=(
+                LinearExpression.value(1) - exact_map[angle_names[root]]
+            ).normalized(),
         )
         for root in roots
     )
@@ -620,6 +674,272 @@ def _terminal_lengths(
     return tuple(float(item) for item in result.x[:count]), margin, exact_solution
 
 
+
+def _solution_equalities(
+    solution: ExactLinearSolution,
+) -> Tuple[Tuple[Dict[str, Fraction], Fraction], ...]:
+    """Reconstruct an equality basis from an exact affine solution."""
+
+    equations: list[Tuple[Dict[str, Fraction], Fraction]] = []
+    for name, expression in solution.expressions:
+        normalized = expression.normalized()
+        if (
+            normalized.constant == 0
+            and normalized.terms == ((name, Fraction(1)),)
+        ):
+            continue
+        coefficients: Dict[str, Fraction] = defaultdict(Fraction)
+        coefficients[name] += 1
+        for parameter, coefficient in normalized.terms:
+            coefficients[parameter] -= coefficient
+        equations.append(
+            (
+                {key: value for key, value in coefficients.items() if value},
+                normalized.constant,
+            )
+        )
+    return tuple(equations)
+
+
+def _build_joint_angular_feasibility(
+    terminal_contour: Word,
+    components: Sequence[
+        Tuple[
+            str,
+            Tuple[str, ...],
+            Dict[str, TemplateTransform],
+            Tuple[TemplateTransform, ...],
+            str,
+        ]
+    ],
+    component_by_variable: Mapping[str, int],
+    exact_angle_solution: ExactLinearSolution,
+    exact_length_solution: ExactLinearSolution,
+    expanded_outer: Sequence[Tuple[str, str, Word]],
+    piece_orientation_signs: Mapping[str, int],
+) -> JointAngularFeasibility:
+    """Solve all inexpensive point/curve turning constraints simultaneously.
+
+    Point variables are prototype interior angles ``alpha_Bi`` in units of pi,
+    with strict bounds 0 < alpha < 2.  Their signed corner turn is
+    ``tau_Bi = 1 - alpha_Bi`` and therefore lies in (-1, 1).
+
+    Every curve-template component has an unbounded signed total turn ``K_Ci``.
+    Reversing a curve or reflecting it changes the sign.  Straight templates
+    and self-identifications that reverse signed turn force K_Ci = 0.  Under
+    the disk-circumference normalization, an occurrence on the positively
+    oriented outer circle satisfies signed_turn = 2 * length.
+    """
+
+    alpha_names = tuple(exact_angle_solution.variable_order)
+    kappa_names = tuple(f"K_C{index}" for index in range(len(components)))
+    length_names = tuple(exact_length_solution.variable_order)
+    variable_names = alpha_names + kappa_names + length_names
+
+    equations: list[Tuple[Dict[str, Fraction], Fraction]] = []
+    records: list[AngularEquationRecord] = []
+    seen: set[Tuple[Tuple[Tuple[str, Fraction], ...], Fraction]] = set()
+
+    def add_equation(
+        kind: str,
+        coefficients: Mapping[str, int | Fraction],
+        rhs: int | Fraction,
+        source: str,
+        relation: str,
+    ) -> None:
+        compact = tuple(
+            sorted(
+                (name, Fraction(value))
+                for name, value in coefficients.items()
+                if Fraction(value)
+            )
+        )
+        rhs_fraction = Fraction(rhs)
+        key = (compact, rhs_fraction)
+        if not compact:
+            if rhs_fraction:
+                raise DecorationInfeasible(
+                    "joint_angular_feasibility",
+                    f"inconsistent angular equation from {source}",
+                )
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        mapping = dict(compact)
+        equations.append((mapping, rhs_fraction))
+        records.append(
+            AngularEquationRecord(
+                kind=kind,
+                terms=compact,
+                rhs_pi=rhs_fraction,
+                sources=(source,),
+                relation=relation,
+            )
+        )
+
+    for index, (coefficients, rhs) in enumerate(
+        _solution_equalities(exact_angle_solution)
+    ):
+        add_equation(
+            "point_angle_class_equation",
+            coefficients,
+            rhs,
+            f"point-angle-basis:{index}",
+            "existing point-angle equalities",
+        )
+
+    for index, (coefficients, rhs) in enumerate(
+        _solution_equalities(exact_length_solution)
+    ):
+        add_equation(
+            "curve_length_equation",
+            coefficients,
+            rhs,
+            f"curve-length-basis:{index}",
+            "existing normalized curve-length equalities",
+        )
+
+    def occurrence_turn_sign(literal: Literal) -> int:
+        component_index = component_by_variable[literal.variable]
+        transforms = components[component_index][2]
+        template_sign = transforms[literal.variable].turn_sign
+        traversal_sign = -1 if literal.inverse else 1
+        return traversal_sign * template_sign
+
+    for component_index, component in enumerate(components):
+        _representative, _members, _transforms, symmetries, mode = component
+        if mode == "straight" or any(symmetry.turn_sign == -1 for symmetry in symmetries):
+            add_equation(
+                "curve_turn_forced_zero",
+                {kappa_names[component_index]: 1},
+                0,
+                f"curve-component:C{component_index}",
+                "self-identification reverses signed curve turn",
+            )
+
+    for outer_name, piece, word in expanded_outer:
+        copy_parity = int(piece_orientation_signs[piece])
+        for occurrence_index, literal in enumerate(word):
+            component_index = component_by_variable[literal.variable]
+            physical_turn_sign = copy_parity * occurrence_turn_sign(literal)
+            add_equation(
+                "outer_circle_curve_turn",
+                {
+                    kappa_names[component_index]: physical_turn_sign,
+                    length_names[component_index]: -2,
+                },
+                0,
+                f"{outer_name}:segment{occurrence_index}",
+                "positive disk-boundary traversal has turn_pi = 2 * normalized_length",
+            )
+
+    total_turn_coefficients: Dict[str, Fraction] = defaultdict(Fraction)
+    for literal in terminal_contour:
+        component_index = component_by_variable[literal.variable]
+        total_turn_coefficients[kappa_names[component_index]] += occurrence_turn_sign(literal)
+    for alpha_name in alpha_names:
+        total_turn_coefficients[alpha_name] -= 1
+    add_equation(
+        "prototype_total_turn",
+        total_turn_coefficients,
+        Fraction(2 - len(terminal_contour)),
+        "terminal-contour",
+        "sum(curve_turns) + sum(1 - interior_angle_pi) = 2",
+    )
+
+    try:
+        exact_solution = solve_exact_linear_system(variable_names, equations)
+    except ExactLinearInfeasible as error:
+        raise DecorationInfeasible("joint_angular_feasibility", str(error)) from error
+
+    # Eliminate all equalities first.  The exact simplex then sees only the
+    # remaining free parameters plus the strict margin, which is substantially
+    # smaller than the original alpha/kappa/length system.
+    exact_map = exact_solution.expression_map()
+    free_names = tuple(exact_solution.free_parameters)
+    delta_name = "angular_strict_margin"
+    lp_names = free_names + (delta_name,)
+    index = {name: position for position, name in enumerate(lp_names)}
+    inequalities: list[Tuple[list[Fraction], Fraction]] = []
+
+    def expression_row(
+        expression: LinearExpression,
+        *,
+        scale: int | Fraction = 1,
+        delta: int | Fraction = 0,
+    ) -> Tuple[list[Fraction], Fraction]:
+        scaled = expression.scale(scale).normalized()
+        row = [Fraction(0) for _ in lp_names]
+        for name, coefficient in scaled.terms:
+            row[index[name]] += coefficient
+        row[index[delta_name]] += Fraction(delta)
+        return row, scaled.constant
+
+    # alpha + delta <= 2 and -alpha + delta <= 0.
+    for name in alpha_names:
+        row_values, constant = expression_row(exact_map[name], delta=1)
+        inequalities.append((row_values, Fraction(2) - constant))
+        row_values, constant = expression_row(exact_map[name], scale=-1, delta=1)
+        inequalities.append((row_values, -constant))
+
+    # -length + delta <= 0.
+    for name in length_names:
+        row_values, constant = expression_row(exact_map[name], scale=-1, delta=1)
+        inequalities.append((row_values, -constant))
+
+    delta_lower = [Fraction(0) for _ in lp_names]
+    delta_lower[index[delta_name]] = Fraction(-1)
+    inequalities.append((delta_lower, Fraction(0)))
+    delta_upper = [Fraction(0) for _ in lp_names]
+    delta_upper[index[delta_name]] = Fraction(1)
+    inequalities.append((delta_upper, Fraction(1)))
+    objective = [Fraction(0) for _ in lp_names]
+    objective[index[delta_name]] = Fraction(1)
+    result = maximize_free_variables(inequalities, objective)
+    if result.status == "infeasible":
+        raise DecorationInfeasible(
+            "joint_angular_feasibility",
+            "point turns, curve turns, circular arcs, lengths, and total winding are inconsistent",
+        )
+    if result.status != "optimal" or result.optimum is None:
+        raise DecorationInfeasible(
+            "joint_angular_feasibility",
+            f"unexpected exact angular LP status {result.status}",
+        )
+    if result.optimum <= 0:
+        raise DecorationInfeasible(
+            "joint_angular_feasibility",
+            "the angular system is feasible only at a forbidden point-angle or zero-length boundary",
+        )
+
+    free_witness = {
+        name: result.solution[index[name]] for name in free_names
+    }
+
+    def evaluate(expression: LinearExpression) -> Fraction:
+        normalized = expression.normalized()
+        return normalized.constant + sum(
+            coefficient * free_witness[name]
+            for name, coefficient in normalized.terms
+        )
+
+    witness = tuple(
+        (name, evaluate(exact_map[name])) for name in variable_names
+    )
+    return JointAngularFeasibility(
+        feasible=True,
+        status="feasible_with_strict_exact_margin",
+        strict_margin=result.optimum,
+        point_angle_variables=alpha_names,
+        curve_turn_variables=kappa_names,
+        length_variables=length_names,
+        equations=tuple(records),
+        exact_solution=exact_solution,
+        witness=witness,
+    )
+
+
 def build_decorations(
     planar_map: PlanarMap,
     occurrence_names: Sequence[str],
@@ -667,6 +987,64 @@ def build_decorations(
         component_by_variable[variable] for variable in circular_variables
     }
 
+    joint_angular = _build_joint_angular_feasibility(
+        terminal_contour=terminal_contour,
+        components=components,
+        component_by_variable=component_by_variable,
+        exact_angle_solution=exact_angle_solution,
+        exact_length_solution=exact_length_solution,
+        expanded_outer=expanded_outer,
+        piece_orientation_signs={
+            name: placement.assignment.orientation_signs[index]
+            for index, name in enumerate(placement.assignment.piece_names)
+        },
+    )
+    joint_expression_map = joint_angular.exact_solution.expression_map()
+    joint_witness_map = joint_angular.witness_map()
+
+    # The joint system can resolve point angles further than the point-only
+    # subsystem.  Publish the refined exact expressions and witnesses.
+    refined_points = []
+    for point in points:
+        alpha_name = f"alpha_B{point.boundary_index}"
+        angle_expression = joint_expression_map[alpha_name]
+        turn_expression = (LinearExpression.value(1) - angle_expression).normalized()
+        angle_witness = joint_witness_map[alpha_name]
+        occurrence_values = []
+        occurrence_expressions = []
+        for occurrence_name in point.occurrences:
+            occurrence_values.append((occurrence_name, float(angle_witness)))
+            occurrence_expressions.append((occurrence_name, angle_expression))
+        refined_points.append(
+            replace(
+                point,
+                prototype_turn_pi=float(Fraction(1) - angle_witness),
+                prototype_angle_pi=float(angle_witness),
+                prototype_angle_expression=angle_expression,
+                prototype_turn_expression=turn_expression,
+                occurrence_angles_pi=tuple(occurrence_values),
+                occurrence_angle_expressions=tuple(occurrence_expressions),
+            )
+        )
+    points = tuple(refined_points)
+
+    refined_classes = []
+    for point_class in point_classes:
+        alpha_name = f"alpha_B{point_class.representative_boundary}"
+        angle_expression = joint_expression_map[alpha_name]
+        angle_witness = joint_witness_map[alpha_name]
+        refined_classes.append(
+            replace(
+                point_class,
+                turn_pi=float(Fraction(1) - angle_witness),
+                representative_angle_expression=angle_expression,
+                representative_turn_expression=(
+                    LinearExpression.value(1) - angle_expression
+                ).normalized(),
+            )
+        )
+    point_classes = tuple(refined_classes)
+
     component_records = []
     for index, (representative, variables, transforms, symmetries, mode) in enumerate(components):
         circular = index in circular_components
@@ -681,6 +1059,8 @@ def build_decorations(
         curve_type = (
             "circular_arc" if circular else "straight_segment" if forced_straight else "generic_curve"
         )
+        turn_parameter = f"K_C{index}"
+        turn_expression = joint_expression_map[turn_parameter]
         component_records.append(
             CurveComponentRecord(
                 component_id=f"C{index}",
@@ -698,7 +1078,11 @@ def build_decorations(
                 length_parameter=length_parameter,
                 search_witness_normalized_length=component_lengths[index],
                 disk_normalized_length=length_expression,
-                disk_normalized_turn_pi=(length_expression.scale(2) if circular else None),
+                turn_parameter=turn_parameter,
+                curve_turn_pi=turn_expression,
+                curve_turn_pi_witness=joint_witness_map[turn_parameter],
+                # Backward-compatible alias used by geometry readers before v0.6.
+                disk_normalized_turn_pi=turn_expression,
             )
         )
 
@@ -812,6 +1196,49 @@ def build_decorations(
 
     formal_constraints.append(
         {
+            "kind": "exact_joint_point_curve_turn_feasibility",
+            "unit": "pi",
+            "point_turn_convention": "tau_Bi = 1 - alpha_Bi, with -1 < tau_Bi < 1",
+            "curve_turn_convention": "K_Ci is unbounded signed total tangent turn of the representative curve template",
+            "strict_margin": {
+                "numerator": joint_angular.strict_margin.numerator,
+                "denominator": joint_angular.strict_margin.denominator,
+                "float": float(joint_angular.strict_margin),
+            },
+            "equations": [
+                {
+                    "kind": equation.kind,
+                    "relation": equation.relation,
+                    "sources": list(equation.sources),
+                    "terms": [
+                        [name, {
+                            "numerator": coefficient.numerator,
+                            "denominator": coefficient.denominator,
+                            "float": float(coefficient),
+                        }]
+                        for name, coefficient in equation.terms
+                    ],
+                    "rhs_pi": {
+                        "numerator": equation.rhs_pi.numerator,
+                        "denominator": equation.rhs_pi.denominator,
+                        "float": float(equation.rhs_pi),
+                    },
+                }
+                for equation in joint_angular.equations
+            ],
+            "exact_solution": joint_angular.exact_solution.to_dict(),
+            "witness": {
+                name: {
+                    "numerator": value.numerator,
+                    "denominator": value.denominator,
+                    "float": float(value),
+                }
+                for name, value in joint_angular.witness
+            },
+        }
+    )
+    formal_constraints.append(
+        {
             "kind": "exact_terminal_angle_resolution",
             "unit": "pi",
             "solution": exact_angle_solution.to_dict(),
@@ -830,6 +1257,7 @@ def build_decorations(
         point_classes=point_classes,
         angle_equations=angle_equations,
         exact_angle_solution=exact_angle_solution,
+        joint_angular_feasibility=joint_angular,
         curve_components=tuple(component_records),
         exact_length_solution=exact_length_solution,
         template_relations=relation_records,

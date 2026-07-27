@@ -35,7 +35,7 @@ def build_formal_profile(
     )
 
     return FormalProfile(
-        schema_version="formal-contour-profile-v4",
+        schema_version="formal-contour-profile-v6",
         map_name=planar_map.name,
         assignment_id=placement.assignment.assignment_id,
         placement_id=placement.placement_id,
@@ -49,6 +49,7 @@ def build_formal_profile(
         point_classes=decorations.point_classes,
         angle_equations=decorations.angle_equations,
         exact_angle_solution=decorations.exact_angle_solution,
+        joint_angular_feasibility=decorations.joint_angular_feasibility,
         curve_components=decorations.curve_components,
         exact_length_solution=decorations.exact_length_solution,
         template_relations=decorations.template_relations,

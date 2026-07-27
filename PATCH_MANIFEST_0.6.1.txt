@@ -1,0 +1,21 @@
+Formal Disk-4 Solver differential patch 0.6.1 over 0.6.0
+
+Files included:
+- PATCH_MANIFEST_0.6.1.txt
+- PATCH_NOTES_0.6.1.md
+- README.md
+- pyproject.toml
+- src/formal_disk4/__init__.py
+- src/formal_disk4/constraints/angle_lp.py
+- src/formal_disk4/enumeration/weak_orders.py
+- src/formal_disk4/geometry/model.py
+- src/formal_disk4/geometry/solver.py
+- src/formal_disk4/maps/base.py
+- src/formal_disk4/pipeline/checkpoint.py
+- src/formal_disk4/pipeline/runner.py
+- src/formal_disk4/profiles/build.py
+- src/formal_disk4/profiles/decorations.py
+- tests/test_constraints.py
+- tests/test_geometry.py
+- tests/test_map.py
+- tests/test_pizza3.py

@@ -308,16 +308,20 @@ def parse_formal_geometry_problem(
     if isinstance(raw_points, Sequence):
         for raw_point in raw_points:
             if isinstance(raw_point, Mapping) and raw_point.get("boundary_index") is not None:
-                value = raw_point.get("prototype_angle_pi")
-                if isinstance(value, Mapping):
-                    exact_value = value.get("exact_value")
-                    witness = (
-                        _fraction_float(exact_value)
-                        if isinstance(exact_value, Mapping)
-                        else None
-                    )
+                explicit_witness = raw_point.get("prototype_angle_pi_witness")
+                if explicit_witness is not None:
+                    witness = float(explicit_witness)
                 else:
-                    witness = None if value is None else float(value)
+                    value = raw_point.get("prototype_angle_pi")
+                    if isinstance(value, Mapping):
+                        exact_value = value.get("exact_value")
+                        witness = (
+                            _fraction_float(exact_value)
+                            if isinstance(exact_value, Mapping)
+                            else None
+                        )
+                    else:
+                        witness = None if value is None else float(value)
                 point_witnesses[int(raw_point["boundary_index"])] = witness
 
     points = []
@@ -370,7 +374,9 @@ def parse_formal_geometry_problem(
             )
         else:
             transforms = ()
-        turn_record = item.get("disk_normalized_turn_pi")
+        turn_record = item.get("curve_turn_pi")
+        if turn_record is None:
+            turn_record = item.get("disk_normalized_turn_pi")
         components.append(
             FormalCurveComponent(
                 component_id=str(item["component_id"]),

@@ -101,8 +101,23 @@ class PizzaMapTests(unittest.TestCase):
 
         decorated = profile.decorated_terminal_contour()
         self.assertIn("T1{circular_arc:disk_boundary,L=1/3*C_disk", decorated["text"])
-        point_angles = [point.prototype_angle_expression.exact_value for point in profile.point_decorations]
-        self.assertEqual(point_angles, [Fraction(2, 3), Fraction(1, 2), Fraction(1, 2)])
+        point_angles = [
+            point.prototype_angle_expression.exact_value
+            for point in profile.point_decorations
+        ]
+        self.assertEqual(point_angles, [Fraction(2, 3), None, None])
+        angle_expressions = [
+            point.prototype_angle_expression.to_text()
+            for point in profile.point_decorations
+        ]
+        self.assertEqual(
+            angle_expressions,
+            ["2/3", "1 - alpha_B2", "alpha_B2"],
+        )
+        self.assertEqual(
+            profile.exact_angle_solution.free_parameters,
+            ("alpha_B2",),
+        )
 
         components = {component.representative: component for component in profile.curve_components}
         self.assertEqual(components["T0"].curve_type, "generic_curve")
@@ -110,6 +125,24 @@ class PizzaMapTests(unittest.TestCase):
         self.assertEqual(components["T1"].curve_type, "circular_arc")
         self.assertEqual(components["T1"].disk_normalized_length.exact_value, Fraction(1, 3))
         self.assertEqual(components["T1"].disk_normalized_turn_pi.exact_value, Fraction(2, 3))
+        self.assertEqual(components["T1"].curve_turn_pi.exact_value, Fraction(2, 3))
+        self.assertIn("K_C0", components["T0"].curve_turn_pi.free_parameters)
+        self.assertGreater(profile.joint_angular_feasibility.strict_margin, 0)
+        point_turns = [
+            point.prototype_turn_expression.exact_value
+            for point in profile.point_decorations
+        ]
+        self.assertEqual(point_turns, [Fraction(1, 3), None, None])
+        self.assertEqual(
+            [point.prototype_turn_expression.to_text() for point in profile.point_decorations],
+            ["1/3", "alpha_B2", "1 - alpha_B2"],
+        )
+        self.assertTrue(
+            any(
+                equation.kind == "prototype_total_turn"
+                for equation in profile.joint_angular_feasibility.equations
+            )
+        )
 
         relation_keys = {
             (item.relation, item.terms, item.rhs_pi) for item in profile.angle_equations
@@ -118,9 +151,8 @@ class PizzaMapTests(unittest.TestCase):
             ("incident_piece_angles_sum_to_pi", ((1, 1), (2, 1)), Fraction(1)),
             relation_keys,
         )
-        self.assertIn(
-            ("equal_interior_angles", ((1, 1), (2, -1)), Fraction(0)),
-            relation_keys,
+        self.assertFalse(
+            any(relation == "equal_interior_angles" for relation, _terms, _rhs in relation_keys)
         )
 
     def test_streaming_run_finds_pizza_survivor(self) -> None:
@@ -163,7 +195,7 @@ class PizzaMapTests(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["schema_version"], "formal-contour-survivor-v5")
+            self.assertEqual(records[0]["schema_version"], "formal-contour-survivor-v7")
             self.assertTrue(records[0]["formal_profile_id"].startswith("fp-"))
             self.assertEqual(records[0]["map"]["name"], "k3-pizza")
             self.assertEqual(len(records[0]["profile"]["contact_mappings"]), 3)

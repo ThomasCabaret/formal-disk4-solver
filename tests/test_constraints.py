@@ -26,13 +26,28 @@ class ConstraintTests(unittest.TestCase):
         result = oracle.analyze(1, equations)
         self.assertFalse(result.feasible)
 
-    def test_complementary_copy_angles_can_be_detected_early(self) -> None:
+    def test_copy_reflection_does_not_complement_solid_angle(self) -> None:
         oracle = AngleFeasibilityOracle()
-        # Two occurrences with opposite contour orientations at the same prototype
-        # point cancel in the signed-turn equation. They cannot form a boundary
-        # vertex whose total interior angle is pi, because alpha+(2-alpha)=2pi.
-        result = oracle.analyze(1, (AngleEquation((0,), 1.0),))
-        self.assertFalse(result.feasible)
+        # Two congruent occurrences of the same prototype point can meet on the
+        # disk boundary.  Reflection preserves the positive polygonal angle, so
+        # 2*alpha = pi, equivalently 2*tau = 1 in pi units.
+        result = oracle.analyze(1, (AngleEquation((2,), 1.0),), need_witness=True)
+        self.assertTrue(result.feasible)
+        self.assertAlmostEqual(result.angles_pi[0], 0.5)
+
+    def test_three_piece_interior_junction_forces_two_thirds_angle(self) -> None:
+        oracle = AngleFeasibilityOracle()
+        # 3*alpha = 2*pi, hence 3*tau = 1.
+        result = oracle.analyze(1, (AngleEquation((3,), 1.0),), need_witness=True)
+        self.assertTrue(result.feasible)
+        self.assertAlmostEqual(result.angles_pi[0], 2.0 / 3.0)
+
+    def test_three_piece_outer_junction_forces_one_third_angle(self) -> None:
+        oracle = AngleFeasibilityOracle()
+        # 3*alpha = pi, hence 3*tau = 2.
+        result = oracle.analyze(1, (AngleEquation((3,), 2.0),), need_witness=True)
+        self.assertTrue(result.feasible)
+        self.assertAlmostEqual(result.angles_pi[0], 1.0 / 3.0)
 
 
 if __name__ == "__main__":

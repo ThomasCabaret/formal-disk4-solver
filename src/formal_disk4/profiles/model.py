@@ -11,6 +11,7 @@ from formal_disk4.words.families import ExactFormalFamily, FamilySpecialization
 from .decorations import (
     AngleEquationRecord,
     CurveComponentRecord,
+    JointAngularFeasibility,
     OuterArcRecord,
     PointClassRecord,
     PointRecord,
@@ -67,6 +68,34 @@ def _angle_equation_text(item: AngleEquationRecord) -> str:
     return f"{left} = {fraction_text(item.rhs_pi)}"
 
 
+def _joint_angular_dict(item: JointAngularFeasibility) -> Dict[str, object]:
+    return {
+        "feasible": item.feasible,
+        "status": item.status,
+        "strict_margin": fraction_record(item.strict_margin),
+        "point_angle_variables": list(item.point_angle_variables),
+        "curve_turn_variables": list(item.curve_turn_variables),
+        "length_variables": list(item.length_variables),
+        "point_turn_convention": "tau_Bi = 1 - alpha_Bi, with -1 < tau_Bi < 1",
+        "curve_turn_convention": "K_Ci is signed total tangent turn in pi units and is unbounded",
+        "equations": [
+            {
+                "kind": equation.kind,
+                "relation": equation.relation,
+                "sources": list(equation.sources),
+                "terms": [
+                    {"variable": name, "coefficient": fraction_record(coefficient)}
+                    for name, coefficient in equation.terms
+                ],
+                "rhs_pi": fraction_record(equation.rhs_pi),
+            }
+            for equation in item.equations
+        ],
+        "exact_solution": item.exact_solution.to_dict(),
+        "witness": {name: fraction_record(value) for name, value in item.witness},
+    }
+
+
 def _segment_record(
     index: int,
     literal: Literal,
@@ -83,26 +112,14 @@ def _segment_record(
         "length_parameter": component.length_parameter,
         "disk_normalized_length": component.disk_normalized_length.to_dict(),
         "disk_normalized_length_text": _disk_length_text(component.disk_normalized_length),
-        "disk_normalized_turn_pi": (
-            component.disk_normalized_turn_pi.to_dict()
-            if component.disk_normalized_turn_pi is not None
-            else None
-        ),
-        "disk_normalized_turn_text": (
-            _pi_expression_text(component.disk_normalized_turn_pi)
-            if component.disk_normalized_turn_pi is not None
-            else None
-        ),
-        "full_turn_fraction": (
-            component.disk_normalized_turn_pi.scale(Fraction(1, 2)).to_dict()
-            if component.disk_normalized_turn_pi is not None
-            else None
-        ),
-        "full_turn_fraction_text": (
-            _full_turn_expression_text(component.disk_normalized_turn_pi)
-            if component.disk_normalized_turn_pi is not None
-            else None
-        ),
+        "curve_turn_parameter": component.turn_parameter,
+        "curve_turn_pi": component.curve_turn_pi.to_dict(),
+        "curve_turn_text": _pi_expression_text(component.curve_turn_pi),
+        "curve_turn_pi_witness": fraction_record(component.curve_turn_pi_witness),
+        "disk_normalized_turn_pi": component.curve_turn_pi.to_dict(),
+        "disk_normalized_turn_text": _pi_expression_text(component.curve_turn_pi),
+        "full_turn_fraction": component.curve_turn_pi.scale(Fraction(1, 2)).to_dict(),
+        "full_turn_fraction_text": _full_turn_expression_text(component.curve_turn_pi),
         "forced_straight": component.forced_straight,
         "self_symmetries": list(component.self_symmetries),
     }
@@ -124,6 +141,7 @@ class FormalProfile:
     point_classes: Tuple[PointClassRecord, ...]
     angle_equations: Tuple[AngleEquationRecord, ...]
     exact_angle_solution: ExactLinearSolution
+    joint_angular_feasibility: JointAngularFeasibility
     curve_components: Tuple[CurveComponentRecord, ...]
     exact_length_solution: ExactLinearSolution
     template_relations: Tuple[TemplateRelationRecord, ...]
@@ -167,6 +185,9 @@ class FormalProfile:
                 "interior_angle_text": angle_text,
                 "interior_angle_full_turn_fraction": point.prototype_angle_expression.scale(Fraction(1, 2)).to_dict(),
                 "interior_angle_full_turn_text": _full_turn_expression_text(point.prototype_angle_expression),
+                "signed_point_turn_pi": point.prototype_turn_expression.to_dict(),
+                "signed_point_turn_text": _pi_expression_text(point.prototype_turn_expression),
+                "signed_point_turn_domain": "(-pi, pi)",
                 "occurrences": list(point.occurrences),
                 "roles": list(point.roles),
             }
@@ -176,18 +197,20 @@ class FormalProfile:
                 segment_text = (
                     f"{literal.to_text()}{{circular_arc:{component.circle_class},"
                     f"L={_disk_length_text(component.disk_normalized_length)},"
-                    f"turn={_pi_expression_text(component.disk_normalized_turn_pi or LinearExpression.value(0))}"
-                    f"[{_full_turn_expression_text(component.disk_normalized_turn_pi or LinearExpression.value(0))}]}}"
+                    f"turn={_pi_expression_text(component.curve_turn_pi)}"
+                    f"[{_full_turn_expression_text(component.curve_turn_pi)}]}}"
                 )
             elif component.curve_type == "straight_segment":
                 segment_text = (
                     f"{literal.to_text()}{{straight_segment,"
-                    f"L={_disk_length_text(component.disk_normalized_length)}}}"
+                    f"L={_disk_length_text(component.disk_normalized_length)},"
+                    f"turn={_pi_expression_text(component.curve_turn_pi)}}}"
                 )
             else:
                 segment_text = (
                     f"{literal.to_text()}{{generic_curve,"
-                    f"L={_disk_length_text(component.disk_normalized_length)}}}"
+                    f"L={_disk_length_text(component.disk_normalized_length)},"
+                    f"turn={_pi_expression_text(component.curve_turn_pi)}}}"
                 )
             text_tokens.extend((f"({angle_text}[{angle_turn_text}])", segment_text))
         return {
@@ -218,6 +241,7 @@ class FormalProfile:
                 for item in self.angle_equations
             ],
             "exact_angle_solution": self.exact_angle_solution.to_dict(),
+            "exact_joint_angular_feasibility": _joint_angular_dict(self.joint_angular_feasibility),
             "exact_disk_normalized_length_solution": self.exact_length_solution.to_dict(),
         }
 
@@ -247,6 +271,9 @@ class FormalProfile:
                     "prototype_angle_pi_witness": point.prototype_angle_pi,
                     "prototype_angle_pi": point.prototype_angle_expression.to_dict(),
                     "prototype_angle_text": _pi_expression_text(point.prototype_angle_expression),
+                    "prototype_turn_pi": point.prototype_turn_expression.to_dict(),
+                    "prototype_turn_text": _pi_expression_text(point.prototype_turn_expression),
+                    "prototype_turn_domain": "(-pi, pi)",
                     "prototype_angle_full_turn_fraction": point.prototype_angle_expression.scale(Fraction(1, 2)).to_dict(),
                     "prototype_angle_full_turn_text": _full_turn_expression_text(point.prototype_angle_expression),
                     "occurrence_angles_pi_witness": dict(point.occurrence_angles_pi),
@@ -272,6 +299,10 @@ class FormalProfile:
                     "representative_angle_text": _pi_expression_text(
                         item.representative_angle_expression
                     ),
+                    "representative_turn_pi": item.representative_turn_expression.to_dict(),
+                    "representative_turn_text": _pi_expression_text(
+                        item.representative_turn_expression
+                    ),
                     "signed_class_relation": (
                         "sign +1: alpha_member = alpha_representative; "
                         "sign -1: alpha_member + alpha_representative = 2*pi"
@@ -294,6 +325,7 @@ class FormalProfile:
                 for item in self.angle_equations
             ],
             "exact_angle_solution": self.exact_angle_solution.to_dict(),
+            "joint_angular_feasibility": _joint_angular_dict(self.joint_angular_feasibility),
             "curve_components": [
                 {
                     "component_id": item.component_id,
@@ -315,26 +347,15 @@ class FormalProfile:
                     "disk_normalized_length_text": _disk_length_text(
                         item.disk_normalized_length
                     ),
-                    "disk_normalized_turn_pi": (
-                        item.disk_normalized_turn_pi.to_dict()
-                        if item.disk_normalized_turn_pi is not None
-                        else None
-                    ),
-                    "disk_normalized_turn_text": (
-                        _pi_expression_text(item.disk_normalized_turn_pi)
-                        if item.disk_normalized_turn_pi is not None
-                        else None
-                    ),
-                    "full_turn_fraction": (
-                        item.disk_normalized_turn_pi.scale(Fraction(1, 2)).to_dict()
-                        if item.disk_normalized_turn_pi is not None
-                        else None
-                    ),
-                    "full_turn_fraction_text": (
-                        _full_turn_expression_text(item.disk_normalized_turn_pi)
-                        if item.disk_normalized_turn_pi is not None
-                        else None
-                    ),
+                    "curve_turn_parameter": item.turn_parameter,
+                    "curve_turn_pi": item.curve_turn_pi.to_dict(),
+                    "curve_turn_text": _pi_expression_text(item.curve_turn_pi),
+                    "curve_turn_pi_witness": fraction_record(item.curve_turn_pi_witness),
+                    "curve_turn_domain": "unbounded real",
+                    "disk_normalized_turn_pi": item.curve_turn_pi.to_dict(),
+                    "disk_normalized_turn_text": _pi_expression_text(item.curve_turn_pi),
+                    "full_turn_fraction": item.curve_turn_pi.scale(Fraction(1, 2)).to_dict(),
+                    "full_turn_fraction_text": _full_turn_expression_text(item.curve_turn_pi),
                 }
                 for item in self.curve_components
             ],
@@ -401,6 +422,7 @@ class FormalProfile:
                 "placement_length": self.placement_length_margin,
                 "placement_angle": self.placement_angle_margin,
                 "decorated_angle": self.decorated_angle_margin,
+                "joint_angular_exact": float(self.joint_angular_feasibility.strict_margin),
                 "terminal_curve_length": self.terminal_length_margin,
             },
             "canonical_contour_signature": [

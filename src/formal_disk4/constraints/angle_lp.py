@@ -31,11 +31,13 @@ class AngleFeasibilityResult:
 class AngleFeasibilityOracle:
     """Feasibility oracle for signed point-angle classes.
 
-    A prototype point carries a signed turn t in (-1, 1), in units of pi.
-    A copy whose contour orientation sign is s sees interior angle alpha=1-s*t.
-    Hence alpha classes related by a reversed contour are complementary:
-    alpha' = 2-alpha. The weak-order enumerator supplies the resulting linear
-    vertex equations and this oracle maximizes a common strict margin.
+    A prototype point carries a signed turn t in (-1, 1), in units of pi,
+    with polygonal interior angle alpha = 1 - t.  Direct and reflected
+    congruent copies have the same solid interior angle.  Copy parity is used
+    only when transporting signed turns at points strictly inside a mapped
+    interface.  At a geometric map vertex the enumerator simply sums all
+    incident solid angles: 2*pi for an interior vertex and pi for an outer
+    vertex.  This oracle maximizes a common strict margin.
     """
 
     def __init__(self, tolerance: float = 1e-9) -> None:

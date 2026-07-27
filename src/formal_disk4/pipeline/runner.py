@@ -204,6 +204,7 @@ class SolverRunner:
             f"nested={self.stats.get('word_family_nested_power')}] "
             f"specializations={self.stats.get('family_specializations')} "
             f"unexpanded={self.stats.get('families_not_specialized')} "
+            f"joint_angle_rejections={self.stats.get('decoration_rejection_joint_angular_feasibility')} "
             f"profile_rejections={rejected_profiles} "
             f"profiles={self.stats.get('profiles_emitted')}"
         )
@@ -632,7 +633,7 @@ class SolverRunner:
 
                                     formal_profile_id = "fp-" + key[:32]
                                     record = {
-                                        "schema_version": "formal-contour-survivor-v5",
+                                        "schema_version": "formal-contour-survivor-v7",
                                         "formal_profile_id": formal_profile_id,
                                         "map": planar_map.to_dict(),
                                         "assignment": assignment.to_dict(

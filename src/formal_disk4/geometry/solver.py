@@ -234,6 +234,16 @@ class NumericalContourSolver:
 
         for attempt_index in range(self.config.max_restarts):
             initial = self._restart_initial(layout, rng, attempt_index)
+            accepted_vector: np.ndarray | None = None
+
+            def stop_when_valid(intermediate_result) -> None:
+                nonlocal accepted_vector
+                vector = np.asarray(intermediate_result.x, dtype=float)
+                built_candidate = self._build_geometry(problem, layout, vector)
+                if self._validate_built(built_candidate).passed:
+                    accepted_vector = vector.copy()
+                    raise StopIteration
+
             result = least_squares(
                 lambda vector: self._residual(problem, layout, vector),
                 initial,
@@ -243,20 +253,13 @@ class NumericalContourSolver:
                 ftol=1e-12,
                 gtol=1e-12,
                 verbose=0,
+                callback=stop_when_valid,
             )
-            cost = float(2.0 * result.cost)
-            built = self._build_geometry(problem, layout, result.x)
-            validation = validate_geometry(
-                built.occurrences,
-                built.target_angles,
-                closure_tolerance=self.config.closure_tolerance,
-                tangent_tolerance=self.config.tangent_tolerance,
-                angle_tolerance=self.config.angle_tolerance,
-                length_tolerance=self.config.length_tolerance,
-                intersection_tolerance=self.config.intersection_tolerance,
-                minimum_area=self.config.minimum_area,
-                minimum_edge_length=self.config.minimum_sample_edge_length,
-            )
+            solution_vector = result.x if accepted_vector is None else accepted_vector
+            cost_residual = self._residual(problem, layout, solution_vector)
+            cost = float(np.dot(cost_residual, cost_residual))
+            built = self._build_geometry(problem, layout, solution_vector)
+            validation = self._validate_built(built)
             if cost < best_cost:
                 best_cost = cost
                 best_validation = validation.to_dict()
@@ -290,6 +293,19 @@ class NumericalContourSolver:
             attempts=self.config.max_restarts,
             best_cost=None if math.isinf(best_cost) else best_cost,
             best_validation=best_validation,
+        )
+
+    def _validate_built(self, built: _BuiltGeometry):
+        return validate_geometry(
+            built.occurrences,
+            built.target_angles,
+            closure_tolerance=self.config.closure_tolerance,
+            tangent_tolerance=self.config.tangent_tolerance,
+            angle_tolerance=self.config.angle_tolerance,
+            length_tolerance=self.config.length_tolerance,
+            intersection_tolerance=self.config.intersection_tolerance,
+            minimum_area=self.config.minimum_area,
+            minimum_edge_length=self.config.minimum_sample_edge_length,
         )
 
     def _build_layout(self, problem: FormalGeometryProblem) -> _ParameterLayout:
@@ -585,7 +601,10 @@ class NumericalContourSolver:
         formal_values = built.parameter_values
         residuals = []
         closure = built.occurrences[-1].end_point - built.occurrences[0].start_point
-        residuals.extend((float(closure[0]), float(closure[1])))
+        closure_weight = 10.0
+        residuals.extend(
+            (closure_weight * float(closure[0]), closure_weight * float(closure[1]))
+        )
         angular_error = built.final_tangent_after_closure_vertex - built.occurrences[0].start_tangent
         residuals.extend((math.sin(angular_error), 1.0 - math.cos(angular_error)))
 
@@ -599,9 +618,14 @@ class NumericalContourSolver:
             residuals.append(
                 positivity_weight * max(0.0, self.config.minimum_curve_length - length)
             )
-            if component.curve_type == "circular_arc" and component.turn_pi is not None:
-                turn_pi = component.turn_pi.evaluate(formal_values)
-                residuals.append(positivity_weight * max(0.0, 1e-6 - abs(turn_pi)))
+            if component.turn_pi is not None:
+                target_turn = math.pi * component.turn_pi.evaluate(formal_values)
+                actual_turn = built.local_templates[component.component_id].total_turn
+                residuals.append(actual_turn - target_turn)
+                if component.curve_type == "circular_arc":
+                    residuals.append(
+                        positivity_weight * max(0.0, 1e-6 - abs(component.turn_pi.evaluate(formal_values)))
+                    )
 
         polyline = sampled_polyline(built.occurrences)
         minimum_distance, intersections = nonadjacent_distances(polyline)

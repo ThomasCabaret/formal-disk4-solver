@@ -163,7 +163,13 @@ class WeakOrderEnumerator:
                 self.occurrence_index[Occurrence(piece, vertex.name)]
                 for piece in vertex.incident_pieces
             )
-            output.append((vertex.name, vertex.angle_sum_pi, occurrences))
+            output.append(
+                (
+                    vertex.name,
+                    float(vertex.required_solid_angle_sum_pi),
+                    occurrences,
+                )
+            )
         return tuple(output)
 
     def _build_positive_arc_endpoints(self) -> Dict[Tuple[int, int], Tuple[int, int]]:
@@ -226,11 +232,14 @@ class WeakOrderEnumerator:
                 continue
             coefficients = [0] * block_count
             for occurrence_id in occurrences:
-                piece = self.occurrences[occurrence_id].piece
-                orientation = self.assignment.orientation_signs[self.piece_index[piece]]
-                coefficients[positions[occurrence_id]] += orientation
-            # alpha(piece occurrence) = 1 - orientation * signed_turn.
-            # Sum(alpha) = angle_sum_pi, hence Sum(orientation*turn) = degree-angle_sum_pi.
+                # A direct or reflected congruent copy has the same positive
+                # polygonal interior angle.  Copy parity affects how signed
+                # turns are transported along an interface, but not the
+                # physical angle sum at a map vertex.
+                coefficients[positions[occurrence_id]] += 1
+            # With prototype signed point turn tau = 1 - alpha,
+            # Sum(alpha) = angle_sum_pi is equivalent to
+            # Sum(tau) = degree - angle_sum_pi.
             rhs = float(len(occurrences) - angle_sum_pi)
             equations.append(AngleEquation(tuple(coefficients), rhs))
         return tuple(equations)
