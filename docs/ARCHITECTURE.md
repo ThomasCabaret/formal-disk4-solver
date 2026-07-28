@@ -1,4 +1,4 @@
-# Architecture 0.6
+# Architecture 0.9
 
 ## 1. Map-driven core
 
@@ -7,7 +7,8 @@
 Registered maps:
 
 - `k4-central`: contour lengths `(3,4,4,4)`, six internal interfaces and three exterior arcs;
-- `k3-pizza`: contour lengths `(3,3,3)`, three internal interfaces and three exterior arcs.
+- `k3-pizza`: contour lengths `(3,3,3)`, three internal interfaces and three exterior arcs;
+- `k4-pizza`: contour lengths `(3,3,3,3)`, four internal interfaces and four exterior arcs.
 
 No downstream layer assumes four copies or six mappings. Expected mapping and exterior-arc counts are carried into each profile from its map.
 
@@ -44,7 +45,7 @@ x_i >= epsilon
 
 Every resolved internal interface contributes one integral equality row.
 
-Each prototype point also carries a signed point turn `tau` in units of pi. A copy with orientation sign `s` sees interior angle `alpha = 1-s*tau`. Vertex equations use the incidence and prescribed angle sum supplied by the map. These early placement oracles currently use SciPy HiGHS and serve only to prune partial weak orders.
+Each prototype point also carries a signed point turn `tau=1-alpha` in units of pi. Every physical map vertex contributes one sum of positive solid interior angles: `2*pi` at an interior vertex and `pi` at an outer vertex. Copy reflection does not change the positive solid angle. These early placement oracles currently use SciPy HiGHS and serve only to prune partial weak orders.
 
 ## 5. Word compilation
 
@@ -58,7 +59,65 @@ The compiler records direct/reflected parity and every exterior word.
 
 A directed mapping reference records traversal of the expanded contour segment. Literal inversion separately records orientation relative to the curve template. These two notions must not be conflated.
 
-## 6. Exact-partial word solver
+## 5.1 Early exterior-arc repetition in the weak-order DFS
+
+For the supported four-piece Stein map shape, a transported-exterior-arc theorem forces at least two peripheral outer edges to represent the same prototype interval. The filter is guarded by explicit structural checks and is otherwise inactive.
+
+Each candidate repeated pair stores the two ordered endpoint occurrences. During weak-order construction a pair remains possible only while corresponding endpoints are both unplaced or already occupy the same block. If all candidate pairs become impossible, the whole remaining subtree is counted as processed and pruned before any length LP, angle LP, word compilation or Nielsen--Levi work.
+
+The phase/parity assignment layer only determines whether an outer edge crosses the chosen global cut. For `k4-central`, all 256 canonical assignments retain one or three possible pairs, so the material reduction begins in the weak-order iterator rather than in the assignment count.
+
+## 6. Refactored pre-word pruning layer
+
+The layer runs after word compilation and before residual-state construction. It is composed of independent necessary-condition modules.
+
+### 6.1 Radius-arc topology
+
+Exterior words seed convex arcs of the disk circle. Boundary-aligned images are propagated through internal interfaces with opposite convexity. The module rejects:
+
+- a smooth radius-R arc forced across a hard outer corner;
+- a positive-length atom forced both convex and concave;
+- a mapped image forced to overlap an existing opposite-sign interval.
+
+It never guesses a Nielsen--Levi subdivision. Non-aligned symbolic images are reported as unresolved. LP-dependent interval rejections are confirmed by the exact strict-length oracle.
+
+### 6.2 Joint metric invariants
+
+For every atomic interval `i`, the module introduces:
+
+```text
+l_i > 0                    atomic length
+r_i+ >= 0, r_i- >= 0       radius-R convex/concave measures
+r_i+ + r_i- <= l_i
+H_i in R                   disk-circumference-scaled smooth turn
+```
+
+The scaling `H_i = C_disk * K_i/pi` makes the circle rule linear: a forced convex or concave radius-R atom satisfies `H_i = +/-2*l_i`. Interface equations preserve length, exchange `r+` and `r-`, and cancel physical smooth turn.
+
+The same system contains the general congruent-disk identities:
+
+```text
+tile_count * (L_plus - L_minus) = C_disk
+tile_count * smooth_turn = 2*pi
+```
+
+It also contains a linear isoperimetric necessary condition. For non-square tile counts, a certified rational upper bound on `sqrt(tile_count)` is used, producing a slightly weaker but sound inequality.
+
+The Stein-only condition `L_minus > 0` is enabled through `ProblemHypotheses.center_strictly_inside_one_tile`; pizza validation maps do not enable it.
+
+### 6.3 Point turns
+
+Point turns use a separate exact LP because their variables do not occur in the metric system. Local map-vertex equations are combined with:
+
+```text
+sum(point turns on one tile) = 2 - 2/tile_count
+```
+
+### 6.4 Soundness policy
+
+HiGHS is only a fast feasibility screen. A placement is rejected by the linear modules only after the rational simplex proves that the best strict margin is non-positive. Unexpected construction errors are logged and conservatively passed to Nielsen--Levi.
+
+## 7. Exact-partial word solver
 
 Residual systems are canonicalized and explored as a Nielsen-Levi graph.
 
@@ -66,7 +125,7 @@ A repeated residual state is compiled only when its cycle has fixed contexts. Su
 
 The statuses distinguish supported solutions, exact unsatisfiability, unsupported family language and configured graph limits.
 
-## 7. Family specialization
+## 8. Family specialization
 
 The default expansion policy is `none`:
 
@@ -74,7 +133,7 @@ The default expansion policy is `none`:
 - power and nested-power families remain symbolic;
 - only concrete specializations enter decorations and local profile filters.
 
-## 8. Terminal decorations
+## 9. Terminal decorations
 
 After a finite family is specialized, the terminal contour alternates decorated points and decorated curve occurrences.
 
@@ -124,31 +183,28 @@ theta_i * C_disk = 2 * O_i
 
 where `C_disk=1` in normalized expressions.
 
-## 9. Exact joint angular feasibility
+## 10. Exact terminal angular feasibility
 
-Before a profile is persisted, one exact rational system simultaneously contains:
+After word solving, the same mathematical model is rebuilt on terminal curve components. It contains:
 
-- all point-angle equations;
-- all terminal component-length equations;
-- all mapping-induced curve-turn sign equations;
+- point-angle class equations;
+- terminal component-length equations;
+- mapping-induced curve-turn sign equations;
 - zero-turn equations for straight or self-turn-reversing components;
-- exterior-circle length/turn equations;
-- the total-turn equation of the prototype contour:
+- exterior-circle length/turn equations.
+
+For piecewise-C2 maps, the two global contributions are constrained separately:
 
 ```text
-sum(signed curve occurrence turns) + sum(tau_Bi) = 2
+sum(signed smooth curve turns) = 2/tile_count
+sum(point turns) = 2 - 2/tile_count
 ```
 
-The curve-turn variables are unbounded: a generic curve may spiral through any finite signed total turn. Only point turns have the strict `(-1,1)` bound.
+Their sum is the usual full winding `2`. The curve-turn variables remain unbounded; only point turns have the strict `(-1,1)` domain.
 
-Exact Gaussian elimination first expresses all variables as affine rational functions of a minimal set of free parameters. A small two-phase simplex using `fractions.Fraction` then maximizes one common strict margin for:
+Exact Gaussian elimination expresses all variables as affine rational functions of a minimal free set. A small rational simplex then maximizes a common strict margin for point-angle bounds and positive component lengths. Infeasible profiles are rejected before persistence and numerical geometry.
 
-- `0 < alpha_Bi < 2`;
-- `L_Ci > 0`.
-
-If the exact optimum is zero or the equality system is inconsistent, the profile is rejected before SQLite, `candidates.jsonl` and numerical geometry. The exact affine solution and a rational strict witness are exported with every survivor.
-
-## 10. Local filters
+## 11. Local filters
 
 Current local checks include:
 
@@ -162,13 +218,13 @@ Current local checks include:
 
 The old cyclic `A A^-1` rejection is disabled by default because equal variables denote congruent templates, not identical geometric occurrences. The three-sector contour `A^-1 B A` is a direct counterexample.
 
-## 11. Streaming and checkpointing
+## 12. Streaming and checkpointing
 
 Every placement is compiled, solved and filtered immediately. Only survivors are persisted by default. SQLite stores one compact DFS cursor and cumulative statistics, not the explored tree or rejected systems.
 
 The progress percentage credits the full raw descendant mass whenever a subtree is completed or rejected. It estimates combinatorial coverage, not remaining wall-clock time.
 
-## 12. Numerical single-piece contour stage
+## 13. Numerical single-piece contour stage
 
 The `geometry` command is downstream and independent of map assembly. It reads complete formal survivor records and solves only one piece boundary.
 

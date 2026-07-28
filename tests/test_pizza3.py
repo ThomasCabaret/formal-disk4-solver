@@ -137,12 +137,11 @@ class PizzaMapTests(unittest.TestCase):
             [point.prototype_turn_expression.to_text() for point in profile.point_decorations],
             ["1/3", "alpha_B2", "1 - alpha_B2"],
         )
-        self.assertTrue(
-            any(
-                equation.kind == "prototype_total_turn"
-                for equation in profile.joint_angular_feasibility.equations
-            )
-        )
+        equation_kinds = {
+            equation.kind for equation in profile.joint_angular_feasibility.equations
+        }
+        self.assertIn("prototype_smooth_turn_balance", equation_kinds)
+        self.assertIn("prototype_point_turn_balance", equation_kinds)
 
         relation_keys = {
             (item.relation, item.terms, item.rhs_pi) for item in profile.angle_equations

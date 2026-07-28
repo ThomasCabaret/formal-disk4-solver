@@ -70,8 +70,14 @@ class JointAngularFeasibilityFilter:
             return False, analysis.status
         if analysis.strict_margin <= 0:
             return False, "exact joint angular system has no strict margin"
-        if not any(item.kind == "prototype_total_turn" for item in analysis.equations):
-            return False, "missing prototype total-turn equation"
+        kinds = {item.kind for item in analysis.equations}
+        has_total = "prototype_total_turn" in kinds
+        has_split = {
+            "prototype_smooth_turn_balance",
+            "prototype_point_turn_balance",
+        }.issubset(kinds)
+        if not has_total and not has_split:
+            return False, "missing prototype winding equations"
         return True, f"pass:exact_margin={analysis.strict_margin}"
 
 

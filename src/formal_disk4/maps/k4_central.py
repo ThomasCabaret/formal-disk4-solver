@@ -9,6 +9,7 @@ from .base import (
     MapAutomorphism,
     PieceSpec,
     PlanarMap,
+    ProblemHypotheses,
     VertexSpec,
 )
 
@@ -149,6 +150,10 @@ def build_k4_central_map() -> PlanarMap:
         interfaces=interfaces,
         automorphisms=tuple(automorphisms),
         reference_piece="C",
+        hypotheses=ProblemHypotheses(
+            piecewise_c2_boundary=True,
+            center_strictly_inside_one_tile=True,
+        ),
     )
     result.validate()
     return result

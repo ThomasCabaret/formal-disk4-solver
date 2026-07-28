@@ -717,6 +717,8 @@ def _build_joint_angular_feasibility(
     exact_length_solution: ExactLinearSolution,
     expanded_outer: Sequence[Tuple[str, str, Word]],
     piece_orientation_signs: Mapping[str, int],
+    tile_count: int = 1,
+    piecewise_c2_boundary: bool = False,
 ) -> JointAngularFeasibility:
     """Solve all inexpensive point/curve turning constraints simultaneously.
 
@@ -834,19 +836,43 @@ def _build_joint_angular_feasibility(
                 "positive disk-boundary traversal has turn_pi = 2 * normalized_length",
             )
 
-    total_turn_coefficients: Dict[str, Fraction] = defaultdict(Fraction)
-    for literal in terminal_contour:
-        component_index = component_by_variable[literal.variable]
-        total_turn_coefficients[kappa_names[component_index]] += occurrence_turn_sign(literal)
-    for alpha_name in alpha_names:
-        total_turn_coefficients[alpha_name] -= 1
-    add_equation(
-        "prototype_total_turn",
-        total_turn_coefficients,
-        Fraction(2 - len(terminal_contour)),
-        "terminal-contour",
-        "sum(curve_turns) + sum(1 - interior_angle_pi) = 2",
-    )
+    if piecewise_c2_boundary:
+        smooth_turn_coefficients: Dict[str, Fraction] = defaultdict(Fraction)
+        for literal in terminal_contour:
+            component_index = component_by_variable[literal.variable]
+            smooth_turn_coefficients[kappa_names[component_index]] += occurrence_turn_sign(literal)
+        add_equation(
+            "prototype_smooth_turn_balance",
+            smooth_turn_coefficients,
+            Fraction(2, tile_count),
+            "terminal-contour",
+            "internal smooth-curvature integrals cancel across copies, leaving the disk turn",
+        )
+
+        point_turn_coefficients: Dict[str, Fraction] = defaultdict(Fraction)
+        for alpha_name in alpha_names:
+            point_turn_coefficients[alpha_name] -= 1
+        add_equation(
+            "prototype_point_turn_balance",
+            point_turn_coefficients,
+            Fraction(2) - Fraction(2, tile_count) - len(alpha_names),
+            "terminal-contour",
+            "corner turns provide the remainder of the full contour winding",
+        )
+    else:
+        total_turn_coefficients: Dict[str, Fraction] = defaultdict(Fraction)
+        for literal in terminal_contour:
+            component_index = component_by_variable[literal.variable]
+            total_turn_coefficients[kappa_names[component_index]] += occurrence_turn_sign(literal)
+        for alpha_name in alpha_names:
+            total_turn_coefficients[alpha_name] -= 1
+        add_equation(
+            "prototype_total_turn",
+            total_turn_coefficients,
+            Fraction(2 - len(terminal_contour)),
+            "terminal-contour",
+            "sum(curve_turns) + sum(1 - interior_angle_pi) = 2",
+        )
 
     try:
         exact_solution = solve_exact_linear_system(variable_names, equations)
@@ -998,6 +1024,8 @@ def build_decorations(
             name: placement.assignment.orientation_signs[index]
             for index, name in enumerate(placement.assignment.piece_names)
         },
+        tile_count=len(planar_map.pieces),
+        piecewise_c2_boundary=planar_map.hypotheses.piecewise_c2_boundary,
     )
     joint_expression_map = joint_angular.exact_solution.expression_map()
     joint_witness_map = joint_angular.witness_map()

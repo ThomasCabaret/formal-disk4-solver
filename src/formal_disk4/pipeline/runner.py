@@ -21,6 +21,11 @@ from formal_disk4.profiles.build import build_formal_profile
 from formal_disk4.profiles.canonical import conservative_profile_key
 from formal_disk4.profiles.decorations import DecorationInfeasible
 from formal_disk4.profiles.filters import ProfileFilterPipeline
+from formal_disk4.preword import (
+    PrewordLinearInvariantFilter,
+    PrewordPruningPipeline,
+    RadiusArcTopologyFilter,
+)
 from formal_disk4.words.compile import compile_word_case
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
@@ -98,6 +103,38 @@ class SolverRunner:
         tolerance = float(self.config["enumeration"]["lp_tolerance"])
         self.length_oracle = LengthFeasibilityOracle(tolerance=tolerance)
         self.angle_oracle = AngleFeasibilityOracle(tolerance=tolerance)
+        preword_config = self.config["filters"].get("preword_pruning", {})
+        topology_config = preword_config.get("topology", {})
+        linear_config = preword_config.get("linear_invariants", {})
+        self.preword_pruning = PrewordPruningPipeline(
+            topology_filter=RadiusArcTopologyFilter(
+                tolerance=tolerance,
+                enable_endpoint_crossing=bool(
+                    topology_config.get("enable_endpoint_crossing", True)
+                ),
+                max_intervals=int(topology_config.get("max_intervals", 1024)),
+            ),
+            linear_filter=PrewordLinearInvariantFilter(
+                tolerance=tolerance,
+                enable_radius_measures=bool(
+                    linear_config.get("enable_radius_measures", True)
+                ),
+                enable_smooth_turns=bool(
+                    linear_config.get("enable_smooth_turns", True)
+                ),
+                enable_point_turns=bool(
+                    linear_config.get("enable_point_turns", True)
+                ),
+                enable_isoperimetric=bool(
+                    linear_config.get("enable_isoperimetric", True)
+                ),
+                sqrt_upper_bound_denominator=int(
+                    linear_config.get("sqrt_upper_bound_denominator", 1000)
+                ),
+            ),
+            enable_topology=bool(topology_config.get("enabled", True)),
+            enable_linear_invariants=bool(linear_config.get("enabled", True)),
+        )
         self.filter_pipeline = ProfileFilterPipeline(
             enable_subsumption_hook=bool(
                 self.config["filters"]["enable_subsumption_hook"]
@@ -196,7 +233,9 @@ class SolverRunner:
             f"nodes={nodes} ({rate:,.0f}/s) "
             f"length_pruned={self.stats.get('length_pruned_nodes')} "
             f"angle_pruned={self.stats.get('angle_pruned_nodes')} "
+            f"outer_arc_pruned={self.stats.get('exterior_arc_repetition_pruned_nodes')} "
             f"placements={self.stats.get('surviving_placements')} "
+            f"preword_pruned={self.stats.get('preword_rejections')} "
             f"word_systems={self.stats.get('solver_cases')} "
             f"families={self.stats.get('word_families')}"
             f"[finite={self.stats.get('word_family_finite')},"
@@ -483,6 +522,11 @@ class SolverRunner:
                         enable_angle_filter=bool(
                             self.config["enumeration"]["enable_angle_filter"]
                         ),
+                        enable_exterior_arc_repetition_filter=bool(
+                            self.config["enumeration"]
+                            .get("exterior_arc_repetition", {})
+                            .get("enabled", True)
+                        ),
                         event_sink=self._event,
                         stop_predicate=self._should_stop,
                         resume_state=resume_weak if isinstance(resume_weak, Mapping) else None,
@@ -531,6 +575,88 @@ class SolverRunner:
                                 "word_compilation", time.perf_counter() - started
                             )
 
+                        preword_result = None
+                        preword_config = self.config["filters"].get(
+                            "preword_pruning", {}
+                        )
+                        if bool(preword_config.get("enabled", True)):
+                            preword_started = time.perf_counter()
+                            self.stats.increment("preword_checks")
+                            try:
+                                preword_result = self.preword_pruning.analyze(
+                                    planar_map,
+                                    placement,
+                                    compiled,
+                                )
+                            except Exception as error:
+                                # Pre-word pruning is an optimization. Unexpected
+                                # construction errors must never remove a formal case.
+                                self.stats.increment("preword_errors")
+                                error_writer.write(
+                                    {
+                                        "stage": "preword_pruning",
+                                        "map": planar_map.name,
+                                        "assignment_id": assignment.assignment_id,
+                                        "placement_id": placement.placement_id,
+                                        "error": repr(error),
+                                        "word_case": compiled.to_dict(),
+                                    }
+                                )
+                            finally:
+                                self.stats.add_time(
+                                    "preword_pruning",
+                                    time.perf_counter() - preword_started,
+                                )
+                            if preword_result is not None:
+                                topology = preword_result.topology
+                                linear = preword_result.linear_invariants
+                                self.stats.increment(
+                                    "preword_unresolved_arc_images",
+                                    topology.unresolved_images,
+                                )
+                                self.stats.increment(
+                                    "preword_endpoint_checks",
+                                    topology.endpoint_crossing_checks,
+                                )
+                                self.stats.increment(
+                                    "preword_overlap_checks",
+                                    topology.forced_overlap_checks,
+                                )
+                                if topology.propagation_truncated:
+                                    self.stats.increment("preword_topology_truncations")
+                                if linear is not None:
+                                    self.stats.increment("preword_linear_checks")
+                                    if linear.metric_exact_certificate_used:
+                                        self.stats.increment("preword_metric_exact_certificates")
+                                    if linear.point_angle_exact_certificate_used:
+                                        self.stats.increment("preword_point_exact_certificates")
+                                    if linear.signed_radius_balance_derived:
+                                        self.stats.increment("preword_radius_balance_derived")
+                                    if linear.smooth_turn_balance_derived:
+                                        self.stats.increment("preword_smooth_turn_balance_derived")
+                                    if linear.point_turn_balance_derived:
+                                        self.stats.increment("preword_point_turn_balance_derived")
+                            if preword_result is not None and not preword_result.feasible:
+                                self.stats.increment("preword_rejections")
+                                if preword_result.linear_invariants is None:
+                                    self.stats.increment("preword_topology_rejections")
+                                else:
+                                    self.stats.increment("preword_linear_rejections")
+                                reason_key = (
+                                    preword_result.reason.lower()
+                                    .replace("same-radius ", "")
+                                    .replace("preword ", "")
+                                    .replace(" ", "_")
+                                    .replace("/", "_")
+                                    .replace("-", "_")
+                                )
+                                self.stats.increment(f"preword_rejection_{reason_key}")
+                                placement_started = time.perf_counter()
+                                if self._placement_limit_reached():
+                                    exhausted = False
+                                    break
+                                continue
+
                         if not bool(solver_config["enabled"]):
                             placement_started = time.perf_counter()
                             if self._placement_limit_reached():
@@ -543,9 +669,34 @@ class SolverRunner:
                         )
                         self.stats.increment("solver_cases")
                         families_before = self.stats.get("word_families")
-                        started = time.perf_counter()
                         try:
-                            for family in solver.solve(solver_limits):
+                            family_iterator = iter(
+                                solver.solve(
+                                    solver_limits,
+                                    stop_predicate=self._should_stop,
+                                )
+                            )
+                            while True:
+                                solver_started = time.perf_counter()
+                                try:
+                                    family = next(family_iterator)
+                                except StopIteration:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
+                                    break
+                                except Exception:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
+                                    raise
+                                else:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
                                 self.stats.increment("word_families")
                                 self.stats.increment(f"word_family_{family.kind}")
                                 if bool(output_config.get("write_families", False)):
@@ -697,11 +848,6 @@ class SolverRunner:
                                     "word_case": compiled.to_dict(),
                                 }
                             )
-                        finally:
-                            self.stats.add_time(
-                                "exact_partial_word_solver",
-                                time.perf_counter() - started,
-                            )
 
                         summary = solver.last_summary
                         self.stats.increment("residual_graph_nodes", summary.visited_states)
@@ -718,6 +864,8 @@ class SolverRunner:
                             self.stats.increment("graph_limited_word_cases")
                         if summary.status == "unresolved_family_limit":
                             self.stats.increment("family_limited_word_cases")
+                        if summary.status == "interrupted_external_stop":
+                            self.stats.increment("externally_stopped_word_cases")
                         if self.stats.get("word_families") == families_before:
                             self.stats.increment("word_cases_without_supported_family")
 
@@ -729,6 +877,11 @@ class SolverRunner:
                                     "assignment_id": assignment.assignment_id,
                                     "placement_id": placement.placement_id,
                                     "word_case": compiled.to_dict(),
+                                    "preword_pruning": (
+                                        preword_result.to_dict()
+                                        if preword_result is not None
+                                        else None
+                                    ),
                                     "solver_summary": summary.to_dict(),
                                     "family_count": summary.emitted_families,
                                     "unsupported_component_count": len(
@@ -901,14 +1054,48 @@ class SolverRunner:
                 "length": {
                     "calls": self.length_oracle.calls,
                     "cache_hits": self.length_oracle.cache_hits,
+                    "cache_misses": self.length_oracle.calls - self.length_oracle.cache_hits,
+                    "elapsed_seconds": self.length_oracle.elapsed_seconds,
+                    "lp_seconds": self.length_oracle.lp_seconds,
+                    "pruned_nodes": self.stats.get("length_pruned_nodes"),
                 },
                 "angle": {
                     "calls": self.angle_oracle.calls,
                     "cache_hits": self.angle_oracle.cache_hits,
+                    "cache_misses": self.angle_oracle.calls - self.angle_oracle.cache_hits,
+                    "elapsed_seconds": self.angle_oracle.elapsed_seconds,
+                    "lp_seconds": self.angle_oracle.lp_seconds,
+                    "pruned_nodes": self.stats.get("angle_pruned_nodes"),
                     "semantics": (
-                        "signed turn classes; reversed contour gives complementary "
-                        "interior angle"
+                        "positive solid-angle sums at map vertices, represented through "
+                        "prototype signed point turns"
                     ),
+                },
+                "preword_topology_strict_length": {
+                    "calls": self.preword_pruning.topology_filter.strict_oracle.calls,
+                    "cache_hits": self.preword_pruning.topology_filter.strict_oracle.cache_hits,
+                    "elapsed_seconds": self.preword_pruning.topology_filter.strict_oracle.elapsed_seconds,
+                    "lp_seconds": self.preword_pruning.topology_filter.strict_oracle.lp_seconds,
+                    "exact_certificate_calls": self.preword_pruning.topology_filter.exact_strict_oracle.calls,
+                    "exact_certificate_cache_hits": self.preword_pruning.topology_filter.exact_strict_oracle.cache_hits,
+                    "exact_certificate_elapsed_seconds": self.preword_pruning.topology_filter.exact_strict_oracle.elapsed_seconds,
+                    "rejections": self.stats.get("preword_topology_rejections"),
+                },
+                "preword_metric_invariants": {
+                    "calls": self.preword_pruning.linear_filter.metric_oracle.calls,
+                    "cache_hits": self.preword_pruning.linear_filter.metric_oracle.cache_hits,
+                    "exact_certificate_calls": self.preword_pruning.linear_filter.metric_oracle.exact_calls,
+                    "elapsed_seconds": self.preword_pruning.linear_filter.metric_oracle.elapsed_seconds,
+                    "float_seconds": self.preword_pruning.linear_filter.metric_oracle.float_seconds,
+                    "exact_seconds": self.preword_pruning.linear_filter.metric_oracle.exact_seconds,
+                },
+                "preword_point_turns": {
+                    "calls": self.preword_pruning.linear_filter.point_oracle.calls,
+                    "cache_hits": self.preword_pruning.linear_filter.point_oracle.cache_hits,
+                    "exact_certificate_calls": self.preword_pruning.linear_filter.point_oracle.exact_calls,
+                    "elapsed_seconds": self.preword_pruning.linear_filter.point_oracle.elapsed_seconds,
+                    "float_seconds": self.preword_pruning.linear_filter.point_oracle.float_seconds,
+                    "exact_seconds": self.preword_pruning.linear_filter.point_oracle.exact_seconds,
                 },
             },
             "files": {

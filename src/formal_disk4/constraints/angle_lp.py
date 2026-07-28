@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Iterable, Sequence, Tuple
 
 import numpy as np
@@ -44,11 +45,25 @@ class AngleFeasibilityOracle:
         self.tolerance = tolerance
         self.calls = 0
         self.cache_hits = 0
+        self.elapsed_seconds = 0.0
+        self.lp_seconds = 0.0
         self._cache: dict[
             Tuple[int, Tuple[Tuple[Tuple[int, ...], float], ...]], AngleFeasibilityResult
         ] = {}
 
     def analyze(
+        self,
+        point_count: int,
+        equations: Iterable[AngleEquation],
+        need_witness: bool = False,
+    ) -> AngleFeasibilityResult:
+        started = time.perf_counter()
+        try:
+            return self._analyze(point_count, equations, need_witness)
+        finally:
+            self.elapsed_seconds += time.perf_counter() - started
+
+    def _analyze(
         self,
         point_count: int,
         equations: Iterable[AngleEquation],
@@ -95,15 +110,19 @@ class AngleFeasibilityOracle:
             a_ub.append(lower)
             b_ub.append(1.0)
 
-        solution = linprog(
-            objective,
-            A_ub=np.asarray(a_ub, dtype=float),
-            b_ub=np.asarray(b_ub, dtype=float),
-            A_eq=np.asarray(a_eq, dtype=float) if a_eq else None,
-            b_eq=np.asarray(b_eq, dtype=float) if b_eq else None,
-            bounds=[(None, None)] * point_count + [(0.0, None)],
-            method="highs",
-        )
+        lp_started = time.perf_counter()
+        try:
+            solution = linprog(
+                objective,
+                A_ub=np.asarray(a_ub, dtype=float),
+                b_ub=np.asarray(b_ub, dtype=float),
+                A_eq=np.asarray(a_eq, dtype=float) if a_eq else None,
+                b_eq=np.asarray(b_eq, dtype=float) if b_eq else None,
+                bounds=[(None, None)] * point_count + [(0.0, None)],
+                method="highs",
+            )
+        finally:
+            self.lp_seconds += time.perf_counter() - lp_started
 
         if not solution.success or solution.x is None:
             result = AngleFeasibilityResult(False, 0.0, (), f"linprog:{solution.status}")

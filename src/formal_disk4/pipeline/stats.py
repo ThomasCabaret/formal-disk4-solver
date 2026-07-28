@@ -55,12 +55,17 @@ class RunStats:
         placements = self.get("surviving_placements")
         graph_nodes = self.get("residual_graph_nodes")
         systems = self.get("solver_cases")
+        sorted_timings = dict(sorted(self.timings.items()))
         return {
             "elapsed_seconds": elapsed,
             "session_elapsed_seconds": self.session_elapsed_seconds,
             "stop_reason": self.stop_reason,
             "counters": dict(sorted(self.counters.items())),
-            "timings_seconds": dict(sorted(self.timings.items())),
+            "timings_seconds": sorted_timings,
+            "timing_share_of_elapsed_percent": {
+                name: (100.0 * seconds / elapsed if elapsed else 0.0)
+                for name, seconds in sorted_timings.items()
+            },
             "rates": {
                 "placement_nodes_per_second": nodes / elapsed if elapsed else 0.0,
                 "surviving_placements_per_second": placements / elapsed if elapsed else 0.0,

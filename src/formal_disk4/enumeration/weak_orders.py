@@ -10,6 +10,7 @@ from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
 from .assignments import AssignmentTransform, ContourAssignment
+from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 
 
 EventSink = Callable[[str, int], None]
@@ -68,6 +69,7 @@ class WeakOrderEnumerator:
         symmetry_mode: str = "incremental",
         enable_length_filter: bool = True,
         enable_angle_filter: bool = True,
+        enable_exterior_arc_repetition_filter: bool = True,
         event_sink: EventSink | None = None,
         stop_predicate: StopPredicate | None = None,
         resume_state: Mapping[str, object] | None = None,
@@ -81,6 +83,7 @@ class WeakOrderEnumerator:
         self.symmetry_mode = symmetry_mode
         self.enable_length_filter = enable_length_filter
         self.enable_angle_filter = enable_angle_filter
+        self.enable_exterior_arc_repetition_filter = enable_exterior_arc_repetition_filter
         self.event_sink = event_sink or (lambda _name, _amount=1: None)
         self.stop_predicate = stop_predicate or (lambda: False)
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
@@ -89,6 +92,13 @@ class WeakOrderEnumerator:
         self.reference_index = self.piece_index[planar_map.reference_piece]
         self.occurrences = planar_map.occurrences()
         self.occurrence_index = {occurrence: index for index, occurrence in enumerate(self.occurrences)}
+        self.exterior_arc_repetition = build_exterior_arc_repetition_constraint(
+            planar_map,
+            assignment.piece_names,
+            assignment.sequences,
+            self.occurrence_index,
+            enabled=enable_exterior_arc_repetition_filter,
+        )
         self.interface_occurrences = self._build_interface_occurrences()
         self.vertex_occurrences = self._build_vertex_occurrences()
         self._positive_arc_endpoints = self._build_positive_arc_endpoints()
@@ -269,6 +279,14 @@ class WeakOrderEnumerator:
         return blocks == best
 
     def enumerate(self) -> Iterator[Placement]:
+        if (
+            self.exterior_arc_repetition.applicable
+            and not self.exterior_arc_repetition.candidate_pairs
+        ):
+            self.event_sink("exterior_arc_repetition_pruned_assignments", 1)
+            self._mark_subtree_complete((), self.total_leaf_mass)
+            return
+
         counters = tuple(0 for _ in self.piece_names)
         positions = tuple(-1 for _ in self.occurrences)
         available_mask = (1 << len(self.piece_names)) - 1
@@ -344,6 +362,15 @@ class WeakOrderEnumerator:
             if self._resume_path[: len(path)] != path:
                 return
         self.event_sink("placement_nodes", 1)
+
+        if not self.exterior_arc_repetition.prefix_is_feasible(positions):
+            # Once every possible repeated exterior-arc pair has separated an
+            # endpoint, no descendant can restore equality in a past block.
+            self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
+            self._mark_subtree_complete(
+                path, _weak_path_count(counters, self.target_counters)
+            )
+            return
 
         if not self._prefix_is_canonical(blocks):
             self.event_sink("symmetry_pruned_nodes", 1)

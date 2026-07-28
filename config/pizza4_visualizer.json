@@ -1,0 +1,30 @@
+{
+  "input": {
+    "solutions_file": "output/pizza4/geometry/geometric_solutions.jsonl"
+  },
+  "viewer": {
+    "title": "Formal Contour Solver - Four-Piece Pizza Assembly",
+    "width": 1050,
+    "height": 820,
+    "background": "#62676d",
+    "margin_pixels": 52,
+    "start_index": 0,
+    "cache_size": 4,
+    "piece_palette": [
+      "#e76f51",
+      "#2a9d8f",
+      "#e9c46a",
+      "#457b9d",
+      "#9b5de5",
+      "#f4a261"
+    ]
+  },
+  "assembly": {
+    "interface_sample_count": 25,
+    "polygon_arc_sample_count": 96,
+    "mapping_tolerance": 0.000001
+  },
+  "limits": {
+    "max_solutions": null
+  }
+}

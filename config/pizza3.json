@@ -1,5 +1,7 @@
 {
-  "maps": ["k3-pizza"],
+  "maps": [
+    "k3-pizza"
+  ],
   "limits": {
     "max_assignments": null,
     "max_nodes": null,
@@ -44,5 +46,23 @@
     "restart": false,
     "file": "checkpoint.sqlite3",
     "interval_seconds": 60
+  },
+  "filters": {
+    "preword_pruning": {
+      "enabled": true,
+      "topology": {
+        "enabled": true,
+        "enable_endpoint_crossing": true,
+        "max_intervals": 1024
+      },
+      "linear_invariants": {
+        "enabled": true,
+        "enable_radius_measures": true,
+        "enable_smooth_turns": true,
+        "enable_point_turns": true,
+        "enable_isoperimetric": true,
+        "sqrt_upper_bound_denominator": 1000
+      }
+    }
   }
 }

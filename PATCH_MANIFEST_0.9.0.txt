@@ -1,0 +1,37 @@
+Formal Contour Solver patch 0.9.0
+Base version: 0.8.0
+
+Files changed or added: 32
+
+PATCH_NOTES_0.9.0.md
+README.md
+config/benchmark.json
+config/debug.json
+config/full_k4.json
+config/pizza3.json
+config/pizza4.json
+config/profile_k4.json
+docs/ARCHITECTURE.md
+docs/BENCHMARK_NOTES.md
+docs/OUTPUT_SCHEMA.md
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/config.py
+src/formal_disk4/constraints/hybrid_linear.py
+src/formal_disk4/constraints/length_lp.py
+src/formal_disk4/maps/base.py
+src/formal_disk4/maps/k4_central.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/preword/__init__.py
+src/formal_disk4/preword/arc_topology.py
+src/formal_disk4/preword/circular_arcs.py
+src/formal_disk4/preword/filter.py
+src/formal_disk4/preword/linear_invariants.py
+src/formal_disk4/profiles/decorations.py
+src/formal_disk4/profiles/filters.py
+tests/test_integration.py
+tests/test_pizza3.py
+tests/test_preword_circular.py
+tests/test_preword_linear.py

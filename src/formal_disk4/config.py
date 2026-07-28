@@ -13,6 +13,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "symmetry_mode": "incremental",
         "enable_length_filter": True,
         "enable_angle_filter": True,
+        "exterior_arc_repetition": {
+            "enabled": True,
+        },
         "lp_tolerance": 1e-9,
     },
     "solver": {
@@ -34,6 +37,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enable_geometry_hook": True,
         "enable_cyclic_no_backtracking_heuristic": False,
         "deduplicate_exact_profiles": True,
+        "preword_pruning": {
+            "enabled": True,
+            "topology": {
+                "enabled": True,
+                "enable_endpoint_crossing": True,
+                "max_intervals": 1024,
+            },
+            "linear_invariants": {
+                "enabled": True,
+                "enable_radius_measures": True,
+                "enable_smooth_turns": True,
+                "enable_point_turns": True,
+                "enable_isoperimetric": True,
+                "sqrt_upper_bound_denominator": 1000,
+            },
+        },
     },
     "limits": {
         "max_assignments": None,
@@ -98,10 +117,34 @@ def _migrate_legacy_solver_keys(config: Dict[str, Any]) -> None:
     # unfolding solver. They are intentionally ignored in exact_partial mode.
 
 
+
+
+def _migrate_preword_filter_keys(config: Dict[str, Any], loaded: Mapping[str, Any] | None = None) -> None:
+    """Map the 0.8 circular filter options onto the 0.9 pruning pipeline."""
+
+    loaded_filters = loaded.get("filters", {}) if isinstance(loaded, Mapping) else {}
+    legacy = loaded_filters.get("preword_circular_arcs") if isinstance(loaded_filters, Mapping) else None
+    if not isinstance(legacy, Mapping):
+        return
+    pruning = config["filters"]["preword_pruning"]
+    topology = pruning["topology"]
+    pruning["enabled"] = bool(legacy.get("enabled", pruning["enabled"]))
+    topology["enabled"] = bool(legacy.get("enabled", topology["enabled"]))
+    topology["enable_endpoint_crossing"] = bool(
+        legacy.get("enable_endpoint_crossing", topology["enable_endpoint_crossing"])
+    )
+    topology["max_intervals"] = int(
+        legacy.get("max_intervals", topology["max_intervals"])
+    )
+    # enable_signed_balance is intentionally not migrated. The old closed-sign
+    # balance is replaced by the more general radius-measure linear system.
+
+
 def load_config(path: Path | None) -> Dict[str, Any]:
     if path is None:
         result = deepcopy(DEFAULT_CONFIG)
         _migrate_legacy_solver_keys(result)
+        _migrate_preword_filter_keys(result)
         return result
     with path.open("r", encoding="utf-8") as handle:
         loaded = json.load(handle)
@@ -109,6 +152,7 @@ def load_config(path: Path | None) -> Dict[str, Any]:
         raise ValueError("Configuration root must be a JSON object")
     result = _deep_merge(DEFAULT_CONFIG, loaded)
     _migrate_legacy_solver_keys(result)
+    _migrate_preword_filter_keys(result, loaded)
     return result
 
 

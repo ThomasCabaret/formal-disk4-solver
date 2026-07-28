@@ -65,6 +65,30 @@ class ExactPartialSolverTests(unittest.TestCase):
         self.assertIsNone(plan)
         self.assertIn("evolving", reason)
 
+    def test_external_stop_interrupts_residual_graph(self) -> None:
+        solver = ExactPartialWordSolver(
+            (Equation(word("A", "B"), word("B", "A")),),
+            ("A", "B"),
+        )
+        self.assertEqual(
+            list(
+                solver.solve(
+                    SolverLimits(
+                        max_graph_nodes=1000,
+                        max_graph_edges=4000,
+                        max_families=8,
+                        max_expression_nodes=1000,
+                        validation_exponent=2,
+                    ),
+                    stop_predicate=lambda: True,
+                )
+            ),
+            [],
+        )
+        self.assertEqual(solver.last_summary.status, "interrupted_external_stop")
+        self.assertTrue(solver.last_summary.external_stop_reached)
+
+
 
 if __name__ == "__main__":
     unittest.main()

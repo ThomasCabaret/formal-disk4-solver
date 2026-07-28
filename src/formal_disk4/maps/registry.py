@@ -5,11 +5,13 @@ from typing import Callable, Dict, Iterator, Sequence
 from .base import PlanarMap
 from .k3_pizza import build_k3_pizza_map
 from .k4_central import build_k4_central_map
+from .k4_pizza import build_k4_pizza_map
 
 
 _MAP_BUILDERS: Dict[str, Callable[[], PlanarMap]] = {
     "k3-pizza": build_k3_pizza_map,
     "k4-central": build_k4_central_map,
+    "k4-pizza": build_k4_pizza_map,
 }
 
 

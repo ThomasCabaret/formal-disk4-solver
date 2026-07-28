@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, Iterator, List, Mapping, Sequence, Tuple
 
 from .algebra import (
     Equation,
@@ -67,6 +67,7 @@ class SolverRunSummary:
     graph_limit_reached: bool
     expression_limit_reached: bool
     family_limit_reached: bool
+    external_stop_reached: bool
     exact_unsat: bool
     status: str
 
@@ -82,6 +83,7 @@ class SolverRunSummary:
             "graph_limit_reached": self.graph_limit_reached,
             "expression_limit_reached": self.expression_limit_reached,
             "family_limit_reached": self.family_limit_reached,
+            "external_stop_reached": self.external_stop_reached,
             "exact_unsat": self.exact_unsat,
             "status": self.status,
         }
@@ -118,6 +120,7 @@ class _MutableCounters:
     graph_limit_reached: bool = False
     expression_limit_reached: bool = False
     family_limit_reached: bool = False
+    external_stop_reached: bool = False
 
 
 def _local_pattern(word: Word, known: Mapping[str, str]) -> Tuple[Tuple[int, bool], ...]:
@@ -435,13 +438,41 @@ class ExactPartialWordSolver:
         self.initial_residual = initial
         self.unsupported_components: list[UnsupportedComponent] = []
         self.last_summary = SolverRunSummary(
-            0, 0, 0, 0, 0, 0, 0, False, False, False, False, "not_run"
+            visited_states=0,
+            graph_edges=0,
+            emitted_families=0,
+            finite_families=0,
+            power_families=0,
+            nested_power_families=0,
+            unsupported_complex_components=0,
+            graph_limit_reached=False,
+            expression_limit_reached=False,
+            family_limit_reached=False,
+            external_stop_reached=False,
+            exact_unsat=False,
+            status="not_run",
         )
 
-    def solve(self, limits: SolverLimits) -> Iterator[ExactFormalFamily]:
+    def solve(
+        self,
+        limits: SolverLimits,
+        stop_predicate: Callable[[], bool] | None = None,
+    ) -> Iterator[ExactFormalFamily]:
         if self.initial_residual is None:
             self.last_summary = SolverRunSummary(
-                0, 0, 0, 0, 0, 0, 0, False, False, False, True, "exact_unsat"
+                visited_states=0,
+                graph_edges=0,
+                emitted_families=0,
+                finite_families=0,
+                power_families=0,
+                nested_power_families=0,
+                unsupported_complex_components=0,
+                graph_limit_reached=False,
+                expression_limit_reached=False,
+                family_limit_reached=False,
+                external_stop_reached=False,
+                exact_unsat=True,
+                status="exact_unsat",
             )
             return
 
@@ -451,6 +482,7 @@ class ExactPartialWordSolver:
             for variable in self.initial_variables
         }
         counters = _MutableCounters()
+        should_stop = stop_predicate or (lambda: False)
         emitted_signatures: set[object] = set()
         seen_search_signatures: set[object] = set()
         family_id = 0
@@ -514,6 +546,10 @@ class ExactPartialWordSolver:
             nonlocal stop
             if stop:
                 return
+            if should_stop():
+                counters.external_stop_reached = True
+                stop = True
+                return
             if limits.max_graph_nodes is not None and counters.visited_states >= limits.max_graph_nodes:
                 counters.graph_limit_reached = True
                 stop = True
@@ -543,6 +579,10 @@ class ExactPartialWordSolver:
                 residual.equations, residual.variables
             ):
                 if stop:
+                    return
+                if should_stop():
+                    counters.external_stop_reached = True
+                    stop = True
                     return
                 if limits.max_graph_edges is not None and counters.graph_edges >= limits.max_graph_edges:
                     counters.graph_limit_reached = True
@@ -664,8 +704,11 @@ class ExactPartialWordSolver:
             and not counters.graph_limit_reached
             and not counters.expression_limit_reached
             and not counters.family_limit_reached
+            and not counters.external_stop_reached
         )
-        if counters.family_limit_reached:
+        if counters.external_stop_reached:
+            status = "interrupted_external_stop"
+        elif counters.family_limit_reached:
             status = "unresolved_family_limit"
         elif counters.graph_limit_reached or counters.expression_limit_reached:
             status = "unresolved_graph_limit"
@@ -686,6 +729,7 @@ class ExactPartialWordSolver:
             graph_limit_reached=counters.graph_limit_reached,
             expression_limit_reached=counters.expression_limit_reached,
             family_limit_reached=counters.family_limit_reached,
+            external_stop_reached=counters.external_stop_reached,
             exact_unsat=exact_unsat,
             status=status,
         )

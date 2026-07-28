@@ -9,6 +9,9 @@ from typing import Any, Dict
 
 from formal_disk4.config import load_config, load_geometry_config, load_visualization_config
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
+from formal_disk4.enumeration.exterior_arc_repetition import (
+    build_exterior_arc_repetition_constraint,
+)
 from formal_disk4.enumeration.weak_orders import (
     count_distinct_orders_all_peripheral_phases,
     count_weak_orders_all_peripheral_phases,
@@ -40,8 +43,14 @@ def _apply_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
         config["enumeration"]["enable_length_filter"] = False
     if getattr(args, "no_angles", False):
         config["enumeration"]["enable_angle_filter"] = False
+    if getattr(args, "no_exterior_arc_repetition", False):
+        config["enumeration"]["exterior_arc_repetition"]["enabled"] = False
     if getattr(args, "no_solver", False):
         config["solver"]["enabled"] = False
+    if getattr(args, "no_preword_pruning", False) or getattr(
+        args, "no_preword_circular", False
+    ):
+        config["filters"]["preword_pruning"]["enabled"] = False
     if getattr(args, "restart", False):
         config["checkpoint"]["restart"] = True
         config["checkpoint"]["resume"] = False
@@ -124,11 +133,41 @@ def command_counts(args: argparse.Namespace) -> int:
     else:
         lengths = ()
         weak_per_assignment = 0
+    repetition_constraints = tuple(
+        build_exterior_arc_repetition_constraint(
+            planar_map,
+            assignment.piece_names,
+            assignment.sequences,
+            enumerator.occurrence_index,
+            enabled=True,
+        )
+        for assignment in assignments
+    )
+    repetition_applicable = sum(
+        1 for constraint in repetition_constraints if constraint.applicable
+    )
+    repetition_impossible = sum(
+        1
+        for constraint in repetition_constraints
+        if constraint.applicable and not constraint.candidate_pairs
+    )
+    repetition_pair_histogram: Dict[str, int] = {}
+    for constraint in repetition_constraints:
+        if not constraint.applicable:
+            continue
+        key = str(len(constraint.candidate_pairs))
+        repetition_pair_histogram[key] = repetition_pair_histogram.get(key, 0) + 1
     result = {
         "map": planar_map.name,
         "contour_occurrence_lengths": list(lengths),
         "raw_copy_assignments": enumerator.raw_assignment_count(),
         "canonical_copy_assignments": len(assignments),
+        "exterior_arc_repetition": {
+            "applicable_assignments": repetition_applicable,
+            "assignments_rejected_before_weak_orders": repetition_impossible,
+            "assignments_after_assignment_level_check": len(assignments) - repetition_impossible,
+            "candidate_pair_count_histogram": repetition_pair_histogram,
+        },
         "raw_weak_orders_per_canonical_assignment": weak_per_assignment,
         "estimated_raw_weak_orders_over_canonical_assignments": (
             len(assignments) * weak_per_assignment
@@ -203,7 +242,22 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--symmetry", choices=("off", "assignment", "incremental"))
     run_parser.add_argument("--no-lengths", action="store_true")
     run_parser.add_argument("--no-angles", action="store_true")
+    run_parser.add_argument(
+        "--no-exterior-arc-repetition",
+        action="store_true",
+        help="Disable the early K4 Stein transported-exterior-arc repetition theorem.",
+    )
     run_parser.add_argument("--no-solver", action="store_true")
+    run_parser.add_argument(
+        "--no-preword-pruning",
+        action="store_true",
+        help="Disable all pre-Nielsen--Levi pruning for differential debugging.",
+    )
+    run_parser.add_argument(
+        "--no-preword-circular",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     run_parser.add_argument(
         "--restart",
         action="store_true",

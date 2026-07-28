@@ -99,6 +99,30 @@ class MapAutomorphism:
         return Occurrence(self.map_piece(occurrence.piece), self.map_vertex(occurrence.vertex))
 
 
+
+
+@dataclass(frozen=True)
+class ProblemHypotheses:
+    """Mathematical assumptions that enable optional necessary conditions."""
+
+    piecewise_c2_boundary: bool = True
+    center_strictly_inside_one_tile: bool = False
+
+    @property
+    def requires_radius_r_concavity(self) -> bool:
+        # In a Stein configuration the outer-circle curvature must reappear on
+        # an internal interface with the opposite sign. Pizza validation maps
+        # deliberately do not satisfy this hypothesis.
+        return self.center_strictly_inside_one_tile
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "piecewise_c2_boundary": self.piecewise_c2_boundary,
+            "center_strictly_inside_one_tile": self.center_strictly_inside_one_tile,
+            "requires_radius_r_concavity": self.requires_radius_r_concavity,
+        }
+
+
 @dataclass(frozen=True)
 class PlanarMap:
     name: str
@@ -107,6 +131,7 @@ class PlanarMap:
     interfaces: Tuple[InterfaceSpec, ...]
     automorphisms: Tuple[MapAutomorphism, ...]
     reference_piece: str
+    hypotheses: ProblemHypotheses = ProblemHypotheses()
 
     def piece_map(self) -> Dict[str, PieceSpec]:
         return {piece.name: piece for piece in self.pieces}
@@ -202,6 +227,7 @@ class PlanarMap:
         return {
             "name": self.name,
             "reference_piece": self.reference_piece,
+            "hypotheses": self.hypotheses.to_dict(),
             "pieces": [
                 {
                     "name": piece.name,

@@ -1,4 +1,4 @@
-# Output schema 0.6.0
+# Output schema 0.9.1
 
 ## Default persistent files
 
@@ -6,7 +6,7 @@
 
 SQLite is authoritative for resumable search state and survivors. The checkpoint contains one compact cursor, cumulative counters/timings and a completion flag. It does not contain rejected placements, compiled word systems or residual solver graphs.
 
-The search-semantics version is part of the checkpoint metadata. Version 0.6.0 rejects older search checkpoints because the terminal angular acceptance criterion changed.
+The search-semantics version is part of the checkpoint metadata. Version 0.9.1 rejects older search checkpoints because the weak-order domain now includes the guarded transported-exterior-arc repetition theorem before word compilation.
 
 ### `candidates.jsonl`
 
@@ -34,11 +34,11 @@ A human-readable export of the SQLite survivor table. Each self-contained record
 
 The number of mappings is determined by the map: three for `k3-pizza`, six for `k4-central`.
 
-The current top-level survivor schema is `formal-contour-survivor-v6`; the nested profile schema is `formal-contour-profile-v5`.
+The current top-level survivor schema is `formal-contour-survivor-v7`; the nested profile schema is `formal-contour-profile-v6`.
 
 ### `run_summary.json`
 
-Contains cumulative counters, timings, rates, checkpoint status and combinatorial progress. `decoration_rejection_joint_angular_feasibility` counts terminal profiles rejected by the new exact joint system.
+Contains cumulative counters, timings, rates, checkpoint status and combinatorial progress. The `preword_*` counters separate topology and linear-invariant checks before Nielsen--Levi. The oracle section reports topology strict-length screens, exact interval certificates, joint metric invariants and point-turn systems. `decoration_rejection_joint_angular_feasibility` counts terminal profiles rejected by the exact terminal system.
 
 ### `errors.jsonl`
 

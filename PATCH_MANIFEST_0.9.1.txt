@@ -1,0 +1,24 @@
+Formal Contour Solver patch 0.9.1
+Base version: 0.9.0
+
+Files added or replaced:
+PATCH_NOTES_0.9.1.md
+README.md
+config/full_k4.json
+config/profile_k4.json
+docs/ARCHITECTURE.md
+docs/BENCHMARK_NOTES.md
+docs/OUTPUT_SCHEMA.md
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/config.py
+src/formal_disk4/enumeration/__init__.py
+src/formal_disk4/enumeration/exterior_arc_repetition.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+tests/test_exterior_arc_repetition.py
+
+Apply by extracting this archive into the 0.9.0 project root and allowing overwrite.
+K4 checkpoints created by 0.9.0 are search-semantics incompatible; use --restart.

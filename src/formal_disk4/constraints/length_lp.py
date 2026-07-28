@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import time
 from typing import Iterable, Sequence, Tuple
 
 import numpy as np
@@ -39,6 +40,8 @@ class LengthFeasibilityOracle:
         self.cache_size = cache_size
         self.calls = 0
         self.cache_hits = 0
+        self.elapsed_seconds = 0.0
+        self.lp_seconds = 0.0
         self._cache: dict[Tuple[int, Tuple[Tuple[int, ...], ...]], LengthFeasibilityResult] = {}
 
     def canonical_key(
@@ -61,6 +64,18 @@ class LengthFeasibilityOracle:
         rows: Iterable[Sequence[int]],
         need_witness: bool = False,
     ) -> LengthFeasibilityResult:
+        started = time.perf_counter()
+        try:
+            return self._analyze(interval_count, rows, need_witness)
+        finally:
+            self.elapsed_seconds += time.perf_counter() - started
+
+    def _analyze(
+        self,
+        interval_count: int,
+        rows: Iterable[Sequence[int]],
+        need_witness: bool = False,
+    ) -> LengthFeasibilityResult:
         if interval_count <= 0:
             raise ValueError("interval_count must be positive")
         key = self.canonical_key(interval_count, rows)
@@ -73,6 +88,8 @@ class LengthFeasibilityOracle:
         _, matrix_rows = key
         for row in matrix_rows:
             nonzero = [value for value in row if value]
+            # A nonzero homogeneous row with one coefficient sign cannot vanish
+            # when every atomic contour length is strictly positive.
             if nonzero and (all(value > 0 for value in nonzero) or all(value < 0 for value in nonzero)):
                 result = LengthFeasibilityResult(False, 0.0, (), "same-sign contradiction")
                 self._remember(key, result)
@@ -100,15 +117,19 @@ class LengthFeasibilityOracle:
             inequalities.append(row)
             inequality_rhs.append(0.0)
 
-        solution = linprog(
-            objective,
-            A_ub=np.asarray(inequalities, dtype=float),
-            b_ub=np.asarray(inequality_rhs, dtype=float),
-            A_eq=np.asarray(equalities, dtype=float),
-            b_eq=np.asarray(rhs, dtype=float),
-            bounds=[(0.0, None)] * variable_count,
-            method="highs",
-        )
+        lp_started = time.perf_counter()
+        try:
+            solution = linprog(
+                objective,
+                A_ub=np.asarray(inequalities, dtype=float),
+                b_ub=np.asarray(inequality_rhs, dtype=float),
+                A_eq=np.asarray(equalities, dtype=float),
+                b_eq=np.asarray(rhs, dtype=float),
+                bounds=[(0.0, None)] * variable_count,
+                method="highs",
+            )
+        finally:
+            self.lp_seconds += time.perf_counter() - lp_started
 
         if not solution.success or solution.x is None:
             result = LengthFeasibilityResult(False, 0.0, (), f"linprog:{solution.status}")

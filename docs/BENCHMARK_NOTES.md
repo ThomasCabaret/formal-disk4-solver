@@ -31,3 +31,100 @@ Important exact-partial counters include:
 - `decoration_rejection_*`, `profile_filter_rejection_*`.
 
 The percentage is the fraction of raw anchored weak orders accounted for by completed or pruned DFS subtrees across canonical assignments. It is monotone but not an ETA.
+
+## Version 0.7 short stage profile
+
+`run_profile_k4.bat` runs the normal `k4-central` pipeline for approximately 20 seconds with no checkpoint and no candidate output. The exact-partial solver now receives the run stop predicate, so a time limit also interrupts a large residual-graph exploration instead of waiting for the current word system to finish.
+
+A representative 20-second run in the development environment produced:
+
+```text
+placement nodes                 661
+length checks                   572
+length-pruned nodes             522
+angle checks                     50
+angle-pruned nodes                1
+surviving placements              2
+word systems                      2
+finite families                   5
+```
+
+Measured non-overlapping stage times were approximately:
+
+```text
+exact-partial word solver       19.27 s   96.2%
+weak-order enumeration           0.35 s    1.7%
+terminal profile decoration      0.01 s    0.05%
+word compilation                 0.001 s   negligible
+```
+
+The length oracle made 574 calls, of which 487 were cache hits; 87 actual cache misses consumed about 0.24 seconds and pruned 522 nodes. The angle oracle made 52 calls, of which 33 were cache hits; 19 misses consumed about 0.05 seconds and pruned one node.
+
+Therefore the current order, length before angle, is appropriate. Reversing it would make the weak angle filter run on many branches that the stronger length filter already removes. The immediate optimization target is the exact-partial word solver, not the early LP ordering.
+
+A `cProfile` sample of the same workload identified the largest internal costs as residual-state canonicalization, word substitution and expression-environment substitution/serialization. These are the first areas to optimize before adding heavier pre-geometric filters.
+
+## Version 0.8 circular pre-word profile
+
+The same 20-second K4 profile with the circular pre-word layer enabled produced in the development environment:
+
+```text
+placement nodes                         34,339
+complete placements                     1,920
+pre-word circular rejections             1,919
+word systems sent to Nielsen-Levi            1
+```
+
+The rejection breakdown was approximately:
+
+```text
+exterior seed already crosses hard endpoint       1,856
+mapped circular image crosses hard endpoint          18
+forced overlap with opposite circular sign           45
+```
+
+Stage times were approximately:
+
+```text
+weak-order enumeration                  18.58 s
+circular pre-word layer                  1.07 s
+word solver                              0.002 s
+word compilation                         0.13 s
+```
+
+The strict-order LP screen made 356 calls and the exact rational rejection certifier made 126 calls. A comparison run with the pre-word layer disabled spent about 9.68 of 10 seconds in the word solver and visited only 661 placement nodes. This workload is not a proof of the eventual global rejection ratio, but it confirms that the filter is cheap relative to Nielsen-Levi and should remain before it.
+
+## Version 0.9 refactored pre-word profile
+
+A final 10-second `k4-central` run of the refactored layer produced:
+
+```text
+placement nodes                         16,084
+complete placements                        924
+pre-word topology rejections                923
+pre-word linear-invariant rejections          1
+word systems sent to Nielsen--Levi            0
+```
+
+The non-overlapping stage times were approximately:
+
+```text
+weak-order enumeration                   8.83 s
+pre-word pruning                         0.82 s
+word compilation                         0.08 s
+```
+
+The single topology survivor was rejected by the exact joint metric system. The floating screen reported zero strict margin and the rational simplex confirmed it. This particular early sample therefore spent no time in Nielsen--Levi.
+
+The result is not an estimate of the global K4 rejection rate: it covers only the beginning of the first canonical assignment. It does confirm that the refactored metric system is cheap enough to remain before word solving and that the Stein-only concavity constraint is active without breaking the pizza validation maps.
+
+## 0.9.1 transported exterior-arc repetition
+
+A 10-second differential run from assignment 1 compared the guarded weak-order filter with the same build using `--no-exterior-arc-repetition`.
+
+| mode | visited nodes | exterior-arc pruned prefixes | raw weak orders accounted | current assignment |
+|---|---:|---:|---:|---:|
+| enabled | 35,805 | 18,098 | 1,586,428 | 0.5950% |
+| disabled | 24,185 | 0 | 21,884 | 0.0082% |
+
+The filter leaves all 256 canonical phase/parity assignments in the domain. Its gain comes from counting large impossible weak-order subtrees as completed immediately after corresponding exterior endpoints split.

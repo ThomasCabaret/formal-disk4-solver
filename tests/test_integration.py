@@ -11,10 +11,11 @@ class IntegrationTests(unittest.TestCase):
     def test_small_run_writes_exact_partial_audit_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = load_config(None)
+            config["maps"] = ["k3-pizza"]
             config["limits"].update(
                 {
                     "max_assignments": 1,
-                    "max_nodes": 800,
+                    "max_nodes": 5000,
                     "max_placements": 2,
                     "max_profiles": 2,
                     "time_limit_seconds": 10,

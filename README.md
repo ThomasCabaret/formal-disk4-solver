@@ -1,13 +1,14 @@
-# Formal Contour Solver 0.6.1
+# Formal Contour Solver 0.9.1
 
 This repository is a streaming formal-contour solver for congruent topological-disk pieces tiling a disk. The search engine is map-driven: piece count, contour incidences, contact interfaces, exterior arcs, vertex-angle sums and map automorphisms come from a registered `PlanarMap`.
 
-Two maps are currently registered:
+Three maps are currently registered:
 
 - `k4-central`: one central piece and three peripheral pieces, with piece-contact graph K4;
-- `k3-pizza`: three congruent sectors meeting at one interior vertex, each pair sharing one radial interface and each piece touching the disk boundary.
+- `k3-pizza`: three congruent sectors meeting at one interior vertex, each pair sharing one radial interface and each piece touching the disk boundary;
+- `k4-pizza`: four congruent sectors meeting at one interior vertex, with piece-contact graph the cycle `P0-P1-P2-P3-P0`, and one exterior arc per piece.
 
-The three-piece map is a pipeline validation case. With the supplied configuration, its first canonical placement gives the finite contour `T0^-1 T1 T0` and survives all currently active formal filters.
+The three- and four-piece pizza maps are pipeline validation cases. The four-piece case verifies that the same generic map, word, decoration, geometry and visualization layers work when the number of pieces and interfaces changes. With the supplied configuration, its first canonical placement gives the finite contour `T0^-1 T1 T0` and survives all currently active formal filters.
 
 ## Implemented pipeline
 
@@ -15,25 +16,26 @@ For every selected map, the program:
 
 1. Enumerates cyclic offsets and direct/reflected copy orientations. A cyclic offset only identifies the first occurrence after the chosen cut of the prototype contour.
 2. Quotients explicit automorphisms of the selected map. Automorphisms may move the reference copy; prototype reversal is normalized per assignment.
-3. Builds all weak cyclic interleavings incrementally, including coincidence blocks between different copies.
+3. Builds all weak cyclic interleavings incrementally, including coincidence blocks between different copies. On supported four-piece Stein maps, a transported-exterior-arc theorem prunes a prefix as soon as no two peripheral exterior edges can still coincide exactly on the prototype.
 4. Adds interface-length equations as soon as their endpoints are known and rejects branches with no strictly positive atomic lengths.
 5. Adds one physical solid-angle equation at every geometric map vertex: incident angles sum to `2*pi` inside the disk and to `pi` on the disk boundary.
 6. Compiles every surviving placement into one word equation per internal interface and one exterior word per outer arc.
-7. Runs the exact-partial Nielsen-Levi solver:
+7. Before Nielsen-Levi, runs a refactored pre-word pruning layer. A fast topology module propagates forced radius-R arcs and rejects hard-endpoint crossings or opposite-sign overlaps. A separate exact linear module combines positive lengths, convex/concave radius-R measures, smooth curve turns, the isoperimetric bound and Stein-only concavity. Point turns are solved in a smaller independent system.
+8. Runs the exact-partial Nielsen-Levi solver:
    - finite/pure families are emitted;
    - fixed-context cycles are compiled as powers;
    - successive supported cycles may produce nested powers;
    - more general iterative components are cut and classified as unsupported, not as impossible.
-8. Uses expansion policy `none` by default. Finite families still have one concrete specialization; power families remain symbolic and do not enter the concrete profile pipeline.
-9. Reconstructs the terminal contour and every explicit segment mapping.
-10. Resolves signed-turn classes only at points strictly internal to mapped interfaces; interface endpoints are governed solely by the physical vertex equations.
-11. Builds curve-template components under identity, reverse, mirror and mirror+reverse.
-12. Assigns one unbounded signed total-turn variable `K_Ci` to every curve component.
-13. Solves one exact rational joint system containing point-angle classes, curve turns, positive lengths, straight/self-reversing zero-turn constraints, circular-arc turn constraints and the total-turn equation of the prototype contour.
-14. Propagates the common `disk_boundary` circular decoration through all exterior words.
-15. Applies modular local filters and commits every survivor immediately to SQLite and `candidates.jsonl`.
-16. In the separate geometry stage, reads formal survivors and numerically realizes one closed simple piece contour without assembling copies.
-17. In the visualization stage, reconstructs every congruent copy solely from the oriented contact mappings and direct/reflected parities, validates all mapped interfaces, then displays the complete assembly.
+9. Uses expansion policy `none` by default. Finite families still have one concrete specialization; power families remain symbolic and do not enter the concrete profile pipeline.
+10. Reconstructs the terminal contour and every explicit segment mapping.
+11. Resolves signed-turn classes only at points strictly internal to mapped interfaces; interface endpoints are governed solely by the physical vertex equations.
+12. Builds curve-template components under identity, reverse, mirror and mirror+reverse.
+13. Assigns one unbounded signed total-turn variable `K_Ci` to every curve component.
+14. Solves one exact rational terminal system containing point-angle classes, curve turns, positive lengths, straight/self-reversing zero-turn constraints and circular-arc turn constraints. Under the piecewise-C2 hypothesis, smooth turn and point turn are constrained separately to `2/n` and `2-2/n` turns of pi, rather than only through their sum.
+15. Propagates the common `disk_boundary` circular decoration through all exterior words.
+16. Applies modular local filters and commits every survivor immediately to SQLite and `candidates.jsonl`.
+17. In the separate geometry stage, reads formal survivors and numerically realizes one closed simple piece contour without assembling copies.
+18. In the visualization stage, reconstructs every congruent copy solely from the oriented contact mappings and direct/reflected parities, validates all mapped interfaces, then displays the complete assembly.
 
 The program never materializes all cyclic orders in advance.
 
@@ -82,6 +84,28 @@ Run the unbounded K4 search:
 run_full_k4.bat
 ```
 
+Run the four-piece validation pipeline:
+
+```bat
+run_pizza4_pipeline.bat --restart
+```
+
+The individual stages are:
+
+```bat
+run_pizza4.bat --restart
+run_pizza4_geometry.bat --restart
+run_pizza4_visualizer.bat
+```
+
+Run a disposable 20-second K4 stage profile:
+
+```bat
+run_profile_k4.bat
+```
+
+Its detailed timing and LP-cache statistics are written to `output\profile_k4\run_summary.json`.
+
 Other launchers:
 
 ```bat
@@ -103,13 +127,15 @@ run_debug.bat --map k3-pizza --output output\pizza_debug --restart
 A line such as:
 
 ```text
-nodes=662 placements=2 word_systems=2 families=5 specializations=3 profile_rejections=3 profiles=0
+nodes=662 outer_arc_pruned=120 placements=2 preword_pruned=1 word_systems=1 families=3 specializations=3 profile_rejections=3 profiles=0
 ```
 
 means:
 
 - `nodes`: partial weak-order prefixes visited, including complete leaves;
+- `outer_arc_pruned`: weak-order prefixes rejected because every possible repeated peripheral exterior-arc pair has already separated an endpoint;
 - `placements`: complete weak orders surviving the early length and angle filters;
+- `preword_pruned`: compiled placements rejected before Nielsen-Levi by either the structural radius-arc module or the exact linear-invariant module;
 - `word_systems`: placements sent to the word solver;
 - `families`: supported symbolic families emitted by that solver;
 - `specializations`: concrete finite instances sent to decoration;
@@ -154,9 +180,43 @@ A survivor record contains the full planar map, assignment, cyclic placement, eq
 
 Expansion policies are `none`, `minimum`, `fixed` and `range`.
 
+
+## Early transported exterior-arc repetition
+
+For the fixed `k4-central` Stein map, the filter activates only after checking all of these map-level assumptions: exactly four pieces, the reference piece does not touch the disk boundary, exactly three distinct peripheral pieces each own one full outer map edge, and the center is declared strictly inside one tile. A theorem on exterior arcs transported to one prototile then requires at least two peripheral copies to use exactly the same prototype arc.
+
+The cyclic offset is only a cut position, not a geometric rotation. Consequently all 256 canonical phase/parity assignments still permit at least one repeated pair. The effective pruning occurs inside the weak-order DFS: both endpoint occurrences of a candidate pair must enter the same blocks. Once every candidate pair has split an endpoint, no descendant can repair a completed block and the whole subtree is discarded.
+
+Disable only this theorem for differential testing with:
+
+```bat
+run_profile_k4.bat --no-exterior-arc-repetition
+```
+
+The filter is not activated for pizza maps or for any map whose explicit structure does not satisfy the assumptions above.
+
+## Pre-Nielsen--Levi pruning layer
+
+The layer is deliberately split into small modules rather than one opaque filter. It runs after the words and mappings have been compiled, but before the residual Nielsen--Levi graph is built.
+
+1. **Radius-arc topology.** Exterior words seed convex arcs of the disk circle. Boundary-aligned images are propagated through internal interfaces with opposite convexity. A smooth radius-R arc cannot cross a hard outer corner, and a positive-length interval cannot be forced both convex and concave. Ambiguous non-aligned subdivisions are recorded and left to the word solver.
+2. **Joint metric invariants.** Each atom has a positive length, non-negative convex/concave radius-R measures bounded by that length, and an unbounded smooth-turn variable scaled by the disk circumference. Interface equations conserve length, exchange convex and concave measures, and cancel physical smooth turn. The system also contains the global radius balance, smooth-curvature balance, the isoperimetric necessary condition, and—only for Stein maps—a strictly positive concave radius-R measure.
+3. **Point-turn system.** Solid-angle equations remain separate because they share no variables with the metric system. The local map-vertex equations are combined with the global point-turn balance.
+4. **Invariant audit.** The implementation records whether the global radius, smooth-turn and point-turn identities are already implied by the local equations. The valid global theorem is still added explicitly when local propagation is incomplete.
+
+The floating HiGHS result is only a screen. Every rejection from the new linear systems is certified by the rational simplex. Unexpected pre-word errors are logged and conservatively passed to Nielsen--Levi.
+
+Disable the complete layer for differential debugging with:
+
+```bat
+run_profile_k4.bat --no-preword-pruning
+```
+
+The legacy flag `--no-preword-circular` remains as a hidden compatibility alias.
+
 ## Current proof-status limitations
 
-- Early placement length/angle pruning still uses SciPy HiGHS. After a terminal formal contour is obtained, the complete joint point/curve-turn and positive-length feasibility test is exact over rational numbers, including its strict-margin certificate.
+- Early partial-placement length/angle pruning still uses SciPy HiGHS. The pre-word topology layer certifies LP-dependent interval rejections exactly, and the pre-word metric/turn systems use HiGHS only as a screen before an exact rational rejection certificate. Terminal point/curve-turn and positive-length feasibility is also exact over rational numbers.
 - Common-circle length-turn relations are resolved exactly after disk-circumference normalization and are consumed by the numerical single-piece contour stage.
 - Numerical realization uses piecewise-linear generic templates and analytic circular arcs. Simplicity is verified on exact polyline edges and a dense arc sampling; it is not yet a formal continuous-curve proof.
 - Cross-profile decorated subsumption, signed-area certification and Z3 geometry remain later stages. Mapping-derived assembly isometries and interactive solid-fill rendering are implemented, but overlap/coverage certification of the complete assembly is not yet formal.
@@ -179,7 +239,7 @@ T1{circular_arc:disk_boundary,L=1/3*C_disk,turn=2/3*pi[1/3 turn]}
 T0{generic_curve,L=(L_C0)*C_disk,turn=(K_C0)*pi}
 ```
 
-Here `T0` is one free curve template used in opposite orientations on the two radial sides. Its length and representative signed total turn `K_C0*pi` remain free; the two contour occurrences contribute opposite curve turns and therefore cancel in the prototype total-turn equation. `T1` is exactly a circular arc of the disk boundary with length `1/3*C_disk` and sweep `2/3*pi`, i.e. one third of a full turn.
+Here `T0` is one free curve template used in opposite orientations on the two radial sides. Its length and representative signed total turn `K_C0*pi` remain free; the two contour occurrences contribute opposite curve turns and therefore cancel in the prototype smooth-turn balance. `T1` is exactly a circular arc of the disk boundary with length `1/3*C_disk` and sweep `2/3*pi`, i.e. one third of a full turn.
 
 The two outer point angles are not individually fixed. The exact relations are:
 
@@ -215,7 +275,8 @@ For every terminal profile, point corners and curve interiors are solved togethe
 tau_Bi = 1 - alpha_Bi
 -1 < tau_Bi < 1
 K_Ci in R
-sum(occurrence curve turns) + sum(tau_Bi) = 2
+sum(occurrence curve turns) = 2 / tile_count
+sum(tau_Bi) = 2 - 2 / tile_count
 ```
 
 `K_Ci` is the signed tangent rotation accumulated while traversing the representative curve template. Reversing the template or applying an orientation-reversing isometry changes its sign. A straight component, or a component identified with itself through a sign-reversing transform, has `K_Ci = 0`.
@@ -226,7 +287,7 @@ With disk circumference normalized to one, every positively traversed exterior-c
 physical_signed_turn_pi = 2 * component_length
 ```
 
-The point equations, length equations, curve-turn equations and total winding are first reduced by exact rational Gaussian elimination. A small exact rational simplex then maximizes a common strict margin for all point-angle bounds and positive component lengths. Infeasible profiles are rejected before they are written to `candidates.jsonl` or sent to numerical geometry.
+The point equations, length equations and curve-turn equations are first reduced by exact rational Gaussian elimination. For piecewise-C2 maps, the smooth and concentrated corner contributions are constrained separately by the congruent-tiling curvature identities. A small exact rational simplex then maximizes a common strict margin for all point-angle bounds and positive component lengths. Infeasible profiles are rejected before they are written to `candidates.jsonl` or sent to numerical geometry.
 
 The mappings still determine relative copy placement. The curve-turn variables do not introduce an alternative assembly mechanism; they describe only the tangent rotation internal to the prototype curve templates.
 
