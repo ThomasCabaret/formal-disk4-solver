@@ -239,6 +239,52 @@ def _directed_boundaries(ref: DirectedSegmentRef, segment_count: int) -> Tuple[i
     return (ref.segment_index + 1) % segment_count, ref.segment_index
 
 
+def _outer_arc_internal_boundaries(
+    compiled: CompiledWordCase,
+    environment: Mapping[str, Word],
+) -> Tuple[Tuple[str, Tuple[int, ...]], ...]:
+    """Locate terminal boundaries strictly inside each expanded outer arc."""
+
+    refs: Dict[str, Tuple[DirectedSegmentRef, ...]] = {}
+    segment_count = 0
+    for variable in compiled.atomic_variables:
+        variable_refs = []
+        for _literal in environment[variable]:
+            variable_refs.append(DirectedSegmentRef(segment_count, True))
+            segment_count += 1
+        refs[variable] = tuple(variable_refs)
+
+    output = []
+    for arc in compiled.outer_arcs:
+        path = []
+        for literal in arc.positive_word:
+            variable_refs = refs[literal.variable]
+            if literal.inverse:
+                path.extend(
+                    DirectedSegmentRef(item.segment_index, not item.forward)
+                    for item in reversed(variable_refs)
+                )
+            else:
+                path.extend(variable_refs)
+
+        boundaries = []
+        for internal_index in range(1, len(path)):
+            _previous_start, previous_end = _directed_boundaries(
+                path[internal_index - 1], segment_count
+            )
+            next_start, _next_end = _directed_boundaries(
+                path[internal_index], segment_count
+            )
+            if previous_end != next_start:
+                raise DecorationInfeasible(
+                    "outer_arc_smoothness",
+                    f"non-contiguous expanded outer arc {arc.name} at split {internal_index}",
+                )
+            boundaries.append(previous_end)
+        output.append((arc.name, tuple(boundaries)))
+    return tuple(output)
+
+
 def _terminal_boundary_sources(
     planar_map: PlanarMap,
     placement: Placement,
@@ -272,6 +318,7 @@ def _build_angle_decorations(
     terminal_contour: Word,
     mappings: Sequence[ContactMapping],
     boundary_sources: Sequence[Tuple[str, int | None, Tuple[str, ...], Tuple[str, ...]]],
+    outer_arc_internal_boundaries: Sequence[Tuple[str, Tuple[int, ...]]],
     tolerance: float,
 ) -> Tuple[
     Tuple[PointRecord, ...],
@@ -420,6 +467,19 @@ def _build_angle_decorations(
             vertex.name,
             relation,
         )
+
+    # A word solution may refine one disk-boundary arc into several terminal
+    # segments. Every strict internal split is only a subdivision of the same
+    # circle arc, so the prototype corner there must be smooth: alpha = pi.
+    for outer_name, boundaries in outer_arc_internal_boundaries:
+        for split_index, boundary_index in enumerate(boundaries, start=1):
+            add_equation(
+                "outer_arc_internal_smoothness",
+                {boundary_index: 1},
+                Fraction(1),
+                f"{outer_name}:internal-boundary{split_index}",
+                "strictly internal disk-boundary subdivision has zero point turn",
+            )
 
     try:
         exact_solution = solve_exact_linear_system(angle_names, exact_equations)
@@ -999,6 +1059,9 @@ def build_decorations(
     boundary_sources = _terminal_boundary_sources(
         planar_map, placement, compiled, environment, occurrence_names
     )
+    outer_arc_internal_boundaries = _outer_arc_internal_boundaries(
+        compiled, environment
+    )
     points, point_classes, angle_margin, angle_equations, exact_angle_solution = _build_angle_decorations(
         planar_map,
         occurrence_names,
@@ -1006,6 +1069,7 @@ def build_decorations(
         terminal_contour,
         mappings,
         boundary_sources,
+        outer_arc_internal_boundaries,
         tolerance,
     )
 

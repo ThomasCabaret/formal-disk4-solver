@@ -1,0 +1,16 @@
+Differential patch 1.3.1
+Base version: 1.3.0
+
+Modified files:
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/profiles/decorations.py
+
+New files:
+PATCH_NOTES_1.3.1.md
+PATCH_MANIFEST_1.3.1.txt
+tests/test_outer_arc_smoothness.py
+
+Deleted files:
+None
