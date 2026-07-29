@@ -15,7 +15,14 @@ class CaseMapTests(unittest.TestCase):
     def test_canonical_case_names_and_legacy_aliases(self) -> None:
         self.assertEqual(
             available_maps(),
-            ("c3", "c4", "k4", "k4-minus-point", "k4-minus-arc"),
+            (
+                "c3",
+                "c4",
+                "double-cycle-6",
+                "k4",
+                "k4-minus-point",
+                "k4-minus-arc",
+            ),
         )
         self.assertEqual(canonical_map_name("k3-pizza"), "c3")
         self.assertEqual(canonical_map_name("k4-pizza"), "c4")

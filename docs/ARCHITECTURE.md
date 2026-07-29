@@ -1,4 +1,4 @@
-# Architecture 1.0
+# Architecture 1.1
 
 ## 1. Map-driven core
 
@@ -8,6 +8,7 @@ Registered maps use stable case identifiers:
 
 - `c3`: contour lengths `(3,3,3)`, three internal interfaces and three exterior arcs;
 - `c4`: contour lengths `(3,3,3,3)`, four internal interfaces and four exterior arcs;
+- `double-cycle-6`: contour lengths `(4^6,3^6)`, eighteen internal interfaces and six exterior arcs;
 - `k4`: contour lengths `(3,4,4,4)`, six internal interfaces and three exterior arcs;
 - `k4-minus-point`: contour lengths `(3,3,4,3)`, five internal interfaces, three exterior arcs, and one point-only outer contact of `T0`;
 - `k4-minus-arc`: contour lengths `(4,3,4,3)`, five internal interfaces and four exterior arcs.
@@ -33,6 +34,19 @@ Symmetry modes are independently switchable:
 - `incremental`: assignment quotient plus stabilizer checks on prefixes and leaves.
 
 For `c3`, the raw reflected domain has 108 assignments and the map quotient emits 22 representatives.
+
+
+## 2.1 Large assignment domains
+
+When `symmetry_mode=off`, copy assignments form a mixed-radix Cartesian
+product.  `AssignmentEnumerator.assignment_at(index)` decodes one element
+directly, so the runner can checkpoint and resume a multi-billion-assignment
+domain without materializing it or replaying previous assignments.
+
+`enumeration.track_exact_domain_size=false` disables the weak-order counting DP
+for maps whose state lattice is itself too large.  This changes progress
+percentages only; it does not disable length, angle, preword or word pruning.
+The ready `double-cycle-6` case uses both options.
 
 ## 3. Weak cyclic orders
 

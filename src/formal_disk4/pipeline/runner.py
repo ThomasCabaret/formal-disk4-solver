@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from copy import deepcopy
+from dataclasses import dataclass
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence, Tuple
@@ -35,7 +36,18 @@ from .output import JsonlWriter, NullJsonlWriter, atomic_write_json
 from .stats import RunStats
 
 
-MapContext = Tuple[PlanarMap, AssignmentEnumerator, Tuple[ContourAssignment, ...], int]
+@dataclass(frozen=True)
+class MapContext:
+    planar_map: PlanarMap
+    assignment_enumerator: AssignmentEnumerator
+    assignments: Tuple[ContourAssignment, ...] | None
+    assignment_count: int
+    mass_per_assignment: int
+
+    def assignment_at(self, assignment_id: int) -> ContourAssignment:
+        if self.assignments is not None:
+            return self.assignments[assignment_id]
+        return self.assignment_enumerator.assignment_at(assignment_id)
 
 
 class SolverRunner:
@@ -220,6 +232,13 @@ class SolverRunner:
         rate = nodes / elapsed if elapsed else 0.0
         percent = self._progress_percentage()
         _assignment_mass, _assignment_total, assignment_percent = self._current_assignment_progress()
+        exact_progress = bool(
+            self.config["enumeration"].get("track_exact_domain_size", True)
+        )
+        overall_text = f"{percent:5.1f}%" if exact_progress else "  n/a "
+        assignment_text = (
+            f"{assignment_percent:5.1f}%" if exact_progress else "  n/a "
+        )
         assignment_position = int(self._search_state.get("assignment_id", 0)) + 1
         rejected_profiles = (
             self.stats.get("decoration_rejections")
@@ -227,9 +246,9 @@ class SolverRunner:
         )
         message = (
             f"[{elapsed:9.2f}s] map={self._current_map_name} "
-            f"overall~{percent:5.1f}% "
+            f"overall~{overall_text} "
             f"assignment={assignment_position}/{max(1, self._total_assignment_count)} "
-            f"current~{assignment_percent:5.1f}% "
+            f"current~{assignment_text} "
             f"nodes={nodes} ({rate:,.0f}/s) "
             f"length_pruned={self.stats.get('length_pruned_nodes')} "
             f"angle_pruned={self.stats.get('angle_pruned_nodes')} "
@@ -284,24 +303,55 @@ class SolverRunner:
         contexts = []
         total_mass = 0
         total_assignments = 0
+        enumeration_config = self.config["enumeration"]
+        track_exact_domain_size = bool(
+            enumeration_config.get("track_exact_domain_size", True)
+        )
+        symmetry_mode = str(enumeration_config["symmetry_mode"])
         for planar_map in iterate_maps(tuple(self.config["maps"])):
             assignment_enumerator = AssignmentEnumerator(
                 planar_map,
-                allow_reflections=bool(
-                    self.config["enumeration"]["allow_reflections"]
-                ),
-                symmetry_mode=str(self.config["enumeration"]["symmetry_mode"]),
+                allow_reflections=bool(enumeration_config["allow_reflections"]),
+                symmetry_mode=symmetry_mode,
             )
-            assignments = tuple(assignment_enumerator.enumerate())
-            if assignments:
-                lengths = tuple(len(sequence) for sequence in assignments[0].sequences)
-                reference_index = assignments[0].piece_names.index(planar_map.reference_piece)
-                mass_per_assignment = count_weak_orders_for_lengths(lengths, reference_index)
+
+            # Symmetry-off domains are Cartesian products.  Keep them lazy so a
+            # large validation map can start at assignment zero immediately and
+            # resume by mixed-radix assignment index.
+            if symmetry_mode == "off":
+                assignments = None
+                assignment_count = assignment_enumerator.raw_assignment_count()
+                first_assignment = (
+                    assignment_enumerator.assignment_at(0)
+                    if assignment_count
+                    else None
+                )
+            else:
+                assignments = tuple(assignment_enumerator.enumerate())
+                assignment_count = len(assignments)
+                first_assignment = assignments[0] if assignments else None
+
+            if first_assignment is not None and track_exact_domain_size:
+                lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
+                reference_index = first_assignment.piece_names.index(
+                    planar_map.reference_piece
+                )
+                mass_per_assignment = count_weak_orders_for_lengths(
+                    lengths, reference_index
+                )
             else:
                 mass_per_assignment = 0
-            contexts.append((planar_map, assignment_enumerator, assignments, mass_per_assignment))
-            total_mass += len(assignments) * mass_per_assignment
-            total_assignments += len(assignments)
+            contexts.append(
+                MapContext(
+                    planar_map=planar_map,
+                    assignment_enumerator=assignment_enumerator,
+                    assignments=assignments,
+                    assignment_count=assignment_count,
+                    mass_per_assignment=mass_per_assignment,
+                )
+            )
+            total_mass += assignment_count * mass_per_assignment
+            total_assignments += assignment_count
         self._total_leaf_mass = total_mass
         self._total_assignment_count = total_assignments
         return tuple(contexts)
@@ -337,10 +387,17 @@ class SolverRunner:
         if self.stats.get("raw_assignments_in_domain") == 0:
             self.stats.increment(
                 "raw_assignments_in_domain",
-                sum(context[1].raw_assignment_count() for context in contexts),
+                sum(
+                    context.assignment_enumerator.raw_assignment_count()
+                    for context in contexts
+                ),
             )
         self.stats.counters["canonical_assignments_in_domain"] = self._total_assignment_count
-        self.stats.counters["estimated_raw_weak_orders_in_domain"] = self._total_leaf_mass
+        if bool(self.config["enumeration"].get("track_exact_domain_size", True)):
+            self.stats.counters["estimated_raw_weak_orders_in_domain"] = self._total_leaf_mass
+        else:
+            self.stats.counters.pop("estimated_raw_weak_orders_in_domain", None)
+            self.stats.counters["exact_weak_order_domain_count_disabled"] = 1
 
         if self._checkpoint_completed:
             survivor_count = self.checkpoint_store.export_survivors_jsonl(candidate_path)
@@ -479,7 +536,10 @@ class SolverRunner:
         try:
             start_map_index = int(self._search_state.get("map_index", 0))
             for map_index in range(start_map_index, len(contexts)):
-                planar_map, assignment_enumerator, assignments, mass_per_assignment = contexts[map_index]
+                context = contexts[map_index]
+                planar_map = context.planar_map
+                assignment_enumerator = context.assignment_enumerator
+                mass_per_assignment = context.mass_per_assignment
                 self._current_map_name = planar_map.name
                 self._search_state["map_index"] = map_index
                 if not bool(self._search_state.get("map_started", False)):
@@ -487,8 +547,10 @@ class SolverRunner:
                     self._search_state["map_started"] = True
 
                 start_assignment_id = int(self._search_state.get("assignment_id", 0))
-                for assignment_id in range(start_assignment_id, len(assignments)):
-                    assignment = assignments[assignment_id]
+                for assignment_id in range(
+                    start_assignment_id, context.assignment_count
+                ):
+                    assignment = context.assignment_at(assignment_id)
                     self._search_state["assignment_id"] = assignment_id
                     if self._should_stop():
                         exhausted = False
@@ -531,6 +593,11 @@ class SolverRunner:
                         stop_predicate=self._should_stop,
                         resume_state=resume_weak if isinstance(resume_weak, Mapping) else None,
                         checkpoint_sink=self._weak_checkpoint,
+                        track_exact_leaf_mass=bool(
+                            self.config["enumeration"].get(
+                                "track_exact_domain_size", True
+                            )
+                        ),
                     )
                     self._current_weak_orders = weak_orders
                     placement_started = time.perf_counter()

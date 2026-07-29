@@ -1,6 +1,7 @@
 from .base import InterfaceSpec, PieceSpec, PlanarMap, VertexSpec
 from .c3 import build_c3_map
 from .c4 import build_c4_map
+from .double_cycle import build_double_cycle_6_map, build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
@@ -12,6 +13,8 @@ __all__ = [
     "InterfaceSpec",
     "build_c3_map",
     "build_c4_map",
+    "build_double_cycle_map",
+    "build_double_cycle_6_map",
     "build_k4_map",
     "build_k4_minus_point_map",
     "build_k4_minus_arc_map",

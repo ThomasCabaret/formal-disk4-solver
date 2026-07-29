@@ -11,6 +11,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "enumeration": {
         "allow_reflections": True,
         "symmetry_mode": "incremental",
+        "track_exact_domain_size": True,
         "enable_length_filter": True,
         "enable_angle_filter": True,
         "exterior_arc_repetition": {

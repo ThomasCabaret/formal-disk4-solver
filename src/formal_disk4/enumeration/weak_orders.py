@@ -74,6 +74,7 @@ class WeakOrderEnumerator:
         stop_predicate: StopPredicate | None = None,
         resume_state: Mapping[str, object] | None = None,
         checkpoint_sink: CheckpointSink | None = None,
+        track_exact_leaf_mass: bool = True,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -87,6 +88,7 @@ class WeakOrderEnumerator:
         self.event_sink = event_sink or (lambda _name, _amount=1: None)
         self.stop_predicate = stop_predicate or (lambda: False)
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
+        self.track_exact_leaf_mass = track_exact_leaf_mass
         self.piece_names = assignment.piece_names
         self.piece_index = {name: index for index, name in enumerate(self.piece_names)}
         self.reference_index = self.piece_index[planar_map.reference_piece]
@@ -122,7 +124,14 @@ class WeakOrderEnumerator:
 
     @property
     def total_leaf_mass(self) -> int:
+        if not self.track_exact_leaf_mass:
+            return 0
         return count_weak_orders_for_lengths(self.target_counters, self.reference_index)
+
+    def _subtree_leaf_mass(self, counters: Tuple[int, ...]) -> int:
+        if not self.track_exact_leaf_mass:
+            return 0
+        return _weak_path_count(counters, self.target_counters)
 
     def checkpoint_state(self) -> Dict[str, object]:
         return {
@@ -368,13 +377,13 @@ class WeakOrderEnumerator:
             # endpoint, no descendant can restore equality in a past block.
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
             self._mark_subtree_complete(
-                path, _weak_path_count(counters, self.target_counters)
+                path, self._subtree_leaf_mass(counters)
             )
             return
 
         if not self._prefix_is_canonical(blocks):
             self.event_sink("symmetry_pruned_nodes", 1)
-            self._mark_subtree_complete(path, _weak_path_count(counters, self.target_counters))
+            self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
             return
 
         block_count = len(blocks)
@@ -384,7 +393,7 @@ class WeakOrderEnumerator:
             length_result = self.length_oracle.analyze(block_count, length_rows)
             if not length_result.feasible:
                 self.event_sink("length_pruned_nodes", 1)
-                self._mark_subtree_complete(path, _weak_path_count(counters, self.target_counters))
+                self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
                 return
 
         angle_equations = self._resolved_angle_equations(positions, block_count)
@@ -393,7 +402,7 @@ class WeakOrderEnumerator:
             angle_result = self.angle_oracle.analyze(block_count, angle_equations)
             if not angle_result.feasible:
                 self.event_sink("angle_pruned_nodes", 1)
-                self._mark_subtree_complete(path, _weak_path_count(counters, self.target_counters))
+                self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
                 return
 
         complete = all(

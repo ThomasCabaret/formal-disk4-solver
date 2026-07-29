@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from itertools import islice
 import subprocess
 import sys
 from pathlib import Path
@@ -125,52 +126,101 @@ def command_counts(args: argparse.Namespace) -> int:
         allow_reflections=not args.direct_only,
         symmetry_mode=args.symmetry,
     )
-    assignments = tuple(enumerator.enumerate())
-    if assignments:
-        lengths = tuple(len(sequence) for sequence in assignments[0].sequences)
-        reference_index = assignments[0].piece_names.index(planar_map.reference_piece)
+    raw_count = enumerator.raw_assignment_count()
+    if args.symmetry == "off":
+        assignment_count = raw_count
+        first_assignment = enumerator.assignment_at(0) if assignment_count else None
+        assignments = None
+    else:
+        if raw_count > 1_000_000:
+            raise ValueError(
+                "Exact canonical counting would enumerate more than one million raw "
+                "assignments. Use --symmetry off for the raw domain size."
+            )
+        materialized = tuple(enumerator.enumerate())
+        assignments = materialized
+        assignment_count = len(materialized)
+        first_assignment = materialized[0] if materialized else None
+
+    if first_assignment is not None and len(planar_map.pieces) <= 8:
+        lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
+        reference_index = first_assignment.piece_names.index(planar_map.reference_piece)
         weak_per_assignment = count_weak_orders_for_lengths(lengths, reference_index)
+    elif first_assignment is not None:
+        lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
+        weak_per_assignment = None
     else:
         lengths = ()
         weak_per_assignment = 0
-    repetition_constraints = tuple(
-        build_exterior_arc_repetition_constraint(
-            planar_map,
-            assignment.piece_names,
-            assignment.sequences,
-            enumerator.occurrence_index,
-            enabled=True,
+
+    repetition_summary: Dict[str, object]
+    if assignments is None or assignment_count > 100_000:
+        sample_constraint = (
+            build_exterior_arc_repetition_constraint(
+                planar_map,
+                first_assignment.piece_names,
+                first_assignment.sequences,
+                enumerator.occurrence_index,
+                enabled=True,
+            )
+            if first_assignment is not None
+            else None
         )
-        for assignment in assignments
-    )
-    repetition_applicable = sum(
-        1 for constraint in repetition_constraints if constraint.applicable
-    )
-    repetition_impossible = sum(
-        1
-        for constraint in repetition_constraints
-        if constraint.applicable and not constraint.candidate_pairs
-    )
-    repetition_pair_histogram: Dict[str, int] = {}
-    for constraint in repetition_constraints:
-        if not constraint.applicable:
-            continue
-        key = str(len(constraint.candidate_pairs))
-        repetition_pair_histogram[key] = repetition_pair_histogram.get(key, 0) + 1
+        repetition_summary = {
+            "fully_enumerated": False,
+            "sample_assignment_applicable": bool(
+                sample_constraint is not None and sample_constraint.applicable
+            ),
+        }
+    else:
+        repetition_constraints = tuple(
+            build_exterior_arc_repetition_constraint(
+                planar_map,
+                assignment.piece_names,
+                assignment.sequences,
+                enumerator.occurrence_index,
+                enabled=True,
+            )
+            for assignment in assignments
+        )
+        repetition_applicable = sum(
+            1 for constraint in repetition_constraints if constraint.applicable
+        )
+        repetition_impossible = sum(
+            1
+            for constraint in repetition_constraints
+            if constraint.applicable and not constraint.candidate_pairs
+        )
+        histogram: Dict[str, int] = {}
+        for constraint in repetition_constraints:
+            if not constraint.applicable:
+                continue
+            key = str(len(constraint.candidate_pairs))
+            histogram[key] = histogram.get(key, 0) + 1
+        repetition_summary = {
+            "fully_enumerated": True,
+            "applicable_assignments": repetition_applicable,
+            "assignments_rejected_before_weak_orders": repetition_impossible,
+            "assignments_after_assignment_level_check": assignment_count
+            - repetition_impossible,
+            "candidate_pair_count_histogram": histogram,
+        }
+
     result = {
         "map": planar_map.name,
         "contour_occurrence_lengths": list(lengths),
-        "raw_copy_assignments": enumerator.raw_assignment_count(),
-        "canonical_copy_assignments": len(assignments),
-        "exterior_arc_repetition": {
-            "applicable_assignments": repetition_applicable,
-            "assignments_rejected_before_weak_orders": repetition_impossible,
-            "assignments_after_assignment_level_check": len(assignments) - repetition_impossible,
-            "candidate_pair_count_histogram": repetition_pair_histogram,
-        },
-        "raw_weak_orders_per_canonical_assignment": weak_per_assignment,
-        "estimated_raw_weak_orders_over_canonical_assignments": (
-            len(assignments) * weak_per_assignment
+        "raw_copy_assignments": raw_count,
+        "canonical_copy_assignments": (
+            assignment_count if args.symmetry != "off" else None
+        ),
+        "enumerated_assignment_domain": assignment_count,
+        "symmetry_mode": args.symmetry,
+        "exterior_arc_repetition": repetition_summary,
+        "raw_weak_orders_per_assignment": weak_per_assignment,
+        "estimated_raw_weak_orders_over_assignment_domain": (
+            assignment_count * weak_per_assignment
+            if isinstance(weak_per_assignment, int)
+            else None
         ),
     }
     if planar_map.name == "k4":
@@ -198,13 +248,22 @@ def command_assignments(args: argparse.Namespace) -> int:
         allow_reflections=not args.direct_only,
         symmetry_mode=args.symmetry,
     )
-    assignments = list(enumerator.enumerate())
+    if args.symmetry == "off":
+        sample = [
+            enumerator.assignment_at(index)
+            for index in range(min(args.limit, enumerator.raw_assignment_count()))
+        ]
+        emitted_count = enumerator.raw_assignment_count()
+    else:
+        sample = list(islice(enumerator.enumerate(), args.limit))
+        emitted_count = None
     payload = {
         "raw_count": enumerator.raw_assignment_count(),
-        "emitted_count": len(assignments),
+        "emitted_count": emitted_count,
+        "sampled_count": len(sample),
         "assignments": [
             assignment.to_dict(enumerator.occurrence_names)
-            for assignment in assignments[: args.limit]
+            for assignment in sample
         ],
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -231,8 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", type=Path)
     run_parser.add_argument(
         "--map",
-        choices=available_maps(),
-        help="Override config.maps with one registered planar map.",
+        metavar="MAP",
+        help=(
+            "Override config.maps. Registered cases: "
+            + ", ".join(available_maps())
+            + "; dynamic family: double-cycle-N."
+        ),
     )
     run_parser.add_argument("--output", type=Path)
     run_parser.add_argument("--max-seconds", type=float)
@@ -315,7 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     visualization_parser.set_defaults(function=command_visualize)
 
     counts_parser = subparsers.add_parser("counts", help="Print exact combinatorial counts")
-    counts_parser.add_argument("--map", choices=available_maps(), default="k4")
+    counts_parser.add_argument("--map", default="k4", metavar="MAP")
     counts_parser.add_argument("--direct-only", action="store_true")
     counts_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
@@ -323,13 +386,13 @@ def build_parser() -> argparse.ArgumentParser:
     counts_parser.set_defaults(function=command_counts)
 
     map_parser = subparsers.add_parser("map-info", help="Inspect a registered planar map")
-    map_parser.add_argument("--map", choices=available_maps(), default="k4")
+    map_parser.add_argument("--map", default="k4", metavar="MAP")
     map_parser.set_defaults(function=command_map_info)
 
     assignment_parser = subparsers.add_parser(
         "assignments", help="Inspect phase/orientation assignment representatives"
     )
-    assignment_parser.add_argument("--map", choices=available_maps(), default="k4")
+    assignment_parser.add_argument("--map", default="k4", metavar="MAP")
     assignment_parser.add_argument("--direct-only", action="store_true")
     assignment_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"

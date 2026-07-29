@@ -107,8 +107,8 @@ class AssignmentEnumerator:
         self.reference_index = self.piece_index[planar_map.reference_piece]
         self.transforms = self._build_normalized_transforms()
 
-    def _raw_sequences(self) -> Iterator[Tuple[Tuple[int, ...], ...]]:
-        options: List[List[Tuple[int, ...]]] = []
+    def _piece_options(self) -> Tuple[Tuple[Tuple[int, ...], ...], ...]:
+        options: List[Tuple[Tuple[int, ...], ...]] = []
         for piece_index, base in enumerate(self.base_sequences):
             piece_options: List[Tuple[int, ...]] = []
             signs = (1,) if piece_index == self.reference_index or not self.allow_reflections else (1, -1)
@@ -116,8 +116,11 @@ class AssignmentEnumerator:
                 oriented = base if sign == 1 else tuple(reversed(base))
                 for phase in range(len(base)):
                     piece_options.append(tuple(oriented[phase:] + oriented[:phase]))
-            options.append(piece_options)
-        yield from product(*options)
+            options.append(tuple(piece_options))
+        return tuple(options)
+
+    def _raw_sequences(self) -> Iterator[Tuple[Tuple[int, ...], ...]]:
+        yield from product(*self._piece_options())
 
     def _map_sequences(
         self,
@@ -239,6 +242,48 @@ class AssignmentEnumerator:
                 canonical_key=canonical_key,
             )
             assignment_id += 1
+
+
+    def assignment_at(self, assignment_id: int) -> ContourAssignment:
+        """Return one raw assignment without scanning previous assignments.
+
+        This random-access path is intentionally restricted to symmetry_mode=off.
+        Large map families can then checkpoint an assignment index without first
+        materializing or replaying a multi-billion-element Cartesian product.
+        """
+
+        if self.symmetry_mode != "off":
+            raise ValueError("assignment_at requires symmetry_mode='off'")
+        total = self.raw_assignment_count()
+        if assignment_id < 0 or assignment_id >= total:
+            raise IndexError("Assignment index outside the raw domain")
+
+        options = self._piece_options()
+        remainder = int(assignment_id)
+        selected: List[Tuple[int, ...]] = [()] * len(options)
+        for piece_index in range(len(options) - 1, -1, -1):
+            radix = len(options[piece_index])
+            option_index = remainder % radix
+            remainder //= radix
+            selected[piece_index] = options[piece_index][option_index]
+        sequences = tuple(selected)
+
+        transformed = tuple(
+            self.apply_transform(sequences, transform) for transform in self.transforms
+        )
+        stabilizer = tuple(
+            actual for mapped, actual in transformed if mapped == sequences
+        )
+        signs, phases = self._assignment_metadata(sequences)
+        return ContourAssignment(
+            assignment_id=int(assignment_id),
+            piece_names=self.piece_names,
+            sequences=sequences,
+            orientation_signs=signs,
+            cyclic_offsets=phases,
+            stabilizer=stabilizer,
+            canonical_key=sequences,
+        )
 
     def raw_assignment_count(self) -> int:
         count = 1

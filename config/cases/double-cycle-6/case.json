@@ -1,0 +1,12 @@
+{
+  "id": "double-cycle-6",
+  "label": "Double cycle 6 (12 tiles)",
+  "description": "Six exterior tiles in a cycle and six interior tiles in a second cycle, joined by matching E_i-I_i contacts.",
+  "map": "double-cycle-6",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}
