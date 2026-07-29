@@ -1,0 +1,25 @@
+Differential patch 1.3.0
+Base version: 1.2.1
+
+Modified files:
+README.md
+config/cases/double-cycle-6/profile.json
+config/cases/double-cycle-6/search.json
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/config.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/preword/linear_invariants.py
+src/formal_disk4/profiles/build.py
+src/formal_disk4/profiles/decorations.py
+src/formal_disk4/words/compile.py
+tests/test_geometry.py
+
+New files:
+PATCH_NOTES_1.3.0.md
+PATCH_MANIFEST_1.3.0.txt
+tests/test_figure2b_formal.py
+
+Deleted files:
+None

@@ -4,11 +4,15 @@ from typing import Sequence
 
 from formal_disk4.enumeration.weak_orders import Placement
 from formal_disk4.maps.base import PlanarMap
-from formal_disk4.words.compile import CompiledWordCase, build_contact_mappings
+from formal_disk4.words.compile import (
+    CompiledWordCase,
+    TerminalMappingInfeasible,
+    build_terminal_contact_system,
+)
 from formal_disk4.words.families import ExactFormalFamily, FamilySpecialization
 
 from .canonical import canonical_contour_signature
-from .decorations import build_decorations
+from .decorations import DecorationInfeasible, build_decorations
 from .model import FormalProfile
 
 
@@ -21,8 +25,16 @@ def build_formal_profile(
     specialization: FamilySpecialization,
     tolerance: float = 1e-9,
 ) -> FormalProfile:
-    environment = specialization.environment_map()
-    terminal_contour, mappings = build_contact_mappings(compiled, environment)
+    solver_environment = specialization.environment_map()
+    try:
+        terminal_system = build_terminal_contact_system(
+            compiled, solver_environment
+        )
+    except TerminalMappingInfeasible as error:
+        raise DecorationInfeasible("mirror_word_involution", str(error)) from error
+    environment = terminal_system.environment_map()
+    terminal_contour = terminal_system.terminal_contour
+    mappings = terminal_system.mappings
     decorations = build_decorations(
         planar_map=planar_map,
         occurrence_names=occurrence_names,
@@ -31,6 +43,7 @@ def build_formal_profile(
         environment=environment,
         terminal_contour=terminal_contour,
         mappings=mappings,
+        additional_template_relations=terminal_system.template_relations,
         tolerance=tolerance,
     )
 

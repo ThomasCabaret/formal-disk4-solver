@@ -66,6 +66,7 @@ class GeometryRunner:
             "candidates_solved": 0,
             "candidates_failed": 0,
             "optimizer_attempts": 0,
+            "fixed_candidates_evaluated": 0,
             "elapsed_seconds": 0.0,
             "completed": False,
         }
@@ -167,6 +168,10 @@ class GeometryRunner:
                     result = self.solver.solve(problem)
                     state["candidates_seen"] = int(state["candidates_seen"]) + 1
                     state["optimizer_attempts"] = int(state["optimizer_attempts"]) + result.attempts
+                    if result.attempts == 0:
+                        state["fixed_candidates_evaluated"] = int(
+                            state.get("fixed_candidates_evaluated", 0)
+                        ) + 1
                     if result.solution is not None:
                         state["candidates_solved"] = int(state["candidates_solved"]) + 1
                         record: Dict[str, Any] = {

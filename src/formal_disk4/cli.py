@@ -38,6 +38,8 @@ def _apply_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
         config["limits"]["max_placements"] = args.max_placements
     if getattr(args, "max_profiles", None) is not None:
         config["limits"]["max_profiles"] = args.max_profiles
+    if getattr(args, "continue_after_profile", False):
+        config["limits"]["stop_on_first_profile"] = False
     if getattr(args, "symmetry", None) is not None:
         config["enumeration"]["symmetry_mode"] = args.symmetry
     if getattr(args, "no_lengths", False):
@@ -46,6 +48,10 @@ def _apply_overrides(config: Dict[str, Any], args: argparse.Namespace) -> None:
         config["enumeration"]["enable_angle_filter"] = False
     if getattr(args, "no_exterior_arc_repetition", False):
         config["enumeration"]["exterior_arc_repetition"]["enabled"] = False
+    if getattr(args, "no_cyclic_equivariance", False):
+        config["enumeration"]["cyclic_equivariance"]["enabled"] = False
+        # The unrestricted 12-copy weak-order count is intentionally not materialized.
+        config["enumeration"]["track_exact_domain_size"] = False
     if getattr(args, "no_solver", False):
         config["solver"]["enabled"] = False
     if getattr(args, "no_preword_pruning", False) or getattr(
@@ -84,6 +90,8 @@ def _apply_geometry_overrides(config: Dict[str, Any], args: argparse.Namespace) 
         config["limits"]["max_candidates"] = int(args.max_candidates)
     if getattr(args, "max_solutions", None) is not None:
         config.setdefault("limits", {})["max_solutions"] = int(args.max_solutions)
+    if getattr(args, "continue_after_solution", False):
+        config.setdefault("limits", {})["stop_on_first_solution"] = False
     if getattr(args, "seed", None) is not None:
         config["geometry"]["random_seed"] = int(args.seed)
     if getattr(args, "restart", False):
@@ -125,7 +133,9 @@ def command_counts(args: argparse.Namespace) -> int:
         planar_map,
         allow_reflections=not args.direct_only,
         symmetry_mode=args.symmetry,
+        required_equivariance=args.cyclic_equivariance,
     )
+    unrestricted_raw_count = enumerator.unrestricted_raw_assignment_count()
     raw_count = enumerator.raw_assignment_count()
     if args.symmetry == "off":
         assignment_count = raw_count
@@ -142,7 +152,25 @@ def command_counts(args: argparse.Namespace) -> int:
         assignment_count = len(materialized)
         first_assignment = materialized[0] if materialized else None
 
-    if first_assignment is not None and len(planar_map.pieces) <= 8:
+    equivariant_lengths: tuple[int, ...] | None = None
+    if first_assignment is not None and args.cyclic_equivariance is not None:
+        lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
+        orbits = enumerator.equivariance_piece_orbits
+        equivariant_lengths = tuple(
+            len(first_assignment.sequences[orbit[0]]) for orbit in orbits
+        )
+        reference_piece_index = first_assignment.piece_names.index(
+            planar_map.reference_piece
+        )
+        reference_index = next(
+            index
+            for index, orbit in enumerate(orbits)
+            if reference_piece_index in orbit
+        )
+        weak_per_assignment = count_weak_orders_for_lengths(
+            equivariant_lengths, reference_index
+        )
+    elif first_assignment is not None and len(planar_map.pieces) <= 8:
         lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
         reference_index = first_assignment.piece_names.index(planar_map.reference_piece)
         weak_per_assignment = count_weak_orders_for_lengths(lengths, reference_index)
@@ -209,7 +237,12 @@ def command_counts(args: argparse.Namespace) -> int:
     result = {
         "map": planar_map.name,
         "contour_occurrence_lengths": list(lengths),
+        "equivariant_contour_orbit_lengths": (
+            list(equivariant_lengths) if equivariant_lengths is not None else None
+        ),
+        "unrestricted_raw_copy_assignments": unrestricted_raw_count,
         "raw_copy_assignments": raw_count,
+        "required_cyclic_equivariance": args.cyclic_equivariance,
         "canonical_copy_assignments": (
             assignment_count if args.symmetry != "off" else None
         ),
@@ -247,6 +280,7 @@ def command_assignments(args: argparse.Namespace) -> int:
         planar_map,
         allow_reflections=not args.direct_only,
         symmetry_mode=args.symmetry,
+        required_equivariance=args.cyclic_equivariance,
     )
     if args.symmetry == "off":
         sample = [
@@ -258,7 +292,9 @@ def command_assignments(args: argparse.Namespace) -> int:
         sample = list(islice(enumerator.enumerate(), args.limit))
         emitted_count = None
     payload = {
+        "unrestricted_raw_count": enumerator.unrestricted_raw_assignment_count(),
         "raw_count": enumerator.raw_assignment_count(),
+        "required_cyclic_equivariance": args.cyclic_equivariance,
         "emitted_count": emitted_count,
         "sampled_count": len(sample),
         "assignments": [
@@ -302,6 +338,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--max-nodes", type=int)
     run_parser.add_argument("--max-placements", type=int)
     run_parser.add_argument("--max-profiles", type=int)
+    run_parser.add_argument(
+        "--continue-after-profile",
+        action="store_true",
+        help="Keep enumerating after a formal profile is written.",
+    )
     run_parser.add_argument("--symmetry", choices=("off", "assignment", "incremental"))
     run_parser.add_argument("--no-lengths", action="store_true")
     run_parser.add_argument("--no-angles", action="store_true")
@@ -309,6 +350,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-exterior-arc-repetition",
         action="store_true",
         help="Disable the early K4 Stein transported-exterior-arc repetition theorem.",
+    )
+    run_parser.add_argument(
+        "--no-cyclic-equivariance",
+        action="store_true",
+        help=(
+            "Disable the configured cyclic assignment and weak-order equivariance. "
+            "This is enabled by default only for double-cycle cases."
+        ),
     )
     run_parser.add_argument("--no-solver", action="store_true")
     run_parser.add_argument(
@@ -345,6 +394,11 @@ def build_parser() -> argparse.ArgumentParser:
     geometry_parser.add_argument("--max-restarts", type=int)
     geometry_parser.add_argument("--max-candidates", type=int)
     geometry_parser.add_argument("--max-solutions", type=int)
+    geometry_parser.add_argument(
+        "--continue-after-solution",
+        action="store_true",
+        help="Process all currently available candidates after finding a geometry solution.",
+    )
     geometry_parser.add_argument("--seed", type=int)
     geometry_parser.add_argument(
         "--restart",
@@ -383,6 +437,11 @@ def build_parser() -> argparse.ArgumentParser:
     counts_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
     )
+    counts_parser.add_argument(
+        "--cyclic-equivariance",
+        metavar="AUTOMORPHISM",
+        help="Require assignments fixed by this map automorphism, for example rotation_1.",
+    )
     counts_parser.set_defaults(function=command_counts)
 
     map_parser = subparsers.add_parser("map-info", help="Inspect a registered planar map")
@@ -396,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
     assignment_parser.add_argument("--direct-only", action="store_true")
     assignment_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
+    )
+    assignment_parser.add_argument(
+        "--cyclic-equivariance",
+        metavar="AUTOMORPHISM",
+        help="Require assignments fixed by this map automorphism, for example rotation_1.",
     )
     assignment_parser.add_argument("--limit", type=int, default=10)
     assignment_parser.set_defaults(function=command_assignments)

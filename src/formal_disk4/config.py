@@ -17,6 +17,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "exterior_arc_repetition": {
             "enabled": True,
         },
+        "cyclic_equivariance": {
+            "enabled": False,
+            "automorphism": "rotation_1",
+            "enforce_weak_orders": True,
+        },
         "lp_tolerance": 1e-9,
     },
     "solver": {
@@ -50,6 +55,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "enable_radius_measures": True,
                 "enable_smooth_turns": True,
                 "enable_point_turns": True,
+                "enforce_global_point_turn_balance": True,
                 "enable_isoperimetric": True,
                 "sqrt_upper_bound_denominator": 1000,
             },

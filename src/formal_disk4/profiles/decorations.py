@@ -12,7 +12,12 @@ from formal_disk4.constraints.rational_lp import maximize_free_variables
 from formal_disk4.enumeration.weak_orders import Placement
 from formal_disk4.maps.base import Occurrence, PlanarMap
 from formal_disk4.words.algebra import Literal, Word, substitute_word
-from formal_disk4.words.compile import CompiledWordCase, ContactMapping, DirectedSegmentRef
+from formal_disk4.words.compile import (
+    CompiledWordCase,
+    ContactMapping,
+    DirectedSegmentRef,
+    TerminalTemplateRelation,
+)
 
 from .exact_linear import (
     ExactLinearInfeasible,
@@ -518,9 +523,23 @@ def _build_angle_decorations(
 
 
 def _template_relations(
-    terminal_contour: Word, mappings: Sequence[ContactMapping]
+    terminal_contour: Word,
+    mappings: Sequence[ContactMapping],
+    additional_relations: Sequence[TerminalTemplateRelation] = (),
 ) -> Tuple[Tuple[str, str, TemplateTransform, str, int], ...]:
-    output = []
+    output = [
+        (
+            relation.left_variable,
+            relation.right_variable,
+            TemplateTransform(
+                reverse=relation.reverse,
+                mirror=relation.mirror,
+            ),
+            relation.source,
+            relation.pair_index,
+        )
+        for relation in additional_relations
+    ]
     for mapping in mappings:
         for pair_index, (left_ref, right_ref) in enumerate(mapping.pairs):
             left = terminal_contour[left_ref.segment_index]
@@ -974,6 +993,7 @@ def build_decorations(
     environment: Mapping[str, Word],
     terminal_contour: Word,
     mappings: Sequence[ContactMapping],
+    additional_template_relations: Sequence[TerminalTemplateRelation] = (),
     tolerance: float = 1e-9,
 ) -> DecorationBundle:
     boundary_sources = _terminal_boundary_sources(
@@ -989,7 +1009,9 @@ def build_decorations(
         tolerance,
     )
 
-    raw_relations = _template_relations(terminal_contour, mappings)
+    raw_relations = _template_relations(
+        terminal_contour, mappings, additional_template_relations
+    )
     components, component_by_variable = _curve_components(terminal_contour, raw_relations)
     component_lengths, terminal_length_margin, exact_length_solution = _terminal_lengths(
         compiled,

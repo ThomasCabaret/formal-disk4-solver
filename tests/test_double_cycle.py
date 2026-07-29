@@ -4,7 +4,10 @@ import json
 import unittest
 from pathlib import Path
 
+from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
+from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
+from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
 from formal_disk4.maps.double_cycle import build_double_cycle_map
 from formal_disk4.maps.registry import build_map, canonical_map_name
 
@@ -53,6 +56,44 @@ class DoubleCycleMapTests(unittest.TestCase):
         self.assertTrue(all(offset == 0 for offset in first.cyclic_offsets))
         self.assertNotEqual(first.sequences, second.sequences)
 
+    def test_cyclic_equivariance_reduces_assignments_and_weak_orders(self) -> None:
+        planar_map = build_map("double-cycle-6")
+        enumerator = AssignmentEnumerator(
+            planar_map,
+            symmetry_mode="off",
+            required_equivariance="rotation_1",
+        )
+        self.assertEqual(enumerator.unrestricted_raw_assignment_count(), 6_115_295_232)
+        self.assertEqual(enumerator.raw_assignment_count(), 24)
+        self.assertEqual(
+            AssignmentEnumerator(
+                build_double_cycle_map(7),
+                symmetry_mode="off",
+                required_equivariance="rotation_1",
+            ).raw_assignment_count(),
+            24,
+        )
+        assignment = enumerator.assignment_at(0)
+        self.assertEqual(
+            enumerator.equivariance_piece_orbits,
+            ((0, 1, 2, 3, 4, 5), (6, 7, 8, 9, 10, 11)),
+        )
+        weak_orders = WeakOrderEnumerator(
+            planar_map,
+            assignment,
+            enumerator.occurrence_names,
+            LengthFeasibilityOracle(),
+            AngleFeasibilityOracle(),
+            symmetry_mode="off",
+            enable_length_filter=False,
+            enable_angle_filter=False,
+            enable_exterior_arc_repetition_filter=False,
+            required_equivariance_transform=enumerator.required_transform(assignment),
+            equivariance_piece_orbits=enumerator.equivariance_piece_orbits,
+        )
+        self.assertEqual(weak_orders.total_leaf_mass, 66)
+        self.assertEqual(len(list(weak_orders.enumerate())), 66)
+
     def test_case_manifest_uses_independent_output(self) -> None:
         root = Path(__file__).resolve().parents[1]
         case_root = root / "config" / "cases" / "double-cycle-6"
@@ -61,7 +102,15 @@ class DoubleCycleMapTests(unittest.TestCase):
         self.assertEqual(manifest["map"], "double-cycle-6")
         self.assertEqual(search["maps"], ["double-cycle-6"])
         self.assertEqual(search["enumeration"]["symmetry_mode"], "off")
-        self.assertFalse(search["enumeration"]["track_exact_domain_size"])
+        self.assertTrue(search["enumeration"]["track_exact_domain_size"])
+        self.assertEqual(
+            search["enumeration"]["cyclic_equivariance"],
+            {
+                "enabled": True,
+                "automorphism": "rotation_1",
+                "enforce_weak_orders": True,
+            },
+        )
         self.assertEqual(
             search["output"]["directory"], "output/cases/double-cycle-6"
         )

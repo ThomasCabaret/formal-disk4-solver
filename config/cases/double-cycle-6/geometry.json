@@ -13,10 +13,10 @@
     "include_formal_candidate": true
   },
   "geometry": {
-    "intermediate_points_per_generic_curve": 2,
-    "arc_sample_count": 64,
-    "max_restarts": 96,
-    "max_function_evaluations": 12000,
+    "intermediate_points_per_generic_curve": 0,
+    "arc_sample_count": 2,
+    "max_restarts": 1,
+    "max_function_evaluations": 1,
     "random_seed": 0,
     "maximum_curve_length": 6.0,
     "minimum_curve_length": 1e-06,

@@ -8,5 +8,11 @@
     "profile": "profile.json",
     "geometry": "geometry.json",
     "visualizer": "visualizer.json"
+  },
+  "solver": {
+    "family_expansion": {
+      "policy": "range",
+      "maximum_exponent": 1
+    }
   }
 }

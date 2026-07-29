@@ -192,15 +192,22 @@ try {
             Invoke-Stage "[INFO] Registered planar map" @("-m", "formal_disk4", "map-info", "--map", [string]$Manifest.map)
         }
         "pipeline" {
-            $Unknown = @($ExtraArguments | Where-Object { $_ -notin @("--restart", "--no-resume") })
+            $Unknown = @(
+                $ExtraArguments | Where-Object {
+                    $_ -notin @("--restart", "--no-resume", "--no-cyclic-equivariance")
+                }
+            )
             if ($Unknown.Count -gt 0) {
-                throw "Full pipeline accepts only --restart and --no-resume. Unsupported: $($Unknown -join ' ')"
+                throw "Full pipeline accepts only --restart, --no-resume, and --no-cyclic-equivariance. Unsupported: $($Unknown -join ' ')"
             }
             $SearchConfig = Resolve-CaseConfig "search"
             $GeometryConfig = Resolve-CaseConfig "geometry"
             $VisualizerConfig = Resolve-CaseConfig "visualizer"
+            $GeometryArguments = @(
+                $ExtraArguments | Where-Object { $_ -ne "--no-cyclic-equivariance" }
+            )
             Invoke-Stage "[STEP 1/3] Formal search" (@("-m", "formal_disk4", "run", "--config", $SearchConfig) + $ExtraArguments)
-            Invoke-Stage "[STEP 2/3] Single-piece geometry" (@("-m", "formal_disk4", "geometry", "--config", $GeometryConfig) + $ExtraArguments)
+            Invoke-Stage "[STEP 2/3] Single-piece geometry" (@("-m", "formal_disk4", "geometry", "--config", $GeometryConfig) + $GeometryArguments)
             Invoke-Stage "[STEP 3/3] Mapping-derived viewer" @("-m", "formal_disk4", "visualize", "--config", $VisualizerConfig)
         }
     }

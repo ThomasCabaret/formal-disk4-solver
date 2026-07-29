@@ -1,0 +1,16 @@
+PATCH_NOTES_1.2.0.md
+PATCH_MANIFEST_1.2.0.txt
+README.md
+config/cases/double-cycle-6/profile.json
+config/cases/double-cycle-6/search.json
+docs/ARCHITECTURE.md
+pyproject.toml
+scripts/run_case.ps1
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/config.py
+src/formal_disk4/enumeration/assignments.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+tests/test_double_cycle.py

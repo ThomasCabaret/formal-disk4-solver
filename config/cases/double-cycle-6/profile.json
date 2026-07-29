@@ -58,15 +58,21 @@
         "enable_smooth_turns": true,
         "enable_point_turns": true,
         "enable_isoperimetric": true,
-        "sqrt_upper_bound_denominator": 1000
+        "sqrt_upper_bound_denominator": 1000,
+        "enforce_global_point_turn_balance": false
       }
     }
   },
   "enumeration": {
     "symmetry_mode": "off",
-    "track_exact_domain_size": false,
+    "track_exact_domain_size": true,
     "exterior_arc_repetition": {
       "enabled": true
+    },
+    "cyclic_equivariance": {
+      "enabled": true,
+      "automorphism": "rotation_1",
+      "enforce_weak_orders": true
     }
   },
   "maps": [

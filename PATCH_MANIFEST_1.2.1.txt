@@ -1,0 +1,11 @@
+PATCH_NOTES_1.2.1.md
+PATCH_MANIFEST_1.2.1.txt
+README.md
+config/cases/double-cycle-6/search.json
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/geometry/runner.py
+src/formal_disk4/geometry/solver.py
+tests/test_cli_overrides.py
+tests/test_geometry.py

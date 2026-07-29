@@ -5,7 +5,15 @@ import unittest
 from pathlib import Path
 
 from formal_disk4.config import load_config, load_geometry_config
-from formal_disk4.geometry.model import parse_formal_geometry_problem
+from formal_disk4.geometry.model import (
+    FormalCurveComponent,
+    FormalGeometryProblem,
+    FormalPointSpec,
+    FormalSegmentOccurrence,
+    LinearFormula,
+    TransformSpec,
+    parse_formal_geometry_problem,
+)
 from formal_disk4.geometry.runner import GeometryRunner
 from formal_disk4.geometry.solver import GeometrySolverConfig, NumericalContourSolver
 from formal_disk4.pipeline.runner import SolverRunner
@@ -43,7 +51,151 @@ def build_pizza_candidate(directory: Path) -> Path:
     return formal_output / "candidates.jsonl"
 
 
+def build_double_cycle_candidate(directory: Path) -> Path:
+    formal_output = directory / "double-cycle-formal"
+    config_path = (
+        Path(__file__).resolve().parents[1]
+        / "config"
+        / "cases"
+        / "double-cycle-6"
+        / "search.json"
+    )
+    config = load_config(config_path)
+    config["limits"].update(
+        {
+            "max_profiles": 1,
+            "time_limit_seconds": 10,
+            "stop_on_first_profile": True,
+        }
+    )
+    config["progress"]["enabled"] = False
+    config["output"].update(
+        {
+            "directory": str(formal_output),
+            "write_candidates": True,
+        }
+    )
+    config["checkpoint"].update(
+        {"enabled": True, "resume": True, "restart": True}
+    )
+    SolverRunner(config).run()
+    return formal_output / "candidates.jsonl"
+
+
 class GeometrySolverTests(unittest.TestCase):
+
+    def test_fixed_closed_circle_is_recorded_without_optimizer(self) -> None:
+        problem = FormalGeometryProblem(
+            formal_profile_id="fixed-circle",
+            source_candidate={},
+            source_path="memory",
+            source_line=1,
+            map_name="test",
+            points=(
+                FormalPointSpec(
+                    boundary_index=0,
+                    angle_pi=LinearFormula(1.0, (), "1"),
+                    angle_class="smooth",
+                    angle_class_sign=1,
+                    occurrences=(),
+                    roles=(),
+                    witness_angle_pi=1.0,
+                ),
+            ),
+            segments=(
+                FormalSegmentOccurrence(
+                    segment_index=0,
+                    literal="T0",
+                    variable="T0",
+                    literal_inverse=False,
+                    component_id="C0",
+                    curve_type="circular_arc",
+                    circle_class="disk_boundary",
+                ),
+            ),
+            components=(
+                FormalCurveComponent(
+                    component_id="C0",
+                    representative="T0",
+                    variables=("T0",),
+                    variable_transforms=(("T0", TransformSpec()),),
+                    curve_type="circular_arc",
+                    circle_class="disk_boundary",
+                    forced_straight=False,
+                    length=LinearFormula(1.0, (), "1"),
+                    turn_pi=LinearFormula(2.0, (), "2"),
+                    search_witness_length=1.0,
+                ),
+            ),
+        )
+        result = NumericalContourSolver(GeometrySolverConfig()).solve(problem)
+        self.assertIsNotNone(result.solution, result.reason)
+        self.assertEqual(result.attempts, 0)
+        assert result.solution is not None
+        self.assertEqual(
+            result.solution.optimization["method"],
+            "deterministic_fixed_geometry",
+        )
+        self.assertEqual(result.solution.optimization["degrees_of_freedom"], 0)
+
+    def test_fixed_infeasible_contour_skips_all_optimizer_restarts(self) -> None:
+        problem = FormalGeometryProblem(
+            formal_profile_id="fixed-open-arc",
+            source_candidate={},
+            source_path="memory",
+            source_line=1,
+            map_name="test",
+            points=(
+                FormalPointSpec(
+                    boundary_index=0,
+                    angle_pi=LinearFormula(1.0, (), "1"),
+                    angle_class="smooth",
+                    angle_class_sign=1,
+                    occurrences=(),
+                    roles=(),
+                    witness_angle_pi=1.0,
+                ),
+            ),
+            segments=(
+                FormalSegmentOccurrence(
+                    segment_index=0,
+                    literal="T0",
+                    variable="T0",
+                    literal_inverse=False,
+                    component_id="C0",
+                    curve_type="circular_arc",
+                    circle_class="disk_boundary",
+                ),
+            ),
+            components=(
+                FormalCurveComponent(
+                    component_id="C0",
+                    representative="T0",
+                    variables=("T0",),
+                    variable_transforms=(("T0", TransformSpec()),),
+                    curve_type="circular_arc",
+                    circle_class="disk_boundary",
+                    forced_straight=False,
+                    length=LinearFormula(1.0 / 12.0, (), "1/12"),
+                    turn_pi=LinearFormula(1.0 / 6.0, (), "1/6"),
+                    search_witness_length=1.0 / 12.0,
+                ),
+            ),
+        )
+        result = NumericalContourSolver(
+            GeometrySolverConfig(
+                intermediate_points_per_generic_curve=2,
+                max_restarts=96,
+                max_function_evaluations=12000,
+            )
+        ).solve(problem)
+        self.assertIsNone(result.solution)
+        self.assertEqual(result.attempts, 0)
+        self.assertIn("fixed geometry failed closure precheck", result.reason)
+        assert result.best_validation is not None
+        self.assertTrue(result.best_validation["precheck_only"])
+        self.assertGreater(result.best_validation["closure_error"], 1e-3)
+
     def test_pizza_profile_has_a_simple_closed_realization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             candidate_path = build_pizza_candidate(Path(temporary))

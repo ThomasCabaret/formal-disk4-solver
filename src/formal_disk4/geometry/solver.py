@@ -224,6 +224,111 @@ class NumericalContourSolver:
     def solve(self, problem: FormalGeometryProblem) -> GeometryAttemptResult:
         started = time.perf_counter()
         layout = self._build_layout(problem)
+
+        # A zero-dimensional geometry has exactly one realization in the current
+        # template model. Repeating least-squares restarts cannot change it.
+        if layout.initial.size == 0:
+            vector = layout.initial.copy()
+            built = self._build_geometry(problem, layout, vector)
+
+            # Closure is necessary and much cheaper than sampled intersection
+            # validation. With no variables, a failed closure cannot be repaired.
+            closure_error = float(
+                np.linalg.norm(
+                    built.occurrences[-1].end_point
+                    - built.occurrences[0].start_point
+                )
+            )
+            final_vertex_turn = math.pi - float(built.target_angles[0])
+            tangent_error = abs(
+                angle_wrap(
+                    built.occurrences[-1].end_tangent
+                    + final_vertex_turn
+                    - built.occurrences[0].start_tangent
+                )
+            )
+            failed_prechecks = []
+            if closure_error > self.config.closure_tolerance:
+                failed_prechecks.append("closed_contour")
+            if tangent_error > self.config.tangent_tolerance:
+                failed_prechecks.append("closed_tangent_cycle")
+            if failed_prechecks:
+                return GeometryAttemptResult(
+                    solution=None,
+                    reason=(
+                        "fixed geometry failed closure precheck: "
+                        + ", ".join(failed_prechecks)
+                    ),
+                    attempts=0,
+                    best_cost=closure_error * closure_error + tangent_error * tangent_error,
+                    best_validation={
+                        "passed": False,
+                        "precheck_only": True,
+                        "closure_error": closure_error,
+                        "tangent_closure_error": tangent_error,
+                        "checks": [
+                            {
+                                "name": "closed_contour",
+                                "passed": closure_error <= self.config.closure_tolerance,
+                                "detail": (
+                                    f"closure_error={closure_error:.3e}, "
+                                    f"tolerance={self.config.closure_tolerance:.3e}"
+                                ),
+                            },
+                            {
+                                "name": "closed_tangent_cycle",
+                                "passed": tangent_error <= self.config.tangent_tolerance,
+                                "detail": (
+                                    f"tangent_error={tangent_error:.3e}, "
+                                    f"tolerance={self.config.tangent_tolerance:.3e}"
+                                ),
+                            },
+                        ],
+                    },
+                )
+
+            validation = self._validate_built(built)
+            residual = self._residual(problem, layout, vector)
+            cost = float(np.dot(residual, residual))
+            if not validation.passed:
+                failed = [name for name, passed, _detail in validation.checks if not passed]
+                return GeometryAttemptResult(
+                    solution=None,
+                    reason=(
+                        "fixed geometry failed validation: " + ", ".join(failed)
+                    ),
+                    attempts=0,
+                    best_cost=cost,
+                    best_validation=validation.to_dict(),
+                )
+            elapsed = time.perf_counter() - started
+            solution = self._solution_record(
+                problem,
+                built,
+                validation,
+                optimization={
+                    "method": "deterministic_fixed_geometry",
+                    "degrees_of_freedom": 0,
+                    "attempt_index": None,
+                    "attempt_count": 0,
+                    "success_flag": True,
+                    "status": 0,
+                    "message": "No free geometry parameters; evaluated the unique contour once.",
+                    "function_evaluations": 0,
+                    "residual_sum_of_squares": cost,
+                    "elapsed_seconds": elapsed,
+                    "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
+                    "arc_validation_sample_count": self.config.arc_sample_count,
+                },
+            )
+            return GeometryAttemptResult(
+                solution=solution,
+                reason="solved fixed geometry",
+                attempts=0,
+                best_cost=cost,
+                best_validation=validation.to_dict(),
+            )
+
         rng_seed = self.config.random_seed ^ int(
             hashlib.sha256(problem.formal_profile_id.encode("utf-8")).hexdigest()[:8], 16
         )
@@ -275,9 +380,20 @@ class NumericalContourSolver:
                     problem,
                     built,
                     validation,
-                    attempt_index=attempt_index,
-                    optimizer_result=result,
-                    elapsed_seconds=elapsed,
+                    optimization={
+                        "method": "scipy.optimize.least_squares",
+                        "degrees_of_freedom": int(layout.initial.size),
+                        "attempt_index": attempt_index,
+                        "attempt_count": attempt_index + 1,
+                        "success_flag": bool(result.success),
+                        "status": int(result.status),
+                        "message": str(result.message),
+                        "function_evaluations": int(result.nfev),
+                        "residual_sum_of_squares": float(2.0 * result.cost),
+                        "elapsed_seconds": elapsed,
+                        "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
+                        "arc_validation_sample_count": self.config.arc_sample_count,
+                    },
                 )
                 return GeometryAttemptResult(
                     solution=solution,
@@ -650,9 +766,7 @@ class NumericalContourSolver:
         built: _BuiltGeometry,
         validation,
         *,
-        attempt_index: int,
-        optimizer_result,
-        elapsed_seconds: float,
+        optimization: Mapping[str, Any],
     ) -> GeometrySolution:
         point_records = []
         for index, point_spec in enumerate(problem.points):
@@ -759,17 +873,5 @@ class NumericalContourSolver:
             occurrences=tuple(occurrence_records),
             templates=tuple(template_records),
             validation=validation,
-            optimization={
-                "method": "scipy.optimize.least_squares",
-                "attempt_index": attempt_index,
-                "attempt_count": attempt_index + 1,
-                "success_flag": bool(optimizer_result.success),
-                "status": int(optimizer_result.status),
-                "message": str(optimizer_result.message),
-                "function_evaluations": int(optimizer_result.nfev),
-                "residual_sum_of_squares": float(2.0 * optimizer_result.cost),
-                "elapsed_seconds": elapsed_seconds,
-                "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
-                "arc_validation_sample_count": self.config.arc_sample_count,
-            },
+            optimization=dict(optimization),
         )

@@ -75,6 +75,8 @@ class WeakOrderEnumerator:
         resume_state: Mapping[str, object] | None = None,
         checkpoint_sink: CheckpointSink | None = None,
         track_exact_leaf_mass: bool = True,
+        required_equivariance_transform: AssignmentTransform | None = None,
+        equivariance_piece_orbits: Sequence[Sequence[int]] = (),
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -89,6 +91,11 @@ class WeakOrderEnumerator:
         self.stop_predicate = stop_predicate or (lambda: False)
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
         self.track_exact_leaf_mass = track_exact_leaf_mass
+        self.required_equivariance_transform = required_equivariance_transform
+        self.equivariance_piece_orbits = tuple(
+            tuple(int(index) for index in orbit)
+            for orbit in equivariance_piece_orbits
+        )
         self.piece_names = assignment.piece_names
         self.piece_index = {name: index for index, name in enumerate(self.piece_names)}
         self.reference_index = self.piece_index[planar_map.reference_piece]
@@ -109,6 +116,29 @@ class WeakOrderEnumerator:
         )
         self._placement_id = 0
         self.target_counters = tuple(len(sequence) for sequence in assignment.sequences)
+        self._equivariance_orbit_masks = tuple(
+            sum(1 << piece_index for piece_index in orbit)
+            for orbit in self.equivariance_piece_orbits
+        )
+        self._equivariance_reference_orbit = next(
+            (
+                orbit_index
+                for orbit_index, orbit in enumerate(self.equivariance_piece_orbits)
+                if self.reference_index in orbit
+            ),
+            None,
+        )
+        if self.required_equivariance_transform is not None:
+            if not self.equivariance_piece_orbits:
+                raise ValueError("Required equivariance needs non-empty piece orbits")
+            if self._equivariance_reference_orbit is None:
+                raise ValueError("Reference piece is absent from equivariance orbits")
+            for orbit in self.equivariance_piece_orbits:
+                lengths = {self.target_counters[index] for index in orbit}
+                if len(lengths) != 1:
+                    raise ValueError(
+                        "Pieces in a required-equivariance orbit must have equal contour lengths"
+                    )
         state = dict(resume_state or {})
         if state and int(state.get("assignment_id", -1)) != assignment.assignment_id:
             raise ValueError("Weak-order resume state belongs to another assignment")
@@ -122,16 +152,42 @@ class WeakOrderEnumerator:
     def processed_leaf_mass(self) -> int:
         return self._processed_leaf_mass
 
+    def _compressed_counters(self, counters: Tuple[int, ...]) -> Tuple[int, ...]:
+        if self.required_equivariance_transform is None:
+            return counters
+        compressed = []
+        for orbit in self.equivariance_piece_orbits:
+            values = {counters[index] for index in orbit}
+            if len(values) != 1:
+                raise RuntimeError(
+                    "Required-equivariance masks must keep orbit counters synchronized"
+                )
+            compressed.append(values.pop())
+        return tuple(compressed)
+
     @property
     def total_leaf_mass(self) -> int:
         if not self.track_exact_leaf_mass:
             return 0
-        return count_weak_orders_for_lengths(self.target_counters, self.reference_index)
+        if self.required_equivariance_transform is None:
+            return count_weak_orders_for_lengths(
+                self.target_counters, self.reference_index
+            )
+        target = self._compressed_counters(self.target_counters)
+        assert self._equivariance_reference_orbit is not None
+        return count_weak_orders_for_lengths(
+            target, self._equivariance_reference_orbit
+        )
 
     def _subtree_leaf_mass(self, counters: Tuple[int, ...]) -> int:
         if not self.track_exact_leaf_mass:
             return 0
-        return _weak_path_count(counters, self.target_counters)
+        if self.required_equivariance_transform is None:
+            return _weak_path_count(counters, self.target_counters)
+        return _weak_path_count(
+            self._compressed_counters(counters),
+            self._compressed_counters(self.target_counters),
+        )
 
     def checkpoint_state(self) -> Dict[str, object]:
         return {
@@ -287,6 +343,37 @@ class WeakOrderEnumerator:
         best = min(self._transform_blocks(blocks, transform) for transform in self.assignment.stabilizer)
         return blocks == best
 
+    def _candidate_masks(
+        self, available_mask: int, *, require_reference: bool = False
+    ) -> Tuple[int, ...]:
+        if self.required_equivariance_transform is None:
+            masks = (
+                mask
+                for mask in range(1, available_mask + 1)
+                if not (mask & ~available_mask)
+            )
+        else:
+            # An equivariant prototype point contains a whole copy orbit.
+            # Advancing only part of an orbit would break the imposed rotation.
+            available_orbits = tuple(
+                orbit_mask
+                for orbit_mask in self._equivariance_orbit_masks
+                if orbit_mask & available_mask == orbit_mask
+            )
+            generated = []
+            for orbit_selection in range(1, 1 << len(available_orbits)):
+                mask = 0
+                for orbit_index, orbit_mask in enumerate(available_orbits):
+                    if orbit_selection & (1 << orbit_index):
+                        mask |= orbit_mask
+                generated.append(mask)
+            masks = iter(generated)
+        if require_reference:
+            masks = (
+                mask for mask in masks if mask & (1 << self.reference_index)
+            )
+        return tuple(masks)
+
     def enumerate(self) -> Iterator[Placement]:
         if (
             self.exterior_arc_repetition.applicable
@@ -301,11 +388,7 @@ class WeakOrderEnumerator:
         available_mask = (1 << len(self.piece_names)) - 1
         first_masks = tuple(
             sorted(
-                (
-                    mask
-                    for mask in range(1, available_mask + 1)
-                    if mask & (1 << self.reference_index)
-                ),
+                self._candidate_masks(available_mask, require_reference=True),
                 key=lambda item: (-item.bit_count(), item),
             )
         )
@@ -351,7 +434,19 @@ class WeakOrderEnumerator:
             next_counters[piece_index] += 1
         if not block:
             return None
-        return blocks + (tuple(sorted(block)),), tuple(next_counters), tuple(next_positions)
+        sorted_block = tuple(sorted(block))
+        if self.required_equivariance_transform is not None:
+            mapped_block = tuple(
+                sorted(
+                    self.required_equivariance_transform.map_occurrence_id(item)
+                    for item in sorted_block
+                )
+            )
+            if mapped_block != sorted_block:
+                raise RuntimeError(
+                    "Required-equivariance mask produced a non-invariant weak-order block"
+                )
+        return blocks + (sorted_block,), tuple(next_counters), tuple(next_positions)
 
     def _search(
         self,
@@ -450,9 +545,7 @@ class WeakOrderEnumerator:
                 available_mask |= 1 << piece_index
 
         candidates = []
-        for mask in range(1, available_mask + 1):
-            if mask & ~available_mask:
-                continue
+        for mask in self._candidate_masks(available_mask):
             appended = self._append_block(blocks, counters, positions, mask)
             if appended is None:
                 continue

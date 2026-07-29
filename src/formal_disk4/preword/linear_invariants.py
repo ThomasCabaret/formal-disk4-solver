@@ -131,6 +131,7 @@ class PrewordLinearInvariantFilter:
         enable_radius_measures: bool = True,
         enable_smooth_turns: bool = True,
         enable_point_turns: bool = True,
+        enforce_global_point_turn_balance: bool = True,
         enable_isoperimetric: bool = True,
         sqrt_upper_bound_denominator: int = 1000,
     ) -> None:
@@ -139,6 +140,9 @@ class PrewordLinearInvariantFilter:
         self.enable_radius_measures = bool(enable_radius_measures)
         self.enable_smooth_turns = bool(enable_smooth_turns)
         self.enable_point_turns = bool(enable_point_turns)
+        self.enforce_global_point_turn_balance = bool(
+            enforce_global_point_turn_balance
+        )
         self.enable_isoperimetric = bool(enable_isoperimetric)
         self.sqrt_upper_bound_denominator = max(1, int(sqrt_upper_bound_denominator))
 
@@ -450,7 +454,11 @@ class PrewordLinearInvariantFilter:
             Fraction(2) - Fraction(2, tile_count),
         )
         derived = _AffineRowSpace(width, equalities).implies(global_equation)
-        if self.enable_point_turns and planar_map.hypotheses.piecewise_c2_boundary:
+        if (
+            self.enable_point_turns
+            and self.enforce_global_point_turn_balance
+            and planar_map.hypotheses.piecewise_c2_boundary
+        ):
             equalities.append(global_equation)
 
         for index in range(point_count):

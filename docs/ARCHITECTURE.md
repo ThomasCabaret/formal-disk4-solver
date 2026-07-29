@@ -1,4 +1,4 @@
-# Architecture 1.1
+# Architecture 1.2
 
 ## 1. Map-driven core
 
@@ -46,7 +46,24 @@ domain without materializing it or replaying previous assignments.
 `enumeration.track_exact_domain_size=false` disables the weak-order counting DP
 for maps whose state lattice is itself too large.  This changes progress
 percentages only; it does not disable length, angle, preword or word pruning.
-The ready `double-cycle-6` case uses both options.
+The unrestricted double-cycle mode uses both options.  Its default mode instead imposes cyclic equivariance and has a small exact domain.
+
+
+## 2.2 Required cyclic equivariance
+
+`enumeration.cyclic_equivariance` is a search restriction, not a quotient.  When
+enabled, one orientation/phase sequence is chosen for each piece orbit of the
+configured map automorphism; all other sequences in that orbit are transported
+by the automorphism.
+
+The weak-order iterator uses the same orbits.  Every coincidence block advances
+a union of complete piece orbits.  This is necessary because a prototype point
+that is fixed by the imposed rotation cannot contain only some rotated copies.
+
+The ready `double-cycle-6` case uses `rotation_1`, giving two piece orbits with
+contour lengths `(4,3)`: 24 assignments and 66 weak orders per assignment.
+The default configuration is disabled globally and enabled only in double-cycle
+case files, including cases generated from the family template.
 
 ## 3. Weak cyclic orders
 

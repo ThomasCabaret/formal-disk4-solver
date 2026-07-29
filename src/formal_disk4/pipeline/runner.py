@@ -137,6 +137,9 @@ class SolverRunner:
                 enable_point_turns=bool(
                     linear_config.get("enable_point_turns", True)
                 ),
+                enforce_global_point_turn_balance=bool(
+                    linear_config.get("enforce_global_point_turn_balance", True)
+                ),
                 enable_isoperimetric=bool(
                     linear_config.get("enable_isoperimetric", True)
                 ),
@@ -308,11 +311,19 @@ class SolverRunner:
             enumeration_config.get("track_exact_domain_size", True)
         )
         symmetry_mode = str(enumeration_config["symmetry_mode"])
+        equivariance_config = enumeration_config.get("cyclic_equivariance", {})
+        equivariance_enabled = bool(equivariance_config.get("enabled", False))
+        required_equivariance = (
+            str(equivariance_config.get("automorphism", "rotation_1"))
+            if equivariance_enabled
+            else None
+        )
         for planar_map in iterate_maps(tuple(self.config["maps"])):
             assignment_enumerator = AssignmentEnumerator(
                 planar_map,
                 allow_reflections=bool(enumeration_config["allow_reflections"]),
                 symmetry_mode=symmetry_mode,
+                required_equivariance=required_equivariance,
             )
 
             # Symmetry-off domains are Cartesian products.  Keep them lazy so a
@@ -332,10 +343,29 @@ class SolverRunner:
                 first_assignment = assignments[0] if assignments else None
 
             if first_assignment is not None and track_exact_domain_size:
-                lengths = tuple(len(sequence) for sequence in first_assignment.sequences)
-                reference_index = first_assignment.piece_names.index(
-                    planar_map.reference_piece
-                )
+                if (
+                    required_equivariance is not None
+                    and bool(equivariance_config.get("enforce_weak_orders", True))
+                ):
+                    orbits = assignment_enumerator.equivariance_piece_orbits
+                    lengths = tuple(
+                        len(first_assignment.sequences[orbit[0]]) for orbit in orbits
+                    )
+                    reference_piece_index = first_assignment.piece_names.index(
+                        planar_map.reference_piece
+                    )
+                    reference_index = next(
+                        index
+                        for index, orbit in enumerate(orbits)
+                        if reference_piece_index in orbit
+                    )
+                else:
+                    lengths = tuple(
+                        len(sequence) for sequence in first_assignment.sequences
+                    )
+                    reference_index = first_assignment.piece_names.index(
+                        planar_map.reference_piece
+                    )
                 mass_per_assignment = count_weak_orders_for_lengths(
                     lengths, reference_index
                 )
@@ -392,6 +422,18 @@ class SolverRunner:
                     for context in contexts
                 ),
             )
+            unrestricted = sum(
+                context.assignment_enumerator.unrestricted_raw_assignment_count()
+                for context in contexts
+            )
+            self.stats.increment(
+                "unrestricted_raw_assignments_in_domain", unrestricted
+            )
+            if unrestricted != self.stats.get("raw_assignments_in_domain"):
+                self.stats.increment(
+                    "cyclic_equivariance_assignment_reduction",
+                    unrestricted - self.stats.get("raw_assignments_in_domain"),
+                )
         self.stats.counters["canonical_assignments_in_domain"] = self._total_assignment_count
         if bool(self.config["enumeration"].get("track_exact_domain_size", True)):
             self.stats.counters["estimated_raw_weak_orders_in_domain"] = self._total_leaf_mass
@@ -598,6 +640,26 @@ class SolverRunner:
                                 "track_exact_domain_size", True
                             )
                         ),
+                        required_equivariance_transform=(
+                            assignment_enumerator.required_transform(assignment)
+                            if assignment.required_equivariance is not None
+                            and bool(
+                                self.config["enumeration"]
+                                .get("cyclic_equivariance", {})
+                                .get("enforce_weak_orders", True)
+                            )
+                            else None
+                        ),
+                        equivariance_piece_orbits=(
+                            assignment_enumerator.equivariance_piece_orbits
+                            if assignment.required_equivariance is not None
+                            and bool(
+                                self.config["enumeration"]
+                                .get("cyclic_equivariance", {})
+                                .get("enforce_weak_orders", True)
+                            )
+                            else ()
+                        ),
                     )
                     self._current_weak_orders = weak_orders
                     placement_started = time.perf_counter()
@@ -732,7 +794,7 @@ class SolverRunner:
                             continue
 
                         solver = ExactPartialWordSolver(
-                            compiled.equations, compiled.atomic_variables
+                            compiled.effective_solver_equations, compiled.solver_variables
                         )
                         self.stats.increment("solver_cases")
                         families_before = self.stats.get("word_families")

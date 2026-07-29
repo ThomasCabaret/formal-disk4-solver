@@ -57,6 +57,7 @@ class ContourAssignment:
     cyclic_offsets: Tuple[int, ...]
     stabilizer: Tuple[AssignmentTransform, ...]
     canonical_key: Tuple[Tuple[int, ...], ...]
+    required_equivariance: str | None = None
 
     def sequence_for_piece_index(self, piece_index: int) -> Tuple[int, ...]:
         return self.sequences[piece_index]
@@ -75,6 +76,7 @@ class ContourAssignment:
             "incremental_stabilizer_size": sum(
                 1 for transform in self.stabilizer if not transform.reverse_cycle
             ),
+            "required_equivariance": self.required_equivariance,
         }
 
 
@@ -86,12 +88,14 @@ class AssignmentEnumerator:
         planar_map: PlanarMap,
         allow_reflections: bool = True,
         symmetry_mode: str = "incremental",
+        required_equivariance: str | None = None,
     ) -> None:
         if symmetry_mode not in {"off", "assignment", "incremental"}:
             raise ValueError("symmetry_mode must be off, assignment, or incremental")
         self.planar_map = planar_map
         self.allow_reflections = allow_reflections
         self.symmetry_mode = symmetry_mode
+        self.required_equivariance = required_equivariance
         self.piece_names = tuple(piece.name for piece in planar_map.pieces)
         self.piece_index = {name: index for index, name in enumerate(self.piece_names)}
         self.occurrences = planar_map.occurrences()
@@ -106,6 +110,13 @@ class AssignmentEnumerator:
         )
         self.reference_index = self.piece_index[planar_map.reference_piece]
         self.transforms = self._build_normalized_transforms()
+        self._required_automorphism = self._resolve_required_automorphism()
+        self._required_occurrence_map, self._required_piece_map = (
+            self._build_required_maps()
+            if self._required_automorphism is not None
+            else ((), ())
+        )
+        self._equivariance_piece_orbits = self._build_equivariance_piece_orbits()
 
     def _piece_options(self) -> Tuple[Tuple[Tuple[int, ...], ...], ...]:
         options: List[Tuple[Tuple[int, ...], ...]] = []
@@ -119,8 +130,93 @@ class AssignmentEnumerator:
             options.append(tuple(piece_options))
         return tuple(options)
 
+    def _resolve_required_automorphism(self) -> MapAutomorphism | None:
+        if self.required_equivariance is None:
+            return None
+        for automorphism in self.planar_map.automorphisms:
+            if automorphism.name == self.required_equivariance:
+                return automorphism
+        raise ValueError(
+            f"Unknown required equivariance {self.required_equivariance!r} for map "
+            f"{self.planar_map.name!r}"
+        )
+
+    def _build_required_maps(self) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+        assert self._required_automorphism is not None
+        occurrence_map = tuple(
+            self.occurrence_index[self._required_automorphism.map_occurrence(occurrence)]
+            for occurrence in self.occurrences
+        )
+        piece_map = tuple(
+            self.piece_index[self._required_automorphism.map_piece(piece_name)]
+            for piece_name in self.piece_names
+        )
+        return occurrence_map, piece_map
+
+    def _build_equivariance_piece_orbits(self) -> Tuple[Tuple[int, ...], ...]:
+        if self._required_automorphism is None:
+            return ()
+        unseen = set(range(len(self.piece_names)))
+        orbits: List[Tuple[int, ...]] = []
+        while unseen:
+            seed = min(unseen)
+            orbit: List[int] = []
+            current = seed
+            while current not in orbit:
+                orbit.append(current)
+                unseen.discard(current)
+                current = self._required_piece_map[current]
+            if current != seed:
+                raise ValueError("Required equivariance piece map is not a permutation cycle")
+            # Use the anchored reference copy as representative of its orbit.
+            if self.reference_index in orbit:
+                offset = orbit.index(self.reference_index)
+                orbit = orbit[offset:] + orbit[:offset]
+            orbits.append(tuple(orbit))
+        return tuple(orbits)
+
+    @property
+    def equivariance_piece_orbits(self) -> Tuple[Tuple[int, ...], ...]:
+        return self._equivariance_piece_orbits
+
+    def _equivariant_sequences_from_choices(
+        self, choices: Sequence[Tuple[int, ...]]
+    ) -> Tuple[Tuple[int, ...], ...]:
+        # A required map rotation determines every copy in a piece orbit from
+        # one representative.  This is a search assumption, not a symmetry quotient.
+        sequences: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
+        for orbit, representative_sequence in zip(
+            self._equivariance_piece_orbits, choices
+        ):
+            current_sequence = tuple(representative_sequence)
+            for piece_index in orbit:
+                existing = sequences[piece_index]
+                if existing is not None and existing != current_sequence:
+                    raise ValueError("Inconsistent required-equivariance assignment")
+                sequences[piece_index] = current_sequence
+                current_sequence = tuple(
+                    self._required_occurrence_map[item] for item in current_sequence
+                )
+            if current_sequence != representative_sequence:
+                raise ValueError(
+                    "Required automorphism does not close the chosen contour sequence "
+                    "around its piece orbit"
+                )
+        output = tuple(item for item in sequences if item is not None)
+        if len(output) != len(self.piece_names):
+            raise RuntimeError("Incomplete required-equivariance assignment")
+        return output
+
     def _raw_sequences(self) -> Iterator[Tuple[Tuple[int, ...], ...]]:
-        yield from product(*self._piece_options())
+        options = self._piece_options()
+        if self._required_automorphism is None:
+            yield from product(*options)
+            return
+        representative_options = tuple(
+            options[orbit[0]] for orbit in self._equivariance_piece_orbits
+        )
+        for choices in product(*representative_options):
+            yield self._equivariant_sequences_from_choices(choices)
 
     def _map_sequences(
         self,
@@ -240,6 +336,7 @@ class AssignmentEnumerator:
                 cyclic_offsets=phases,
                 stabilizer=stabilizer,
                 canonical_key=canonical_key,
+                required_equivariance=self.required_equivariance,
             )
             assignment_id += 1
 
@@ -260,13 +357,31 @@ class AssignmentEnumerator:
 
         options = self._piece_options()
         remainder = int(assignment_id)
-        selected: List[Tuple[int, ...]] = [()] * len(options)
-        for piece_index in range(len(options) - 1, -1, -1):
-            radix = len(options[piece_index])
-            option_index = remainder % radix
-            remainder //= radix
-            selected[piece_index] = options[piece_index][option_index]
-        sequences = tuple(selected)
+        if self._required_automorphism is None:
+            selected: List[Tuple[int, ...]] = [()] * len(options)
+            for piece_index in range(len(options) - 1, -1, -1):
+                radix = len(options[piece_index])
+                option_index = remainder % radix
+                remainder //= radix
+                selected[piece_index] = options[piece_index][option_index]
+            sequences = tuple(selected)
+        else:
+            representative_options = tuple(
+                options[orbit[0]] for orbit in self._equivariance_piece_orbits
+            )
+            selected_representatives: List[Tuple[int, ...]] = [()] * len(
+                representative_options
+            )
+            for orbit_index in range(len(representative_options) - 1, -1, -1):
+                radix = len(representative_options[orbit_index])
+                option_index = remainder % radix
+                remainder //= radix
+                selected_representatives[orbit_index] = representative_options[
+                    orbit_index
+                ][option_index]
+            sequences = self._equivariant_sequences_from_choices(
+                selected_representatives
+            )
 
         transformed = tuple(
             self.apply_transform(sequences, transform) for transform in self.transforms
@@ -283,11 +398,41 @@ class AssignmentEnumerator:
             cyclic_offsets=phases,
             stabilizer=stabilizer,
             canonical_key=sequences,
+            required_equivariance=self.required_equivariance,
         )
 
-    def raw_assignment_count(self) -> int:
+    def unrestricted_raw_assignment_count(self) -> int:
         count = 1
         for piece_index, base in enumerate(self.base_sequences):
-            orientation_count = 1 if piece_index == self.reference_index or not self.allow_reflections else 2
+            orientation_count = (
+                1
+                if piece_index == self.reference_index or not self.allow_reflections
+                else 2
+            )
             count *= len(base) * orientation_count
         return count
+
+    def raw_assignment_count(self) -> int:
+        if self._required_automorphism is None:
+            return self.unrestricted_raw_assignment_count()
+        options = self._piece_options()
+        count = 1
+        for orbit in self._equivariance_piece_orbits:
+            count *= len(options[orbit[0]])
+        return count
+
+    def required_transform(
+        self, assignment: ContourAssignment
+    ) -> AssignmentTransform | None:
+        if self.required_equivariance is None:
+            return None
+        for transform in assignment.stabilizer:
+            if transform.automorphism_name == self.required_equivariance:
+                if transform.reverse_cycle:
+                    raise ValueError(
+                        "Required cyclic equivariance must preserve prototype orientation"
+                    )
+                return transform
+        raise ValueError(
+            "Assignment does not satisfy its declared required equivariance"
+        )

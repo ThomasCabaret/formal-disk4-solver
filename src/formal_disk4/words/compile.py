@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from formal_disk4.enumeration.weak_orders import Placement
-from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
+from formal_disk4.maps.base import Occurrence, PlanarMap
 
 from .algebra import Equation, Literal, Word, inverse_word, substitute_word, word_to_text
 
@@ -46,12 +46,46 @@ class CompiledWordCase:
     equations: Tuple[Equation, ...]
     interfaces: Tuple[CompiledInterface, ...]
     outer_arcs: Tuple[CompiledOuterArc, ...]
+    mirror_variables: Tuple[Tuple[str, str], ...] = ()
+    solver_equations: Tuple[Equation, ...] = ()
+
+    @property
+    def effective_solver_equations(self) -> Tuple[Equation, ...]:
+        return self.solver_equations or self.equations
+
+    @property
+    def solver_variables(self) -> Tuple[str, ...]:
+        output = list(self.atomic_variables)
+        seen = set(output)
+        for direct, mirrored in self.mirror_variables:
+            for variable in (direct, mirrored):
+                if variable not in seen:
+                    output.append(variable)
+                    seen.add(variable)
+        for equation in self.effective_solver_equations:
+            for literal in (*equation.left, *equation.right):
+                if literal.variable not in seen:
+                    output.append(literal.variable)
+                    seen.add(literal.variable)
+        return tuple(output)
+
+    def mirror_map(self) -> Dict[str, str]:
+        output: Dict[str, str] = {}
+        for direct, mirrored in self.mirror_variables:
+            output[direct] = mirrored
+            output[mirrored] = direct
+        return output
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "atomic_variables": list(self.atomic_variables),
+            "solver_variables": list(self.solver_variables),
+            "mirror_variables": dict(self.mirror_variables),
             "contour_word": word_to_text(self.contour_word),
             "equations": [equation.to_text() for equation in self.equations],
+            "solver_equations": [
+                equation.to_text() for equation in self.effective_solver_equations
+            ],
             "interfaces": [interface.to_dict() for interface in self.interfaces],
             "outer_arcs": [
                 {
@@ -86,9 +120,25 @@ def cyclic_factor(
     return tuple(output)
 
 
+def mirror_word(word: Sequence[Literal], mirror_map: Mapping[str, str]) -> Word:
+    """Apply the geometric mirror involution without reversing traversal."""
+
+    output = []
+    for literal in word:
+        try:
+            variable = mirror_map[literal.variable]
+        except KeyError as error:
+            raise ValueError(f"No mirror variable for {literal.variable}") from error
+        output.append(Literal(variable, literal.inverse))
+    return tuple(output)
+
+
 def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWordCase:
     atomic_variables = tuple(f"X{index}" for index in range(placement.interval_count))
     contour_word = tuple(Literal(name) for name in atomic_variables)
+    mirror_variables = tuple((name, f"M_{name}") for name in atomic_variables)
+    mirror_map = {left: right for left, right in mirror_variables}
+    mirror_map.update({right: left for left, right in mirror_variables})
     piece_index = {name: index for index, name in enumerate(placement.assignment.piece_names)}
     occurrence_index = {
         occurrence: index for index, occurrence in enumerate(planar_map.occurrences())
@@ -107,6 +157,7 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
 
     compiled_interfaces: List[CompiledInterface] = []
     equations: List[Equation] = []
+    solver_equations: List[Equation] = []
     for interface in planar_map.internal_interfaces():
         left_view, right_view = interface.views
         left_word = positive_piece_word(
@@ -115,10 +166,24 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
         right_word = positive_piece_word(
             right_view.piece, right_view.start_vertex, right_view.end_vertex
         )
-        equation = Equation(left_word, inverse_word(right_word))
-        equations.append(equation)
         left_sign = placement.assignment.orientation_signs[piece_index[left_view.piece]]
         right_sign = placement.assignment.orientation_signs[piece_index[right_view.piece]]
+        relative_parity = left_sign * right_sign
+        plain_equation = Equation(left_word, inverse_word(right_word))
+        equations.append(plain_equation)
+
+        right_same_direction = inverse_word(right_word)
+        if relative_parity == -1:
+            right_same_direction = mirror_word(right_same_direction, mirror_map)
+        solver_equation = Equation(left_word, right_same_direction)
+        solver_equations.append(solver_equation)
+        # The mirror image of every physical equality is equally mandatory.
+        solver_equations.append(
+            Equation(
+                mirror_word(solver_equation.left, mirror_map),
+                mirror_word(solver_equation.right, mirror_map),
+            )
+        )
         compiled_interfaces.append(
             CompiledInterface(
                 name=interface.name,
@@ -126,8 +191,8 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
                 right_piece=right_view.piece,
                 left_positive_word=left_word,
                 right_positive_word=right_word,
-                equation=equation,
-                relative_parity=left_sign * right_sign,
+                equation=plain_equation,
+                relative_parity=relative_parity,
             )
         )
 
@@ -148,6 +213,8 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
         equations=tuple(equations),
         interfaces=tuple(compiled_interfaces),
         outer_arcs=tuple(outer_arcs),
+        mirror_variables=mirror_variables,
+        solver_equations=tuple(solver_equations),
     )
 
 
@@ -166,6 +233,31 @@ class ContactMapping:
     pairs: Tuple[Tuple[DirectedSegmentRef, DirectedSegmentRef], ...]
 
 
+@dataclass(frozen=True)
+class TerminalTemplateRelation:
+    left_variable: str
+    right_variable: str
+    reverse: bool
+    mirror: bool
+    source: str
+    pair_index: int
+
+
+@dataclass(frozen=True)
+class TerminalContactSystem:
+    environment: Tuple[Tuple[str, Word], ...]
+    terminal_contour: Word
+    mappings: Tuple[ContactMapping, ...]
+    template_relations: Tuple[TerminalTemplateRelation, ...]
+
+    def environment_map(self) -> Dict[str, Word]:
+        return dict(self.environment)
+
+
+class TerminalMappingInfeasible(ValueError):
+    pass
+
+
 def _expanded_contour_refs(
     atomic_variables: Sequence[str], environment: Mapping[str, Word]
 ) -> Tuple[Word, Dict[str, Tuple[DirectedSegmentRef, ...]]]:
@@ -176,17 +268,14 @@ def _expanded_contour_refs(
         for literal in environment[variable]:
             segment_index = len(expanded)
             expanded.append(literal)
-            # A positive occurrence of an atomic variable traverses its expanded
-            # image in contour order, independently of whether an individual
-            # terminal literal uses its curve template directly or inversely.
-            # ``forward`` records traversal of the expanded contour segment; the
-            # literal itself records orientation relative to the curve template.
             variable_refs.append(DirectedSegmentRef(segment_index, True))
         refs[variable] = tuple(variable_refs)
     return tuple(expanded), refs
 
 
-def _path_refs(word: Word, refs: Mapping[str, Tuple[DirectedSegmentRef, ...]]) -> Tuple[DirectedSegmentRef, ...]:
+def _path_refs(
+    word: Word, refs: Mapping[str, Tuple[DirectedSegmentRef, ...]]
+) -> Tuple[DirectedSegmentRef, ...]:
     output: List[DirectedSegmentRef] = []
     for literal in word:
         variable_refs = refs[literal.variable]
@@ -200,27 +289,117 @@ def _path_refs(word: Word, refs: Mapping[str, Tuple[DirectedSegmentRef, ...]]) -
     return tuple(output)
 
 
-def build_contact_mappings(
+def build_terminal_contact_system(
     compiled: CompiledWordCase, environment: Mapping[str, Word]
-) -> Tuple[Word, Tuple[ContactMapping, ...]]:
-    expanded_contour, refs = _expanded_contour_refs(compiled.atomic_variables, environment)
+) -> TerminalContactSystem:
+    # Direct callers from the pre-mirror API may still provide only the
+    # prototype variables. In that compatibility mode, mirror images inherit
+    # the same terminal words; production searches provide both sheets.
+    complete_environment = dict(environment)
+    legacy_mirror_environment = any(
+        mirrored not in complete_environment
+        for _direct, mirrored in compiled.mirror_variables
+    )
+    for direct, mirrored in compiled.mirror_variables:
+        if mirrored not in complete_environment and direct in complete_environment:
+            complete_environment[mirrored] = complete_environment[direct]
+    environment = complete_environment
+
+    # Canonical terminal names are assigned from the actual prototype contour
+    # first. Mirror-only letters are named afterwards and do not perturb the
+    # stable T0,T1,... presentation of existing direct cases.
+    terminal_renaming: Dict[str, str] = {}
+    for variable in compiled.atomic_variables:
+        for literal in environment[variable]:
+            if literal.variable not in terminal_renaming:
+                terminal_renaming[literal.variable] = f"T{len(terminal_renaming)}"
+    for variable in compiled.solver_variables:
+        for literal in environment[variable]:
+            if literal.variable not in terminal_renaming:
+                terminal_renaming[literal.variable] = f"T{len(terminal_renaming)}"
+    normalized_environment = {
+        variable: tuple(
+            Literal(terminal_renaming[literal.variable], literal.inverse)
+            for literal in environment[variable]
+        )
+        for variable in compiled.solver_variables
+    }
+    environment = normalized_environment
+    prototype_environment = {
+        variable: environment[variable] for variable in compiled.atomic_variables
+    }
+    expanded_contour, refs = _expanded_contour_refs(
+        compiled.atomic_variables, prototype_environment
+    )
+    mirror_map = compiled.mirror_map()
     mappings: List[ContactMapping] = []
+
     for interface in compiled.interfaces:
         left_refs = _path_refs(interface.left_positive_word, refs)
-        right_same_direction_refs = _path_refs(inverse_word(interface.right_positive_word), refs)
+        right_same_direction_word = inverse_word(interface.right_positive_word)
+        right_refs = _path_refs(right_same_direction_word, refs)
+        transformed_right_word = right_same_direction_word
+        if interface.relative_parity == -1:
+            if not mirror_map:
+                raise TerminalMappingInfeasible(
+                    f"Reflected interface {interface.name} has no mirror variables"
+                )
+            transformed_right_word = mirror_word(transformed_right_word, mirror_map)
+
         left_expanded = substitute_word(interface.left_positive_word, environment)
-        right_expanded = substitute_word(inverse_word(interface.right_positive_word), environment)
+        right_expanded = substitute_word(transformed_right_word, environment)
         if left_expanded != right_expanded:
-            raise ValueError(f"Terminal environment does not satisfy {interface.name}")
-        if len(left_refs) != len(right_same_direction_refs):
-            raise RuntimeError("Equal terminal words yielded different mapping lengths")
+            raise TerminalMappingInfeasible(
+                f"Terminal environment does not satisfy {interface.name}"
+            )
+        if len(left_refs) != len(right_refs) or len(left_refs) != len(left_expanded):
+            raise TerminalMappingInfeasible(
+                f"Terminal refinement length mismatch on {interface.name}"
+            )
         mappings.append(
             ContactMapping(
                 interface.name,
                 interface.left_piece,
                 interface.right_piece,
                 interface.relative_parity,
-                tuple(zip(left_refs, right_same_direction_refs)),
+                tuple(zip(left_refs, right_refs)),
             )
         )
-    return expanded_contour, tuple(mappings)
+
+    template_relations: List[TerminalTemplateRelation] = []
+    mirror_pairs = () if legacy_mirror_environment else compiled.mirror_variables
+    for direct, mirrored in mirror_pairs:
+        direct_word = environment[direct]
+        mirrored_word = environment[mirrored]
+        if len(direct_word) != len(mirrored_word):
+            raise TerminalMappingInfeasible(
+                f"Mirror images of {direct} have different refinement lengths"
+            )
+        for pair_index, (left, right) in enumerate(zip(direct_word, mirrored_word)):
+            template_relations.append(
+                TerminalTemplateRelation(
+                    left_variable=left.variable,
+                    right_variable=right.variable,
+                    reverse=left.inverse != right.inverse,
+                    mirror=True,
+                    source=f"mirror-involution:{direct}",
+                    pair_index=pair_index,
+                )
+            )
+
+    return TerminalContactSystem(
+        environment=tuple(
+            (variable, prototype_environment[variable])
+            for variable in compiled.atomic_variables
+        ),
+        terminal_contour=expanded_contour,
+        mappings=tuple(mappings),
+        template_relations=tuple(template_relations),
+    )
+
+
+def build_contact_mappings(
+    compiled: CompiledWordCase, environment: Mapping[str, Word]
+) -> Tuple[Word, Tuple[ContactMapping, ...]]:
+    system = build_terminal_contact_system(compiled, environment)
+    return system.terminal_contour, system.mappings
