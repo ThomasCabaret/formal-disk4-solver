@@ -45,6 +45,22 @@ class PieceSpec:
     name: str
     contour_vertices: Tuple[str, ...]
     touches_outer_boundary: bool
+    outer_boundary_contact: str | None = None  # "none", "point", or "arc"
+
+    def __post_init__(self) -> None:
+        inferred = "arc" if self.touches_outer_boundary else "none"
+        contact = inferred if self.outer_boundary_contact is None else self.outer_boundary_contact
+        if contact not in {"none", "point", "arc"}:
+            raise ValueError(f"Unknown outer-boundary contact kind: {contact!r}")
+        if self.touches_outer_boundary != (contact != "none"):
+            raise ValueError(
+                "touches_outer_boundary must agree with outer_boundary_contact"
+            )
+        object.__setattr__(self, "outer_boundary_contact", contact)
+
+    @property
+    def has_outer_boundary_arc(self) -> bool:
+        return self.outer_boundary_contact == "arc"
 
     def directed_edges(self) -> Iterator[Tuple[str, str]]:
         cycle = self.contour_vertices
@@ -171,8 +187,11 @@ class PlanarMap:
                 if vertex not in vertices:
                     raise ValueError(f"Unknown vertex {vertex} on piece {piece.name}")
 
+        outer_interface_count = {piece.name: 0 for piece in self.pieces}
         edge_views: Dict[Tuple[str, frozenset[str]], str] = {}
         for interface in self.interfaces:
+            if interface.is_outer:
+                outer_interface_count[interface.views[0].piece] += 1
             for view in interface.views:
                 if view.piece not in pieces:
                     raise ValueError(f"Unknown piece {view.piece} in {interface.name}")
@@ -185,6 +204,21 @@ class PlanarMap:
                 if key in edge_views:
                     raise ValueError(f"Piece edge reused by {interface.name}")
                 edge_views[key] = interface.name
+
+        for piece in self.pieces:
+            outer_vertex_count = sum(
+                1 for vertex in piece.contour_vertices if vertices[vertex].kind == "outer"
+            )
+            if piece.outer_boundary_contact == "arc" and outer_interface_count[piece.name] == 0:
+                raise ValueError(f"Piece {piece.name} declares an outer arc but owns no outer interface")
+            if piece.outer_boundary_contact != "arc" and outer_interface_count[piece.name] != 0:
+                raise ValueError(f"Piece {piece.name} owns an outer interface without declaring an outer arc")
+            if piece.outer_boundary_contact == "point" and outer_vertex_count == 0:
+                raise ValueError(f"Piece {piece.name} declares a point contact but has no outer vertex")
+            if piece.outer_boundary_contact == "none" and outer_vertex_count != 0:
+                raise ValueError(
+                    f"Piece {piece.name} has an outer vertex but declares no outer-boundary contact"
+                )
 
         expected_edges = sum(len(piece.contour_vertices) for piece in self.pieces)
         if len(edge_views) != expected_edges:
@@ -233,6 +267,7 @@ class PlanarMap:
                     "name": piece.name,
                     "contour_vertices": list(piece.contour_vertices),
                     "touches_outer_boundary": piece.touches_outer_boundary,
+                    "outer_boundary_contact": piece.outer_boundary_contact,
                 }
                 for piece in self.pieces
             ],

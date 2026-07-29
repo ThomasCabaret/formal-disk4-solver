@@ -1,13 +1,13 @@
 import unittest
 from fractions import Fraction
 
-from formal_disk4.maps import build_k4_central_map
+from formal_disk4.maps import build_k4_map
 from formal_disk4.maps.base import PlanarMap, VertexSpec
 
 
 class K4MapTests(unittest.TestCase):
     def test_invariants(self) -> None:
-        planar_map = build_k4_central_map()
+        planar_map = build_k4_map()
         planar_map.validate()
         self.assertEqual(len(planar_map.pieces), 4)
         self.assertEqual(len(planar_map.vertices), 6)
@@ -21,13 +21,13 @@ class K4MapTests(unittest.TestCase):
 
 
     def test_vertex_angle_sum_is_determined_by_disk_location(self) -> None:
-        planar_map = build_k4_central_map()
+        planar_map = build_k4_map()
         for vertex in planar_map.vertices:
             expected = Fraction(2) if vertex.kind == "interior" else Fraction(1)
             self.assertEqual(vertex.required_solid_angle_sum_pi, expected)
 
     def test_invalid_declared_vertex_angle_sum_is_rejected(self) -> None:
-        planar_map = build_k4_central_map()
+        planar_map = build_k4_map()
         bad_vertex = VertexSpec(
             planar_map.vertices[0].name,
             "interior",
@@ -46,7 +46,7 @@ class K4MapTests(unittest.TestCase):
             invalid.validate()
 
     def test_shared_internal_edges_have_opposite_piece_orientation(self) -> None:
-        planar_map = build_k4_central_map()
+        planar_map = build_k4_map()
         for interface in planar_map.internal_interfaces():
             left, right = interface.views
             self.assertEqual(

@@ -5,7 +5,7 @@ from formal_disk4.constraints.hybrid_linear import (
     HybridMarginOracle,
     LinearConstraint,
 )
-from formal_disk4.maps import build_k3_pizza_map, build_k4_central_map
+from formal_disk4.maps import build_c3_map, build_k4_map
 from formal_disk4.preword.linear_invariants import _safe_sqrt_upper_bound
 
 
@@ -33,10 +33,10 @@ class HybridPrewordLinearTests(unittest.TestCase):
 
     def test_stein_only_concavity_hypothesis(self) -> None:
         self.assertTrue(
-            build_k4_central_map().hypotheses.requires_radius_r_concavity
+            build_k4_map().hypotheses.requires_radius_r_concavity
         )
         self.assertFalse(
-            build_k3_pizza_map().hypotheses.requires_radius_r_concavity
+            build_c3_map().hypotheses.requires_radius_r_concavity
         )
 
 

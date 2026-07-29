@@ -7,7 +7,7 @@ from typing import Any, Dict, Mapping
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "maps": ["k4-central"],
+    "maps": ["k4"],
     "enumeration": {
         "allow_reflections": True,
         "symmetry_mode": "incremental",

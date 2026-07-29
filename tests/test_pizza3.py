@@ -9,7 +9,7 @@ from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
-from formal_disk4.maps import build_k3_pizza_map
+from formal_disk4.maps import build_c3_map
 from formal_disk4.pipeline.runner import SolverRunner
 from formal_disk4.profiles.build import build_formal_profile
 from formal_disk4.profiles.filters import ProfileFilterPipeline
@@ -20,7 +20,7 @@ from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 
 class PizzaMapTests(unittest.TestCase):
     def test_map_invariants(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         planar_map.validate()
         self.assertEqual(len(planar_map.pieces), 3)
         self.assertEqual(len(planar_map.vertices), 4)
@@ -34,7 +34,7 @@ class PizzaMapTests(unittest.TestCase):
         )
 
     def test_assignment_symmetry_works_when_reference_piece_moves(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         direct = AssignmentEnumerator(
             planar_map, allow_reflections=False, symmetry_mode="assignment"
         )
@@ -47,7 +47,7 @@ class PizzaMapTests(unittest.TestCase):
         self.assertEqual(len(tuple(reflected.enumerate())), 22)
 
     def test_obvious_sector_profile_survives_current_filters(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         assignment_enumerator = AssignmentEnumerator(
             planar_map, allow_reflections=True, symmetry_mode="incremental"
         )
@@ -157,7 +157,7 @@ class PizzaMapTests(unittest.TestCase):
     def test_streaming_run_finds_pizza_survivor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = load_config(None)
-            config["maps"] = ["k3-pizza"]
+            config["maps"] = ["c3"]
             config["limits"].update(
                 {
                     "max_assignments": None,
@@ -196,7 +196,7 @@ class PizzaMapTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["schema_version"], "formal-contour-survivor-v7")
             self.assertTrue(records[0]["formal_profile_id"].startswith("fp-"))
-            self.assertEqual(records[0]["map"]["name"], "k3-pizza")
+            self.assertEqual(records[0]["map"]["name"], "c3")
             self.assertEqual(len(records[0]["profile"]["contact_mappings"]), 3)
             decorated = records[0]["profile"]["decorated_terminal_contour"]
             self.assertEqual(decorated["word"], "T0^-1 T1 T0")

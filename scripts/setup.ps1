@@ -94,7 +94,7 @@ try {
 
     Write-Host ""
     Write-Host "[SUCCESS] Installation completed successfully."
-    Write-Host "[INFO] You can now run run_debug.bat, run_benchmark.bat, or run_tests.bat."
+    Write-Host "[INFO] You can now run run_case.bat, run_debug.bat, run_benchmark.bat, or run_tests.bat."
 }
 catch {
     $ExitCode = 5

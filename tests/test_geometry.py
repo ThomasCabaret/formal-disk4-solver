@@ -14,7 +14,7 @@ from formal_disk4.pipeline.runner import SolverRunner
 def build_pizza_candidate(directory: Path) -> Path:
     formal_output = directory / "formal"
     config = load_config(None)
-    config["maps"] = ["k3-pizza"]
+    config["maps"] = ["c3"]
     config["limits"].update(
         {
             "max_assignments": None,

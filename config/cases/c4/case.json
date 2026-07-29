@@ -1,0 +1,12 @@
+{
+  "id": "c4",
+  "label": "C4 — four-sector validation cycle",
+  "description": "Four congruent sectors meeting at one center.",
+  "map": "c4",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}

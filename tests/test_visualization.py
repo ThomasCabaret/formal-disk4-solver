@@ -14,7 +14,7 @@ from formal_disk4.visualization.viewer import JsonlSolutionSource
 def build_pizza_geometry(directory: Path) -> Path:
     formal_output = directory / "formal"
     formal_config = load_config(None)
-    formal_config["maps"] = ["k3-pizza"]
+    formal_config["maps"] = ["c3"]
     formal_config["limits"].update(
         {
             "max_nodes": 1000,
@@ -67,7 +67,7 @@ class VisualizationAssemblyTests(unittest.TestCase):
             record = json.loads(solution_path.read_text(encoding="utf-8").splitlines()[0])
             assembly = assemble_geometric_solution(record)
             self.assertTrue(assembly.validation.passed)
-            self.assertEqual(assembly.map_name, "k3-pizza")
+            self.assertEqual(assembly.map_name, "c3")
             self.assertEqual(len(assembly.placements), 3)
             self.assertLess(assembly.validation.maximum_interface_error, 1e-12)
             determinants = [placement.transform.determinant for placement in assembly.placements]

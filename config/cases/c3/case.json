@@ -1,0 +1,12 @@
+{
+  "id": "c3",
+  "label": "C3 — three-sector validation cycle",
+  "description": "Three congruent sectors meeting at one center.",
+  "map": "c3",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}

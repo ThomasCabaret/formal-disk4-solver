@@ -1,4 +1,4 @@
-# Output schema 0.9.1
+# Output schema 1.0.0
 
 ## Default persistent files
 
@@ -6,7 +6,7 @@
 
 SQLite is authoritative for resumable search state and survivors. The checkpoint contains one compact cursor, cumulative counters/timings and a completion flag. It does not contain rejected placements, compiled word systems or residual solver graphs.
 
-The search-semantics version is part of the checkpoint metadata. Version 0.9.1 rejects older search checkpoints because the weak-order domain now includes the guarded transported-exterior-arc repetition theorem before word compilation.
+The search-semantics version is part of the checkpoint metadata. Version 1.0.0 uses canonical case identifiers and case-specific output directories. Older checkpoints remain separate historical files and are not selected by the new case runner.
 
 ### `candidates.jsonl`
 
@@ -32,7 +32,7 @@ A human-readable export of the SQLite survivor table. Each self-contained record
 - map-dependent expected mapping/outer-arc counts;
 - local filter statuses.
 
-The number of mappings is determined by the map: three for `k3-pizza`, six for `k4-central`.
+The number of mappings is determined by the map: three for `c3`, four for `c4`, six for `k4`, and five for each `k4-minus-*` case.
 
 The current top-level survivor schema is `formal-contour-survivor-v7`; the nested profile schema is `formal-contour-profile-v6`.
 

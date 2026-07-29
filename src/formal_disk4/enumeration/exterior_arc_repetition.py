@@ -91,9 +91,9 @@ def build_exterior_arc_repetition_constraint(
     """Activate only when every theorem assumption is visible in the map data.
 
     This deliberately conservative implementation accepts only four-piece Stein
-    maps with one non-boundary reference piece and exactly three peripheral
-    pieces, each represented by one full nondegenerate outer map edge. Other
-    maps retain the unrestricted iterator.
+    maps whose three peripheral pieces each own one full nondegenerate outer
+    edge.  The central piece may have no outer contact, a point contact, or its
+    own outer arc; only peripheral arcs participate in the repetition theorem.
     """
 
     if not enabled:
@@ -105,31 +105,26 @@ def build_exterior_arc_repetition_constraint(
             False, "requires_stein_center_hypothesis"
         )
 
-    piece_map = planar_map.piece_map()
     reference_piece = planar_map.reference_piece
-    if piece_map[reference_piece].touches_outer_boundary:
-        return ExteriorArcRepetitionConstraint(False, "reference_piece_touches_boundary")
-
-    outer_interfaces = planar_map.outer_interfaces()
-    if len(outer_interfaces) != 3:
-        return ExteriorArcRepetitionConstraint(False, "requires_three_outer_edges")
-
-    outer_pieces = tuple(interface.views[0].piece for interface in outer_interfaces)
-    if len(set(outer_pieces)) != 3 or reference_piece in outer_pieces:
-        return ExteriorArcRepetitionConstraint(
-            False, "outer_edges_not_one_per_peripheral_piece"
-        )
     expected_peripheral = {
         piece.name for piece in planar_map.pieces if piece.name != reference_piece
     }
-    if set(outer_pieces) != expected_peripheral:
+    peripheral_outer_interfaces = tuple(
+        interface
+        for interface in planar_map.outer_interfaces()
+        if interface.views[0].piece in expected_peripheral
+    )
+    outer_pieces = tuple(
+        interface.views[0].piece for interface in peripheral_outer_interfaces
+    )
+    if len(peripheral_outer_interfaces) != 3 or set(outer_pieces) != expected_peripheral:
         return ExteriorArcRepetitionConstraint(
-            False, "not_all_peripheral_pieces_touch_boundary"
+            False, "requires_one_outer_edge_per_peripheral_piece"
         )
 
     piece_index = {name: index for index, name in enumerate(piece_names)}
     arcs = []
-    for interface in outer_interfaces:
+    for interface in peripheral_outer_interfaces:
         view = interface.views[0]
         index = piece_index[view.piece]
         sequence = tuple(sequences[index])
@@ -172,7 +167,7 @@ def build_exterior_arc_repetition_constraint(
     )
     return ExteriorArcRepetitionConstraint(
         applicable=True,
-        reason="k4_stein_three_peripheral_outer_edges",
+        reason="four_tile_stein_peripheral_arc_repetition",
         arcs=tuple(arcs),
         candidate_pairs=candidate_pairs,
     )

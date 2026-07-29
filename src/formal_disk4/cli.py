@@ -173,7 +173,7 @@ def command_counts(args: argparse.Namespace) -> int:
             len(assignments) * weak_per_assignment
         ),
     }
-    if planar_map.name == "k4-central":
+    if planar_map.name == "k4":
         result.update(
             {
                 "legacy_distinct_cyclic_orders_all_peripheral_offsets": count_distinct_orders_all_peripheral_phases(),
@@ -315,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
     visualization_parser.set_defaults(function=command_visualize)
 
     counts_parser = subparsers.add_parser("counts", help="Print exact combinatorial counts")
-    counts_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    counts_parser.add_argument("--map", choices=available_maps(), default="k4")
     counts_parser.add_argument("--direct-only", action="store_true")
     counts_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"
@@ -323,13 +323,13 @@ def build_parser() -> argparse.ArgumentParser:
     counts_parser.set_defaults(function=command_counts)
 
     map_parser = subparsers.add_parser("map-info", help="Inspect a registered planar map")
-    map_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    map_parser.add_argument("--map", choices=available_maps(), default="k4")
     map_parser.set_defaults(function=command_map_info)
 
     assignment_parser = subparsers.add_parser(
         "assignments", help="Inspect phase/orientation assignment representatives"
     )
-    assignment_parser.add_argument("--map", choices=available_maps(), default="k4-central")
+    assignment_parser.add_argument("--map", choices=available_maps(), default="k4")
     assignment_parser.add_argument("--direct-only", action="store_true")
     assignment_parser.add_argument(
         "--symmetry", choices=("off", "assignment", "incremental"), default="incremental"

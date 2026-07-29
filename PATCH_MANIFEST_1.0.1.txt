@@ -1,0 +1,8 @@
+Formal Disk Solver differential patch 1.0.1
+Base version: 1.0.0
+
+Files: 3
+
+MODIFIED scripts/run_case.ps1
+NEW      PATCH_NOTES_1.0.1.md
+NEW      PATCH_MANIFEST_1.0.1.txt

@@ -1,0 +1,43 @@
+{
+  "input": {
+    "candidates_file": "output/cases/k4/candidates.jsonl"
+  },
+  "output": {
+    "solutions_file": "geometric_solutions.jsonl",
+    "summary_file": "geometry_summary.json",
+    "checkpoint_file": "geometry_checkpoint.json",
+    "failures_file": "geometry_failures.jsonl",
+    "write_failures": false,
+    "max_failure_records": 1000,
+    "include_formal_candidate": true,
+    "directory": "output/cases/k4/geometry"
+  },
+  "geometry": {
+    "intermediate_points_per_generic_curve": 1,
+    "arc_sample_count": 48,
+    "max_restarts": 32,
+    "max_function_evaluations": 5000,
+    "random_seed": 0,
+    "maximum_curve_length": 4.0,
+    "minimum_curve_length": 1e-06,
+    "maximum_generic_turn_per_joint_pi": 0.95,
+    "optimization_clearance": 1e-05,
+    "closure_tolerance": 1e-08,
+    "tangent_tolerance": 1e-07,
+    "angle_tolerance": 1e-07,
+    "length_tolerance": 1e-08,
+    "intersection_tolerance": 1e-07,
+    "minimum_area": 1e-08,
+    "minimum_sample_edge_length": 1e-09
+  },
+  "limits": {
+    "max_candidates": null,
+    "max_solutions": null,
+    "stop_on_first_solution": false
+  },
+  "checkpoint": {
+    "enabled": true,
+    "resume": true,
+    "restart": false
+  }
+}

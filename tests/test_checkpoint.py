@@ -9,7 +9,7 @@ from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
-from formal_disk4.maps.k4_central import build_k4_central_map
+from formal_disk4.maps.k4 import build_k4_map
 from formal_disk4.pipeline.runner import SolverRunner
 from formal_disk4.words.algebra import Equation, Literal
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
@@ -32,7 +32,7 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(list(expand_family(family, FamilyExpansionPolicy())), [])
 
     def test_weak_order_cursor_resumes_after_completed_subtree(self) -> None:
-        planar_map = build_k4_central_map()
+        planar_map = build_k4_map()
         assignment_enumerator = AssignmentEnumerator(planar_map, symmetry_mode="incremental")
         assignment = next(assignment_enumerator.enumerate())
         first = WeakOrderEnumerator(

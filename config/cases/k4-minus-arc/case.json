@@ -1,0 +1,12 @@
+{
+  "id": "k4-minus-arc",
+  "label": "K4−e — central outer arc",
+  "description": "T0 owns an outer arc between T3 and T1; T1 and T3 are disjoint.",
+  "map": "k4-minus-arc",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}

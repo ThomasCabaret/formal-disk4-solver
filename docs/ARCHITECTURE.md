@@ -1,16 +1,24 @@
-# Architecture 0.9
+# Architecture 1.0
 
 ## 1. Map-driven core
 
 `PlanarMap` stores arbitrary pieces, oriented combinatorial contours, geometric vertices, internal interfaces, exterior arcs, automorphisms and a reference copy used only to anchor the prototype orientation.
 
-Registered maps:
+Registered maps use stable case identifiers:
 
-- `k4-central`: contour lengths `(3,4,4,4)`, six internal interfaces and three exterior arcs;
-- `k3-pizza`: contour lengths `(3,3,3)`, three internal interfaces and three exterior arcs;
-- `k4-pizza`: contour lengths `(3,3,3,3)`, four internal interfaces and four exterior arcs.
+- `c3`: contour lengths `(3,3,3)`, three internal interfaces and three exterior arcs;
+- `c4`: contour lengths `(3,3,3,3)`, four internal interfaces and four exterior arcs;
+- `k4`: contour lengths `(3,4,4,4)`, six internal interfaces and three exterior arcs;
+- `k4-minus-point`: contour lengths `(3,3,4,3)`, five internal interfaces, three exterior arcs, and one point-only outer contact of `T0`;
+- `k4-minus-arc`: contour lengths `(4,3,4,3)`, five internal interfaces and four exterior arcs.
+
+`PieceSpec.outer_boundary_contact` distinguishes `none`, `point` and `arc`.  A point contact contributes an outer map vertex but no positive-length outer interface.
 
 No downstream layer assumes four copies or six mappings. Expected mapping and exterior-arc counts are carried into each profile from its map.
+
+## 1.1 Case catalogue and isolated state
+
+Human-facing case manifests live under `config/cases/<id>/`.  The runner discovers these directories rather than containing a switch statement for every map.  Each search configuration writes to `output/cases/<id>/`, so the SQLite cursor, survivors and geometry checkpoint of one case are independent from every other case.
 
 ## 2. Copy assignments and symmetry
 
@@ -24,7 +32,7 @@ Symmetry modes are independently switchable:
 - `assignment`: quotient assignments only;
 - `incremental`: assignment quotient plus stabilizer checks on prefixes and leaves.
 
-For `k3-pizza`, the raw reflected domain has 108 assignments and the map quotient emits 22 representatives.
+For `c3`, the raw reflected domain has 108 assignments and the map quotient emits 22 representatives.
 
 ## 3. Weak cyclic orders
 
@@ -61,11 +69,11 @@ A directed mapping reference records traversal of the expanded contour segment. 
 
 ## 5.1 Early exterior-arc repetition in the weak-order DFS
 
-For the supported four-piece Stein map shape, a transported-exterior-arc theorem forces at least two peripheral outer edges to represent the same prototype interval. The filter is guarded by explicit structural checks and is otherwise inactive.
+For a structurally supported four-piece Stein map, a transported-exterior-arc theorem forces at least two peripheral outer edges to represent the same prototype interval. The three peripheral pieces must each own one full outer edge. The central piece may have no outer contact, a point contact, or its own outer arc; the filter ignores any central outer arc.
 
 Each candidate repeated pair stores the two ordered endpoint occurrences. During weak-order construction a pair remains possible only while corresponding endpoints are both unplaced or already occupy the same block. If all candidate pairs become impossible, the whole remaining subtree is counted as processed and pruned before any length LP, angle LP, word compilation or Nielsen--Levi work.
 
-The phase/parity assignment layer only determines whether an outer edge crosses the chosen global cut. For `k4-central`, all 256 canonical assignments retain one or three possible pairs, so the material reduction begins in the weak-order iterator rather than in the assignment count.
+The phase/parity assignment layer only determines whether an outer edge crosses the chosen global cut. For `k4`, all 256 canonical assignments retain one or three possible pairs, so the material reduction begins in the weak-order iterator rather than in the assignment count.
 
 ## 6. Refactored pre-word pruning layer
 

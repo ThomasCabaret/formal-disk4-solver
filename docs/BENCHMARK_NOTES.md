@@ -3,7 +3,7 @@
 The progress line now separates symbolic families from concrete profile work. Example:
 
 ```text
-[ 123.77s] map=k4-central overall~0.0% assignment=1/256 current~0.0% nodes=662 (5/s) length_pruned=522 angle_pruned=1 placements=2 word_systems=2 families=5[finite=3,power=2,nested=0] specializations=3 profile_rejections=3 profiles=0
+[ 123.77s] map=k4 overall~0.0% assignment=1/256 current~0.0% nodes=662 (5/s) length_pruned=522 angle_pruned=1 placements=2 word_systems=2 families=5[finite=3,power=2,nested=0] specializations=3 profile_rejections=3 profiles=0
 ```
 
 - `nodes`: partial weak-order prefixes visited. This includes prefixes rejected early and complete leaves. It is not a count of equations or placements.
@@ -34,7 +34,7 @@ The percentage is the fraction of raw anchored weak orders accounted for by comp
 
 ## Version 0.7 short stage profile
 
-`run_profile_k4.bat` runs the normal `k4-central` pipeline for approximately 20 seconds with no checkpoint and no candidate output. The exact-partial solver now receives the run stop predicate, so a time limit also interrupts a large residual-graph exploration instead of waiting for the current word system to finish.
+`run_case.bat k4 profile` runs the normal `k4` pipeline for approximately 20 seconds with no checkpoint and no candidate output. The exact-partial solver now receives the run stop predicate, so a time limit also interrupts a large residual-graph exploration instead of waiting for the current word system to finish.
 
 A representative 20-second run in the development environment produced:
 
@@ -96,7 +96,7 @@ The strict-order LP screen made 356 calls and the exact rational rejection certi
 
 ## Version 0.9 refactored pre-word profile
 
-A final 10-second `k4-central` run of the refactored layer produced:
+A final 10-second `k4` run of the refactored layer produced:
 
 ```text
 placement nodes                         16,084

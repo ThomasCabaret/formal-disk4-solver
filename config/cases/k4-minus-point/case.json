@@ -1,0 +1,12 @@
+{
+  "id": "k4-minus-point",
+  "label": "K4−e — central point contact",
+  "description": "T0 reaches the outer boundary only at the common T0/T1/T3 point; T1 and T3 share no positive-length interface.",
+  "map": "k4-minus-point",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}

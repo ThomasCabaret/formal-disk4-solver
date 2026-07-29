@@ -4,7 +4,7 @@ from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import Placement, WeakOrderEnumerator
-from formal_disk4.maps import build_k3_pizza_map, build_k4_pizza_map
+from formal_disk4.maps import build_c3_map, build_c4_map
 from formal_disk4.preword import (
     PrewordLinearInvariantFilter,
     PrewordPruningPipeline,
@@ -22,7 +22,7 @@ from formal_disk4.words.compile import (
 class PrewordCircularArcTests(unittest.TestCase):
     @staticmethod
     def _placement(interval_count: int, rows: tuple[tuple[int, ...], ...]) -> Placement:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         assignment = next(
             AssignmentEnumerator(
                 planar_map,
@@ -64,7 +64,7 @@ class PrewordCircularArcTests(unittest.TestCase):
         )
 
     def test_pizza_three_and_four_pass(self) -> None:
-        for planar_map in (build_k3_pizza_map(), build_k4_pizza_map()):
+        for planar_map in (build_c3_map(), build_c4_map()):
             assignments = AssignmentEnumerator(
                 planar_map,
                 allow_reflections=True,
@@ -92,7 +92,7 @@ class PrewordCircularArcTests(unittest.TestCase):
             self.assertTrue(result.linear_invariants.point_turn_balance_derived)
 
     def test_mapped_circular_arc_cannot_cross_hard_outer_endpoint(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         variables = ("X0", "X1", "X2")
         interface = self._interface(
             (Literal("X0"),),
@@ -115,7 +115,7 @@ class PrewordCircularArcTests(unittest.TestCase):
         self.assertIn("crosses a hard outer endpoint", result.reason)
 
     def test_convex_concave_sign_conflict_rejects(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         variables = ("X0", "X1", "X2")
         interface = self._interface((Literal("X0"),), (Literal("X1"),))
         compiled = CompiledWordCase(
@@ -135,7 +135,7 @@ class PrewordCircularArcTests(unittest.TestCase):
         self.assertIn("opposite circular sign", result.reason)
 
     def test_general_radius_measure_system_replaces_closed_sign_balance(self) -> None:
-        planar_map = build_k3_pizza_map()
+        planar_map = build_c3_map()
         variables = ("X0", "X1", "X2")
         interface = self._interface((Literal("X0"),), (Literal("X1"),))
         compiled = CompiledWordCase(

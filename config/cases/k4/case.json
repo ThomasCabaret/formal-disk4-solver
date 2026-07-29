@@ -1,0 +1,12 @@
+{
+  "id": "k4",
+  "label": "K4 — complete contact graph",
+  "description": "Central tile with positive-length contact to all three peripheral tiles; every peripheral pair also shares an interface.",
+  "map": "k4",
+  "configs": {
+    "search": "search.json",
+    "profile": "profile.json",
+    "geometry": "geometry.json",
+    "visualizer": "visualizer.json"
+  }
+}

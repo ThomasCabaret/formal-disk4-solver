@@ -9,7 +9,7 @@ from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
-from formal_disk4.maps import build_k4_pizza_map
+from formal_disk4.maps import build_c4_map
 from formal_disk4.pipeline.runner import SolverRunner
 from formal_disk4.profiles.build import build_formal_profile
 from formal_disk4.profiles.filters import ProfileFilterPipeline
@@ -20,7 +20,7 @@ from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 
 class FourPiecePizzaTests(unittest.TestCase):
     def test_map_invariants(self) -> None:
-        planar_map = build_k4_pizza_map()
+        planar_map = build_c4_map()
         planar_map.validate()
         self.assertEqual(len(planar_map.pieces), 4)
         self.assertEqual(len(planar_map.vertices), 5)
@@ -34,7 +34,7 @@ class FourPiecePizzaTests(unittest.TestCase):
         )
 
     def test_assignment_counts(self) -> None:
-        planar_map = build_k4_pizza_map()
+        planar_map = build_c4_map()
         enumerator = AssignmentEnumerator(
             planar_map, allow_reflections=True, symmetry_mode="assignment"
         )
@@ -42,7 +42,7 @@ class FourPiecePizzaTests(unittest.TestCase):
         self.assertEqual(len(tuple(enumerator.enumerate())), 99)
 
     def test_obvious_quarter_sector_profile_survives(self) -> None:
-        planar_map = build_k4_pizza_map()
+        planar_map = build_c4_map()
         assignment_enumerator = AssignmentEnumerator(
             planar_map, allow_reflections=True, symmetry_mode="incremental"
         )
@@ -112,7 +112,7 @@ class FourPiecePizzaTests(unittest.TestCase):
     def test_streaming_run_finds_quarter_sector(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = load_config(None)
-            config["maps"] = ["k4-pizza"]
+            config["maps"] = ["c4"]
             config["limits"].update(
                 {
                     "max_nodes": 100,
@@ -146,7 +146,7 @@ class FourPiecePizzaTests(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["map"]["name"], "k4-pizza")
+            self.assertEqual(records[0]["map"]["name"], "c4")
             self.assertEqual(len(records[0]["profile"]["contact_mappings"]), 4)
             self.assertIn(
                 "1/4*C_disk",
