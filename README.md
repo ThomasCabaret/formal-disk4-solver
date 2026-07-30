@@ -200,6 +200,35 @@ A geometry problem with no free formal parameters and no generic-curve shape
 parameters is evaluated once. Failed positional or tangent closure is rejected
 before any optimizer restart or sampled self-intersection test.
 
+Since 1.5.0, non-fixed candidates use a staged solver. The optimization stage
+propagates exact segment and circular-arc endpoints and solves only contour
+closure plus cheap formal-domain guards. Area and self-intersection validation
+run only after closure has been reached. A coarse collision refinement is used
+only when a closed candidate is crossed or has negligible area. The accepted
+solution format and all `geometry` entry points are unchanged.
+
+Every candidate has a wall-clock bound. The default geometry controls are:
+
+```json
+{
+  "max_restarts": 32,
+  "max_function_evaluations": 1000,
+  "candidate_timeout_seconds": 20.0,
+  "enable_clearance_refinement": true,
+  "coarse_collision_sample_count": 8,
+  "max_refinement_evaluations": 160
+}
+```
+
+The historical `max_restarts` and `max_function_evaluations` keys remain
+accepted, but now bound cheap closure starts and closure evaluations. Small
+values are no longer silently raised to 100. They can also be overridden from
+the command line:
+
+```bat
+run_case.bat double-cycle-6 geometry --candidate-timeout 10 --max-restarts 8 --max-function-evaluations 400
+```
+
 ## Pipeline summary
 
 For each registered map, the formal search:

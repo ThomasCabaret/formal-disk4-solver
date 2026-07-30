@@ -1,0 +1,27 @@
+PATCH 1.5.0 - apply over 1.4.0
+
+Modified files:
+- README.md
+- pyproject.toml
+- src/formal_disk4/__init__.py
+- src/formal_disk4/cli.py
+- src/formal_disk4/config.py
+- src/formal_disk4/geometry/runner.py
+- src/formal_disk4/geometry/solver.py
+- src/formal_disk4/geometry/validation.py
+- config/cases/c3/geometry.json
+- config/cases/c4/geometry.json
+- config/cases/double-cycle-6/geometry.json
+- config/cases/k4/geometry.json
+- config/cases/k4-minus-arc/geometry.json
+- config/cases/k4-minus-point/geometry.json
+- config/cycle_campaign/geometry.json
+- tests/test_cli_overrides.py
+- tests/test_geometry.py
+
+New files:
+- PATCH_NOTES_1.5.0.md
+- PATCH_MANIFEST_1.5.0.txt
+
+Removed files:
+- none

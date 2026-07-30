@@ -1,6 +1,7 @@
 import json
 import math
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -230,6 +231,115 @@ class GeometrySolverTests(unittest.TestCase):
                 2.0 * math.pi / 3.0,
                 places=8,
             )
+
+
+    def test_staged_solver_validates_only_near_closure(self) -> None:
+        class CountingSolver(NumericalContourSolver):
+            def __init__(self, config):
+                super().__init__(config)
+                self.validation_calls = 0
+
+            def _validate_built(self, built):
+                self.validation_calls += 1
+                return super()._validate_built(built)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate_path = build_pizza_candidate(Path(temporary))
+            candidate = json.loads(
+                candidate_path.read_text(encoding="utf-8").splitlines()[0]
+            )
+            problem = parse_formal_geometry_problem(
+                candidate, source_path=candidate_path, source_line=1
+            )
+            solver = CountingSolver(
+                GeometrySolverConfig(
+                    max_restarts=2,
+                    max_function_evaluations=200,
+                    candidate_timeout_seconds=5.0,
+                )
+            )
+            result = solver.solve(problem)
+            self.assertIsNotNone(result.solution, result.reason)
+            self.assertLessEqual(solver.validation_calls, 2)
+            assert result.solution is not None
+            self.assertEqual(
+                result.solution.optimization["method"],
+                "staged_closure_least_squares",
+            )
+
+    def test_candidate_timeout_bounds_one_bad_candidate(self) -> None:
+        class SlowResidualSolver(NumericalContourSolver):
+            def _closure_residual(self, problem, layout, vector):
+                time.sleep(0.01)
+                return super()._closure_residual(problem, layout, vector)
+
+        problem = FormalGeometryProblem(
+            formal_profile_id="timeout-open-segment",
+            source_candidate={},
+            source_path="memory",
+            source_line=1,
+            map_name="test",
+            points=(
+                FormalPointSpec(
+                    boundary_index=0,
+                    angle_pi=LinearFormula(1.0, (), "1"),
+                    angle_class="smooth",
+                    angle_class_sign=1,
+                    occurrences=(),
+                    roles=(),
+                    witness_angle_pi=1.0,
+                ),
+            ),
+            segments=(
+                FormalSegmentOccurrence(
+                    segment_index=0,
+                    literal="T0",
+                    variable="T0",
+                    literal_inverse=False,
+                    component_id="C0",
+                    curve_type="straight_segment",
+                    circle_class=None,
+                ),
+            ),
+            components=(
+                FormalCurveComponent(
+                    component_id="C0",
+                    representative="T0",
+                    variables=("T0",),
+                    variable_transforms=(("T0", TransformSpec()),),
+                    curve_type="straight_segment",
+                    circle_class=None,
+                    forced_straight=True,
+                    length=LinearFormula(0.0, (("L", 1.0),), "L"),
+                    turn_pi=None,
+                    search_witness_length=0.25,
+                ),
+            ),
+        )
+        started = time.perf_counter()
+        result = SlowResidualSolver(
+            GeometrySolverConfig(
+                max_restarts=100,
+                max_function_evaluations=1000,
+                candidate_timeout_seconds=0.025,
+            )
+        ).solve(problem)
+        elapsed = time.perf_counter() - started
+        self.assertIsNone(result.solution)
+        self.assertIn("candidate_timeout", result.reason)
+        self.assertLess(elapsed, 0.25)
+
+    def test_configuration_allows_one_function_evaluation(self) -> None:
+        config = GeometrySolverConfig.from_mapping(
+            {
+                "max_restarts": 1,
+                "max_function_evaluations": 1,
+                "candidate_timeout_seconds": 0,
+            }
+        )
+        self.assertEqual(config.max_restarts, 1)
+        self.assertEqual(config.max_function_evaluations, 1)
+        self.assertEqual(config.candidate_timeout_seconds, 0.0)
 
     def test_geometry_runner_writes_reference_and_full_formal_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -51,6 +51,50 @@ def segment_distance(
     return distance, distance <= tolerance
 
 
+def _segment_bbox_distance(
+    first_start: np.ndarray,
+    first_end: np.ndarray,
+    second_start: np.ndarray,
+    second_end: np.ndarray,
+) -> float:
+    first_min = np.minimum(first_start, first_end)
+    first_max = np.maximum(first_start, first_end)
+    second_min = np.minimum(second_start, second_end)
+    second_max = np.maximum(second_start, second_end)
+    gap = np.maximum(0.0, np.maximum(first_min - second_max, second_min - first_max))
+    return float(np.linalg.norm(gap))
+
+
+def pairwise_clearance_penalties(
+    points: np.ndarray, clearance: float
+) -> np.ndarray:
+    """Fixed-size coarse collision residual for refinement only."""
+    if len(points) < 4:
+        return np.zeros(0, dtype=float)
+    segment_count = len(points) - 1
+    penalties = []
+    for left in range(segment_count):
+        for right in range(left + 1, segment_count):
+            if right == left + 1:
+                continue
+            if left == 0 and right == segment_count - 1:
+                continue
+            lower_bound = _segment_bbox_distance(
+                points[left], points[left + 1], points[right], points[right + 1]
+            )
+            if lower_bound >= clearance:
+                penalties.append(0.0)
+                continue
+            distance, intersects = segment_distance(
+                points[left], points[left + 1], points[right], points[right + 1]
+            )
+            penalty = max(0.0, clearance - distance)
+            if intersects:
+                penalty += 1.0
+            penalties.append(penalty)
+    return np.asarray(penalties, dtype=float)
+
+
 def sampled_polyline(occurrences: Sequence[OccurrenceGeometry]) -> np.ndarray:
     points = []
     for occurrence in occurrences:
@@ -73,6 +117,11 @@ def nonadjacent_distances(points: np.ndarray) -> Tuple[float | None, int]:
             if right == left + 1:
                 continue
             if left == 0 and right == segment_count - 1:
+                continue
+            lower_bound = _segment_bbox_distance(
+                points[left], points[left + 1], points[right], points[right + 1]
+            )
+            if lower_bound > minimum:
                 continue
             distance, intersects = segment_distance(
                 points[left], points[left + 1], points[right], points[right + 1]

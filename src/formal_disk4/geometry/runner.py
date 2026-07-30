@@ -260,9 +260,10 @@ class GeometryRunner:
             "geometry_config": self.config["geometry"],
             "scope": "single_piece_contour_only",
             "validation_note": (
-                "Circular arcs are analytic. Generic curves are polylines. "
-                "Self-intersection is checked on exact polyline edges and a dense "
-                "sampling of circular arcs; this is a numerical validation, not a formal proof."
+                "The staged solver first optimizes analytic contour closure without "
+                "collision sampling. Full angle, length, area and self-intersection "
+                "validation runs only on closed candidates. Circular arcs are sampled "
+                "only for final numerical validation; this is not a formal proof."
             ),
         }
         atomic_write_json(self.summary_path, summary)

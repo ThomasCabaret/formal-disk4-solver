@@ -5,7 +5,7 @@ import json
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
+from typing import Any, Dict, Mapping, Sequence, Tuple
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -21,7 +21,12 @@ from .model import (
     angle_wrap,
     point_record,
 )
-from .validation import nonadjacent_distances, sampled_polyline, signed_area, validate_geometry
+from .validation import (
+    pairwise_clearance_penalties,
+    sampled_polyline,
+    signed_area,
+    validate_geometry,
+)
 
 
 @dataclass(frozen=True)
@@ -29,7 +34,11 @@ class GeometrySolverConfig:
     intermediate_points_per_generic_curve: int = 1
     arc_sample_count: int = 48
     max_restarts: int = 32
-    max_function_evaluations: int = 5000
+    max_function_evaluations: int = 1000
+    candidate_timeout_seconds: float = 20.0
+    enable_clearance_refinement: bool = True
+    coarse_collision_sample_count: int = 8
+    max_refinement_evaluations: int = 160
     random_seed: int = 0
     maximum_curve_length: float = 4.0
     minimum_curve_length: float = 1e-6
@@ -45,14 +54,27 @@ class GeometrySolverConfig:
 
     @staticmethod
     def from_mapping(config: Mapping[str, Any]) -> "GeometrySolverConfig":
+        timeout = config.get("candidate_timeout_seconds", 20.0)
         return GeometrySolverConfig(
             intermediate_points_per_generic_curve=max(
                 0, int(config.get("intermediate_points_per_generic_curve", 1))
             ),
             arc_sample_count=max(8, int(config.get("arc_sample_count", 48))),
+            # Keep the historical keys as public aliases. Their new meaning is
+            # closure starts/evaluations, not full collision validations.
             max_restarts=max(1, int(config.get("max_restarts", 32))),
             max_function_evaluations=max(
-                100, int(config.get("max_function_evaluations", 5000))
+                1, int(config.get("max_function_evaluations", 1000))
+            ),
+            candidate_timeout_seconds=max(0.0, float(timeout)),
+            enable_clearance_refinement=bool(
+                config.get("enable_clearance_refinement", True)
+            ),
+            coarse_collision_sample_count=max(
+                4, int(config.get("coarse_collision_sample_count", 8))
+            ),
+            max_refinement_evaluations=max(
+                1, int(config.get("max_refinement_evaluations", 160))
             ),
             random_seed=int(config.get("random_seed", 0)),
             maximum_curve_length=float(config.get("maximum_curve_length", 4.0)),
@@ -103,6 +125,34 @@ class _BuiltGeometry:
     target_angles: Tuple[float, ...]
     occurrences: Tuple[OccurrenceGeometry, ...]
     final_tangent_after_closure_vertex: float
+
+
+class _CandidateTimeout(RuntimeError):
+    pass
+
+
+class _AcceptedSolution(RuntimeError):
+    def __init__(self, vector: np.ndarray) -> None:
+        super().__init__("valid geometry found")
+        self.vector = np.asarray(vector, dtype=float).copy()
+
+
+@dataclass
+class _SolveMonitor:
+    deadline: float | None
+    best_cost: float = math.inf
+    evaluations: int = 0
+
+    def check(self) -> None:
+        if self.deadline is not None and time.perf_counter() >= self.deadline:
+            raise _CandidateTimeout
+
+    def observe(self, residual: np.ndarray) -> None:
+        self.evaluations += 1
+        cost = float(np.dot(residual, residual))
+        if cost < self.best_cost:
+            self.best_cost = cost
+        self.check()
 
 
 def _rotation(angle: float) -> np.ndarray:
@@ -224,191 +274,286 @@ class NumericalContourSolver:
     def solve(self, problem: FormalGeometryProblem) -> GeometryAttemptResult:
         started = time.perf_counter()
         layout = self._build_layout(problem)
+        deadline = (
+            None
+            if self.config.candidate_timeout_seconds <= 0.0
+            else started + self.config.candidate_timeout_seconds
+        )
 
-        # A zero-dimensional geometry has exactly one realization in the current
-        # template model. Repeating least-squares restarts cannot change it.
         if layout.initial.size == 0:
-            vector = layout.initial.copy()
-            built = self._build_geometry(problem, layout, vector)
-
-            # Closure is necessary and much cheaper than sampled intersection
-            # validation. With no variables, a failed closure cannot be repaired.
-            closure_error = float(
-                np.linalg.norm(
-                    built.occurrences[-1].end_point
-                    - built.occurrences[0].start_point
-                )
-            )
-            final_vertex_turn = math.pi - float(built.target_angles[0])
-            tangent_error = abs(
-                angle_wrap(
-                    built.occurrences[-1].end_tangent
-                    + final_vertex_turn
-                    - built.occurrences[0].start_tangent
-                )
-            )
-            failed_prechecks = []
-            if closure_error > self.config.closure_tolerance:
-                failed_prechecks.append("closed_contour")
-            if tangent_error > self.config.tangent_tolerance:
-                failed_prechecks.append("closed_tangent_cycle")
-            if failed_prechecks:
-                return GeometryAttemptResult(
-                    solution=None,
-                    reason=(
-                        "fixed geometry failed closure precheck: "
-                        + ", ".join(failed_prechecks)
-                    ),
-                    attempts=0,
-                    best_cost=closure_error * closure_error + tangent_error * tangent_error,
-                    best_validation={
-                        "passed": False,
-                        "precheck_only": True,
-                        "closure_error": closure_error,
-                        "tangent_closure_error": tangent_error,
-                        "checks": [
-                            {
-                                "name": "closed_contour",
-                                "passed": closure_error <= self.config.closure_tolerance,
-                                "detail": (
-                                    f"closure_error={closure_error:.3e}, "
-                                    f"tolerance={self.config.closure_tolerance:.3e}"
-                                ),
-                            },
-                            {
-                                "name": "closed_tangent_cycle",
-                                "passed": tangent_error <= self.config.tangent_tolerance,
-                                "detail": (
-                                    f"tangent_error={tangent_error:.3e}, "
-                                    f"tolerance={self.config.tangent_tolerance:.3e}"
-                                ),
-                            },
-                        ],
-                    },
-                )
-
-            validation = self._validate_built(built)
-            residual = self._residual(problem, layout, vector)
-            cost = float(np.dot(residual, residual))
-            if not validation.passed:
-                failed = [name for name, passed, _detail in validation.checks if not passed]
-                return GeometryAttemptResult(
-                    solution=None,
-                    reason=(
-                        "fixed geometry failed validation: " + ", ".join(failed)
-                    ),
-                    attempts=0,
-                    best_cost=cost,
-                    best_validation=validation.to_dict(),
-                )
-            elapsed = time.perf_counter() - started
-            solution = self._solution_record(
-                problem,
-                built,
-                validation,
-                optimization={
-                    "method": "deterministic_fixed_geometry",
-                    "degrees_of_freedom": 0,
-                    "attempt_index": None,
-                    "attempt_count": 0,
-                    "success_flag": True,
-                    "status": 0,
-                    "message": "No free geometry parameters; evaluated the unique contour once.",
-                    "function_evaluations": 0,
-                    "residual_sum_of_squares": cost,
-                    "elapsed_seconds": elapsed,
-                    "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
-                    "arc_validation_sample_count": self.config.arc_sample_count,
-                },
-            )
-            return GeometryAttemptResult(
-                solution=solution,
-                reason="solved fixed geometry",
-                attempts=0,
-                best_cost=cost,
-                best_validation=validation.to_dict(),
-            )
+            return self._solve_fixed(problem, layout, started)
 
         rng_seed = self.config.random_seed ^ int(
             hashlib.sha256(problem.formal_profile_id.encode("utf-8")).hexdigest()[:8], 16
         )
         rng = np.random.default_rng(rng_seed)
-        best_cost = math.inf
-        best_validation = None
-        best_reason = "no optimization attempt completed"
+        monitor = _SolveMonitor(deadline=deadline)
+        best_validation: Mapping[str, Any] | None = None
+        best_reason = "closure_not_found"
+        unique_closed_vectors: list[np.ndarray] = []
+        attempts_completed = 0
 
         for attempt_index in range(self.config.max_restarts):
-            initial = self._restart_initial(layout, rng, attempt_index)
-            accepted_vector: np.ndarray | None = None
+            try:
+                monitor.check()
+                attempts_completed = attempt_index + 1
+                initial = self._restart_initial(layout, rng, attempt_index)
+                accepted_vector: np.ndarray | None = None
+                accepted_validation = None
+                accepted_built: _BuiltGeometry | None = None
+                last_checked: np.ndarray | None = None
 
-            def stop_when_valid(intermediate_result) -> None:
-                nonlocal accepted_vector
-                vector = np.asarray(intermediate_result.x, dtype=float)
-                built_candidate = self._build_geometry(problem, layout, vector)
-                if self._validate_built(built_candidate).passed:
-                    accepted_vector = vector.copy()
-                    raise StopIteration
+                def closure_residual(vector: np.ndarray) -> np.ndarray:
+                    residual = self._closure_residual(problem, layout, vector)
+                    monitor.observe(residual)
+                    return residual
 
-            result = least_squares(
-                lambda vector: self._residual(problem, layout, vector),
-                initial,
-                bounds=(layout.lower_bounds, layout.upper_bounds),
-                max_nfev=self.config.max_function_evaluations,
-                xtol=1e-12,
-                ftol=1e-12,
-                gtol=1e-12,
-                verbose=0,
-                callback=stop_when_valid,
-            )
-            solution_vector = result.x if accepted_vector is None else accepted_vector
-            cost_residual = self._residual(problem, layout, solution_vector)
-            cost = float(np.dot(cost_residual, cost_residual))
-            built = self._build_geometry(problem, layout, solution_vector)
-            validation = self._validate_built(built)
-            if cost < best_cost:
-                best_cost = cost
+                def stop_when_valid(intermediate_result) -> None:
+                    nonlocal accepted_vector, accepted_validation, accepted_built
+                    nonlocal last_checked, best_validation, best_reason
+                    monitor.check()
+                    vector = np.asarray(intermediate_result.x, dtype=float)
+                    metrics = self._closure_metrics(problem, layout, vector)
+                    if not self._closure_is_close(metrics):
+                        return
+                    if last_checked is not None and np.linalg.norm(vector - last_checked) <= 1e-10:
+                        return
+                    last_checked = vector.copy()
+                    validation, built_candidate = self._full_validation(
+                        problem, layout, vector
+                    )
+                    if validation.passed:
+                        accepted_vector = vector.copy()
+                        accepted_validation = validation
+                        accepted_built = built_candidate
+                        raise _AcceptedSolution(vector)
+                    best_validation = validation.to_dict()
+                    best_reason = self._validation_reason(validation)
+
+                result = None
+                try:
+                    result = least_squares(
+                        closure_residual,
+                        initial,
+                        bounds=(layout.lower_bounds, layout.upper_bounds),
+                        max_nfev=self.config.max_function_evaluations,
+                        xtol=1e-11,
+                        ftol=1e-11,
+                        gtol=1e-11,
+                        verbose=0,
+                        callback=stop_when_valid,
+                    )
+                    solution_vector = np.asarray(result.x, dtype=float)
+                except _AcceptedSolution as accepted:
+                    solution_vector = accepted.vector
+
+                if accepted_vector is None:
+                    metrics = self._closure_metrics(problem, layout, solution_vector)
+                    if not self._closure_is_close(metrics):
+                        best_validation = self._closure_precheck_record(metrics)
+                        best_reason = "closure_not_found"
+                        continue
+                    validation, built = self._full_validation(
+                        problem, layout, solution_vector
+                    )
+                else:
+                    assert accepted_validation is not None and accepted_built is not None
+                    validation, built = accepted_validation, accepted_built
+                    solution_vector = accepted_vector
+
+                if validation.passed:
+                    return self._successful_result(
+                        problem=problem,
+                        built=built,
+                        validation=validation,
+                        vector=solution_vector,
+                        layout=layout,
+                        started=started,
+                        attempts=attempts_completed,
+                        attempt_index=attempt_index,
+                        optimizer_result=result,
+                        monitor=monitor,
+                        method="staged_closure_least_squares",
+                    )
+
                 best_validation = validation.to_dict()
-                failed = [name for name, passed, _detail in validation.checks if not passed]
-                best_reason = (
-                    "validation failed: " + ", ".join(failed)
-                    if failed
-                    else "optimizer did not report an acceptable result"
-                )
-            if validation.passed:
+                best_reason = self._validation_reason(validation)
+                if not any(
+                    np.linalg.norm(solution_vector - previous) <= 1e-8
+                    for previous in unique_closed_vectors
+                ):
+                    unique_closed_vectors.append(solution_vector.copy())
+
+                if (
+                    self.config.enable_clearance_refinement
+                    and self._needs_clearance_refinement(validation)
+                ):
+                    refined = self._refine_closed_geometry(
+                        problem, layout, solution_vector, monitor
+                    )
+                    if refined is not None:
+                        refined_validation, refined_built = self._full_validation(
+                            problem, layout, refined
+                        )
+                        if refined_validation.passed:
+                            return self._successful_result(
+                                problem=problem,
+                                built=refined_built,
+                                validation=refined_validation,
+                                vector=refined,
+                                layout=layout,
+                                started=started,
+                                attempts=attempts_completed,
+                                attempt_index=attempt_index,
+                                optimizer_result=None,
+                                monitor=monitor,
+                                method="staged_closure_with_clearance_refinement",
+                            )
+                        best_validation = refined_validation.to_dict()
+                        best_reason = self._validation_reason(refined_validation)
+            except _CandidateTimeout:
                 elapsed = time.perf_counter() - started
-                solution = self._solution_record(
-                    problem,
-                    built,
-                    validation,
-                    optimization={
-                        "method": "scipy.optimize.least_squares",
-                        "degrees_of_freedom": int(layout.initial.size),
-                        "attempt_index": attempt_index,
-                        "attempt_count": attempt_index + 1,
-                        "success_flag": bool(result.success),
-                        "status": int(result.status),
-                        "message": str(result.message),
-                        "function_evaluations": int(result.nfev),
-                        "residual_sum_of_squares": float(2.0 * result.cost),
-                        "elapsed_seconds": elapsed,
-                        "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
-                        "arc_validation_sample_count": self.config.arc_sample_count,
-                    },
-                )
                 return GeometryAttemptResult(
-                    solution=solution,
-                    reason="solved",
-                    attempts=attempt_index + 1,
-                    best_cost=cost,
-                    best_validation=validation.to_dict(),
+                    solution=None,
+                    reason=(
+                        f"candidate_timeout after {elapsed:.3f}s; "
+                        f"best_stage={best_reason}"
+                    ),
+                    attempts=attempts_completed,
+                    best_cost=None if math.isinf(monitor.best_cost) else monitor.best_cost,
+                    best_validation=best_validation,
                 )
 
         return GeometryAttemptResult(
             solution=None,
             reason=best_reason,
-            attempts=self.config.max_restarts,
-            best_cost=None if math.isinf(best_cost) else best_cost,
+            attempts=attempts_completed,
+            best_cost=None if math.isinf(monitor.best_cost) else monitor.best_cost,
             best_validation=best_validation,
+        )
+
+    def _solve_fixed(
+        self,
+        problem: FormalGeometryProblem,
+        layout: _ParameterLayout,
+        started: float,
+    ) -> GeometryAttemptResult:
+        vector = layout.initial.copy()
+        metrics = self._closure_metrics(problem, layout, vector)
+        if not self._closure_is_close(metrics):
+            return GeometryAttemptResult(
+                solution=None,
+                reason="fixed geometry failed closure precheck: "
+                + ", ".join(metrics["failed_checks"]),
+                attempts=0,
+                best_cost=float(metrics["cost"]),
+                best_validation=self._closure_precheck_record(metrics),
+            )
+        validation, built = self._full_validation(problem, layout, vector)
+        residual = self._closure_residual(problem, layout, vector)
+        cost = float(np.dot(residual, residual))
+        if not validation.passed:
+            return GeometryAttemptResult(
+                solution=None,
+                reason="fixed geometry failed validation: "
+                + self._validation_reason(validation),
+                attempts=0,
+                best_cost=cost,
+                best_validation=validation.to_dict(),
+            )
+        elapsed = time.perf_counter() - started
+        solution = self._solution_record(
+            problem,
+            built,
+            validation,
+            optimization={
+                "method": "deterministic_fixed_geometry",
+                "degrees_of_freedom": 0,
+                "attempt_index": None,
+                "attempt_count": 0,
+                "success_flag": True,
+                "status": 0,
+                "message": "No free geometry parameters; evaluated the unique contour once.",
+                "function_evaluations": 0,
+                "residual_sum_of_squares": cost,
+                "elapsed_seconds": elapsed,
+                "candidate_timeout_seconds": self.config.candidate_timeout_seconds,
+                "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
+                "arc_validation_sample_count": self.config.arc_sample_count,
+            },
+        )
+        return GeometryAttemptResult(
+            solution=solution,
+            reason="solved fixed geometry",
+            attempts=0,
+            best_cost=cost,
+            best_validation=validation.to_dict(),
+        )
+
+    def _successful_result(
+        self,
+        *,
+        problem: FormalGeometryProblem,
+        built: _BuiltGeometry,
+        validation,
+        vector: np.ndarray,
+        layout: _ParameterLayout,
+        started: float,
+        attempts: int,
+        attempt_index: int,
+        optimizer_result,
+        monitor: _SolveMonitor,
+        method: str,
+    ) -> GeometryAttemptResult:
+        elapsed = time.perf_counter() - started
+        residual = self._closure_residual(problem, layout, vector)
+        cost = float(np.dot(residual, residual))
+        solution = self._solution_record(
+            problem,
+            built,
+            validation,
+            optimization={
+                "method": method,
+                "degrees_of_freedom": int(layout.initial.size),
+                "attempt_index": attempt_index,
+                "attempt_count": attempts,
+                "success_flag": bool(
+                    True if optimizer_result is None else optimizer_result.success
+                ),
+                "status": int(0 if optimizer_result is None else optimizer_result.status),
+                "message": str(
+                    "Valid closed contour found during staged search."
+                    if optimizer_result is None
+                    else optimizer_result.message
+                ),
+                "function_evaluations": monitor.evaluations,
+                "residual_sum_of_squares": cost,
+                "elapsed_seconds": elapsed,
+                "candidate_timeout_seconds": self.config.candidate_timeout_seconds,
+                "generic_intermediate_points_per_template": self.config.intermediate_points_per_generic_curve,
+                "arc_validation_sample_count": self.config.arc_sample_count,
+            },
+        )
+        return GeometryAttemptResult(
+            solution=solution,
+            reason="solved",
+            attempts=attempts,
+            best_cost=cost,
+            best_validation=validation.to_dict(),
+        )
+
+    @staticmethod
+    def _validation_reason(validation) -> str:
+        failed = [name for name, passed, _detail in validation.checks if not passed]
+        return "validation_failed:" + (",".join(failed) if failed else "unknown")
+
+    @staticmethod
+    def _needs_clearance_refinement(validation) -> bool:
+        failed = {name for name, passed, _detail in validation.checks if not passed}
+        return bool(
+            failed.intersection(
+                {"no_sampled_self_intersection", "nonzero_enclosed_area"}
+            )
         )
 
     def _validate_built(self, built: _BuiltGeometry):
@@ -514,6 +659,8 @@ class NumericalContourSolver:
         component: FormalCurveComponent,
         formal_values: Mapping[str, float],
         shape_values: np.ndarray,
+        *,
+        arc_sample_count: int,
     ) -> Tuple[LocalCurveGeometry, Mapping[str, Any]]:
         length = float(component.length.evaluate(formal_values))
         if component.curve_type == "circular_arc":
@@ -527,8 +674,8 @@ class NumericalContourSolver:
                 center = None
                 samples = np.asarray(
                     [
-                        (length * index / self.config.arc_sample_count, 0.0)
-                        for index in range(self.config.arc_sample_count + 1)
+                        (length * index / arc_sample_count, 0.0)
+                        for index in range(arc_sample_count + 1)
                     ],
                     dtype=float,
                 )
@@ -546,11 +693,11 @@ class NumericalContourSolver:
                 samples = np.asarray(
                     [
                         (
-                            signed_radius * math.sin(turn * index / self.config.arc_sample_count),
+                            signed_radius * math.sin(turn * index / arc_sample_count),
                             signed_radius
-                            * (1.0 - math.cos(turn * index / self.config.arc_sample_count)),
+                            * (1.0 - math.cos(turn * index / arc_sample_count)),
                         )
-                        for index in range(self.config.arc_sample_count + 1)
+                        for index in range(arc_sample_count + 1)
                     ],
                     dtype=float,
                 )
@@ -625,7 +772,11 @@ class NumericalContourSolver:
         problem: FormalGeometryProblem,
         layout: _ParameterLayout,
         vector: np.ndarray,
+        *,
+        arc_sample_count: int | None = None,
     ) -> _BuiltGeometry:
+        if arc_sample_count is None:
+            arc_sample_count = self.config.arc_sample_count
         formal_values = self._formal_values(layout, vector)
         component_map = problem.component_map
         local_templates: Dict[str, LocalCurveGeometry] = {}
@@ -638,7 +789,10 @@ class NumericalContourSolver:
                 else vector[shape_slice]
             )
             geometry, parameters = self._component_template(
-                component, formal_values, shape_values
+                component,
+                formal_values,
+                shape_values,
+                arc_sample_count=arc_sample_count,
             )
             local_templates[component.component_id] = geometry
             template_parameters[component.component_id] = parameters
@@ -707,58 +861,194 @@ class NumericalContourSolver:
             final_tangent_after_closure_vertex=current_tangent,
         )
 
-    def _residual(
+    def _closure_residual(
         self,
         problem: FormalGeometryProblem,
         layout: _ParameterLayout,
         vector: np.ndarray,
     ) -> np.ndarray:
-        built = self._build_geometry(problem, layout, vector)
+        # Two samples per arc are enough to propagate exact analytic endpoints.
+        built = self._build_geometry(problem, layout, vector, arc_sample_count=1)
         formal_values = built.parameter_values
-        residuals = []
         closure = built.occurrences[-1].end_point - built.occurrences[0].start_point
-        closure_weight = 10.0
-        residuals.extend(
-            (closure_weight * float(closure[0]), closure_weight * float(closure[1]))
+        angular_error = angle_wrap(
+            built.final_tangent_after_closure_vertex
+            - built.occurrences[0].start_tangent
         )
-        angular_error = built.final_tangent_after_closure_vertex - built.occurrences[0].start_tangent
-        residuals.extend((math.sin(angular_error), 1.0 - math.cos(angular_error)))
+        residuals = [
+            10.0 * float(closure[0]),
+            10.0 * float(closure[1]),
+            math.sin(angular_error),
+            1.0 - math.cos(angular_error),
+        ]
 
+        # These are cheap guards for linear formulas whose feasible region is
+        # narrower than the box bounds of their free parameters.
         positivity_weight = 10.0
         for point in problem.points:
             angle_pi = point.angle_pi.evaluate(formal_values)
-            residuals.append(positivity_weight * max(0.0, 1e-5 - angle_pi))
-            residuals.append(positivity_weight * max(0.0, angle_pi - (2.0 - 1e-5)))
+            residuals.append(positivity_weight * max(0.0, 1e-7 - angle_pi))
+            residuals.append(positivity_weight * max(0.0, angle_pi - (2.0 - 1e-7)))
         for component in problem.components:
             length = component.length.evaluate(formal_values)
             residuals.append(
-                positivity_weight * max(0.0, self.config.minimum_curve_length - length)
+                positivity_weight
+                * max(0.0, self.config.minimum_curve_length - length)
             )
             if component.turn_pi is not None:
                 target_turn = math.pi * component.turn_pi.evaluate(formal_values)
                 actual_turn = built.local_templates[component.component_id].total_turn
                 residuals.append(actual_turn - target_turn)
-                if component.curve_type == "circular_arc":
-                    residuals.append(
-                        positivity_weight * max(0.0, 1e-6 - abs(component.turn_pi.evaluate(formal_values)))
-                    )
 
-        polyline = sampled_polyline(built.occurrences)
-        minimum_distance, intersections = nonadjacent_distances(polyline)
-        if minimum_distance is None:
-            minimum_distance = self.config.optimization_clearance
-        residuals.append(
-            5.0 * max(0.0, self.config.optimization_clearance - minimum_distance)
-        )
-        residuals.append(5.0 * float(intersections))
-        area = abs(signed_area(polyline))
-        residuals.append(5.0 * max(0.0, self.config.minimum_area - area))
-
-        regularization = 1e-5
+        regularization = 1e-8
         for component_id in layout.generic_components:
-            shape_slice = layout.slices[component_id]
-            residuals.extend(regularization * vector[shape_slice])
+            residuals.extend(regularization * vector[layout.slices[component_id]])
         return np.asarray(residuals, dtype=float)
+
+    def _closure_metrics(
+        self,
+        problem: FormalGeometryProblem,
+        layout: _ParameterLayout,
+        vector: np.ndarray,
+    ) -> Dict[str, Any]:
+        built = self._build_geometry(problem, layout, vector, arc_sample_count=1)
+        closure = built.occurrences[-1].end_point - built.occurrences[0].start_point
+        closure_error = float(np.linalg.norm(closure))
+        tangent_error = abs(
+            angle_wrap(
+                built.final_tangent_after_closure_vertex
+                - built.occurrences[0].start_tangent
+            )
+        )
+        failed = []
+        if closure_error > self.config.closure_tolerance:
+            failed.append("closed_contour")
+        if tangent_error > self.config.tangent_tolerance:
+            failed.append("closed_tangent_cycle")
+        return {
+            "closure_error": closure_error,
+            "tangent_closure_error": tangent_error,
+            "cost": closure_error * closure_error + tangent_error * tangent_error,
+            "failed_checks": failed,
+        }
+
+    def _closure_is_close(
+        self, metrics: Mapping[str, Any], *, multiplier: float = 1.0
+    ) -> bool:
+        return (
+            float(metrics["closure_error"])
+            <= multiplier * self.config.closure_tolerance
+            and float(metrics["tangent_closure_error"])
+            <= multiplier * self.config.tangent_tolerance
+        )
+
+    def _closure_precheck_record(self, metrics: Mapping[str, Any]) -> Dict[str, Any]:
+        closure_error = float(metrics["closure_error"])
+        tangent_error = float(metrics["tangent_closure_error"])
+        return {
+            "passed": False,
+            "precheck_only": True,
+            "closure_error": closure_error,
+            "tangent_closure_error": tangent_error,
+            "checks": [
+                {
+                    "name": "closed_contour",
+                    "passed": closure_error <= self.config.closure_tolerance,
+                    "detail": (
+                        f"closure_error={closure_error:.3e}, "
+                        f"tolerance={self.config.closure_tolerance:.3e}"
+                    ),
+                },
+                {
+                    "name": "closed_tangent_cycle",
+                    "passed": tangent_error <= self.config.tangent_tolerance,
+                    "detail": (
+                        f"tangent_error={tangent_error:.3e}, "
+                        f"tolerance={self.config.tangent_tolerance:.3e}"
+                    ),
+                },
+            ],
+        }
+
+    def _full_validation(
+        self,
+        problem: FormalGeometryProblem,
+        layout: _ParameterLayout,
+        vector: np.ndarray,
+    ):
+        built = self._build_geometry(
+            problem,
+            layout,
+            vector,
+            arc_sample_count=self.config.arc_sample_count,
+        )
+        return self._validate_built(built), built
+
+    def _refine_closed_geometry(
+        self,
+        problem: FormalGeometryProblem,
+        layout: _ParameterLayout,
+        initial: np.ndarray,
+        monitor: _SolveMonitor,
+    ) -> np.ndarray | None:
+        if layout.initial.size <= 2:
+            return None
+
+        accepted: np.ndarray | None = None
+
+        def residual(vector: np.ndarray) -> np.ndarray:
+            monitor.check()
+            built = self._build_geometry(
+                problem,
+                layout,
+                vector,
+                arc_sample_count=self.config.coarse_collision_sample_count,
+            )
+            closure_residual = self._closure_residual(problem, layout, vector)
+            polyline = sampled_polyline(built.occurrences)
+            clearance = pairwise_clearance_penalties(
+                polyline, self.config.optimization_clearance
+            )
+            area = abs(signed_area(polyline))
+            area_penalty = max(0.0, self.config.minimum_area - area)
+            combined = np.concatenate(
+                (
+                    5.0 * closure_residual,
+                    2.0 * clearance,
+                    np.asarray((2.0 * area_penalty,), dtype=float),
+                )
+            )
+            monitor.observe(combined)
+            return combined
+
+        def stop_when_valid(intermediate_result) -> None:
+            nonlocal accepted
+            monitor.check()
+            vector = np.asarray(intermediate_result.x, dtype=float)
+            metrics = self._closure_metrics(problem, layout, vector)
+            if not self._closure_is_close(metrics, multiplier=4.0):
+                return
+            validation, _built = self._full_validation(problem, layout, vector)
+            if validation.passed:
+                accepted = vector.copy()
+                raise _AcceptedSolution(vector)
+
+        try:
+            result = least_squares(
+                residual,
+                initial,
+                bounds=(layout.lower_bounds, layout.upper_bounds),
+                max_nfev=self.config.max_refinement_evaluations,
+                xtol=1e-10,
+                ftol=1e-10,
+                gtol=1e-10,
+                verbose=0,
+                callback=stop_when_valid,
+            )
+            candidate = np.asarray(result.x, dtype=float)
+        except _AcceptedSolution as found:
+            candidate = found.vector
+        return accepted if accepted is not None else candidate
 
     def _solution_record(
         self,

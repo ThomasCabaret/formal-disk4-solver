@@ -86,6 +86,14 @@ def _apply_geometry_overrides(config: Dict[str, Any], args: argparse.Namespace) 
         )
     if getattr(args, "max_restarts", None) is not None:
         config["geometry"]["max_restarts"] = int(args.max_restarts)
+    if getattr(args, "max_function_evaluations", None) is not None:
+        config["geometry"]["max_function_evaluations"] = int(
+            args.max_function_evaluations
+        )
+    if getattr(args, "candidate_timeout", None) is not None:
+        config["geometry"]["candidate_timeout_seconds"] = float(
+            args.candidate_timeout
+        )
     if getattr(args, "max_candidates", None) is not None:
         config["limits"]["max_candidates"] = int(args.max_candidates)
     if getattr(args, "max_solutions", None) is not None:
@@ -392,6 +400,12 @@ def build_parser() -> argparse.ArgumentParser:
     geometry_parser.add_argument("--output", type=Path)
     geometry_parser.add_argument("--intermediate-points", type=int)
     geometry_parser.add_argument("--max-restarts", type=int)
+    geometry_parser.add_argument("--max-function-evaluations", type=int)
+    geometry_parser.add_argument(
+        "--candidate-timeout",
+        type=float,
+        help="Maximum wall-clock seconds spent on one formal candidate; 0 disables it.",
+    )
     geometry_parser.add_argument("--max-candidates", type=int)
     geometry_parser.add_argument("--max-solutions", type=int)
     geometry_parser.add_argument(
