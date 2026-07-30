@@ -245,3 +245,91 @@ the atomic-stage global point-turn balance is disabled: later word refinement
 may introduce a genuine corner inside an atomic interval. The complete exact
 angle and total-turn equations are still enforced on every emitted formal
 profile.
+
+## Cyclic two-ring campaigns
+
+Version 1.4.0 adds an external campaign runner for the five DC families and
+sizes `N=3,4,5`.  Each concrete case keeps its own output directory, SQLite
+search checkpoint, geometry line checkpoint and solution file under:
+
+```text
+output/cases/<case-id>/
+```
+
+The families accepted by `run_cycle_case.bat` are:
+
+```text
+parallel        DC1: both cycles, cross offsets {0}
+offset          DC2: both cycles, cross offsets {0,1}
+wide            DC3: both cycles, cross offsets {-1,0,1}
+boundary-points DC4: open outer cycle, inner cycle reaches the boundary
+center-points   DC5: open inner cycle, inverse central-point family
+```
+
+DC3 is recorded as structurally impossible for positive-length interfaces: its
+annular graph requests `5N` edges while a planar annulus with `N` vertices on
+each boundary has at most `4N`.  The campaign still includes it and reports
+zero candidates rather than constructing a false planar map.
+
+Run one concrete case without adding a dedicated script:
+
+```bat
+run_cycle_case.bat offset 4 search --restart --continue-after-profile
+run_cycle_case.bat boundary-points 5 geometry --restart --continue-after-solution
+run_cycle_case.bat center-points 3 count
+```
+
+The predefined suites are external JSON lists under `config/suites/`:
+
+```text
+cyclic-n3
+cyclic-n4
+cyclic-n5
+cyclic-small
+```
+
+`cyclic-small` contains all five families for `N=3,4,5`, hence fifteen
+independent cases. Start a fresh formal campaign with:
+
+```bat
+run_cycle_suite.bat cyclic-small search --restart-all --continue-after-profile
+```
+
+After interruption, resume it without any restart option:
+
+```bat
+run_cycle_suite.bat cyclic-small search --continue-after-profile
+```
+
+The suite starts again at the first list entry, but completed case checkpoints
+return immediately and the interrupted case resumes from its own SQLite
+cursor. There is deliberately no global campaign checkpoint.
+
+Run or resume geometry in the same way:
+
+```bat
+run_cycle_suite.bat cyclic-small geometry --restart-all --continue-after-solution
+run_cycle_suite.bat cyclic-small geometry --continue-after-solution
+```
+
+Count formal candidates and accepted geometric solutions:
+
+```bat
+run_cycle_suite.bat cyclic-small count
+```
+
+This also writes:
+
+```text
+output/suites/cyclic-small/counts.json
+output/suites/cyclic-small/counts.csv
+```
+
+Visualize every geometric solution from the suite in one combined viewer:
+
+```bat
+run_cycle_suite.bat cyclic-small visualize
+```
+
+The combined JSONL is regenerated under `output/suites/cyclic-small/`; the
+per-case solution files remain authoritative and are never merged destructively.

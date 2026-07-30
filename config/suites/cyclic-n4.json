@@ -1,0 +1,25 @@
+{
+  "suite_id": "cyclic-n4",
+  "cases": [
+    {
+      "family": "parallel",
+      "size": 4
+    },
+    {
+      "family": "offset",
+      "size": 4
+    },
+    {
+      "family": "wide",
+      "size": 4
+    },
+    {
+      "family": "boundary-points",
+      "size": 4
+    },
+    {
+      "family": "center-points",
+      "size": 4
+    }
+  ]
+}

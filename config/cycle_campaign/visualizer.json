@@ -1,0 +1,36 @@
+{
+  "input": {
+    "solutions_file": "output/suites/cyclic-small/geometric_solutions.jsonl"
+  },
+  "viewer": {
+    "title": "Cyclic two-ring campaign viewer",
+    "width": 1200,
+    "height": 900,
+    "background": "#62676d",
+    "margin_pixels": 48,
+    "start_index": 0,
+    "cache_size": 4,
+    "piece_palette": [
+      "#e76f51",
+      "#2a9d8f",
+      "#e9c46a",
+      "#457b9d",
+      "#9b5de5",
+      "#f4a261",
+      "#4cc9f0",
+      "#f15bb5",
+      "#90be6d",
+      "#f94144",
+      "#577590",
+      "#f8961e"
+    ]
+  },
+  "assembly": {
+    "interface_sample_count": 31,
+    "polygon_arc_sample_count": 128,
+    "mapping_tolerance": 1e-06
+  },
+  "limits": {
+    "max_solutions": null
+  }
+}

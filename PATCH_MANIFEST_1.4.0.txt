@@ -1,0 +1,27 @@
+Patch 1.4.0 applies directly over 1.3.1.
+
+Modified files:
+- README.md
+- pyproject.toml
+- src/formal_disk4/__init__.py
+- src/formal_disk4/cli.py
+- src/formal_disk4/maps/__init__.py
+- src/formal_disk4/maps/registry.py
+
+New files:
+- PATCH_NOTES_1.4.0.md
+- config/cycle_campaign/search.json
+- config/cycle_campaign/geometry.json
+- config/cycle_campaign/visualizer.json
+- config/suites/cyclic-n3.json
+- config/suites/cyclic-n4.json
+- config/suites/cyclic-n5.json
+- config/suites/cyclic-small.json
+- run_cycle_case.bat
+- run_cycle_suite.bat
+- src/formal_disk4/campaigns/__init__.py
+- src/formal_disk4/campaigns/cyclic.py
+- src/formal_disk4/maps/two_ring_families.py
+- tests/test_two_ring_campaign.py
+
+No files are removed.

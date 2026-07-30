@@ -11,6 +11,11 @@ from .double_cycle import build_double_cycle_6_map, build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
+from .two_ring_families import (
+    build_double_cycle_offset_map,
+    build_inner_cycle_boundary_points_map,
+    build_outer_cycle_center_points_map,
+)
 
 
 @dataclass(frozen=True)
@@ -58,7 +63,24 @@ _REGISTRATIONS = (
     ),
 )
 
-_DYNAMIC_DOUBLE_CYCLE = re.compile(r"^double-cycle-(\d+)$")
+_DYNAMIC_MAP_PATTERNS = (
+    ("double-cycle", re.compile(r"^double-cycle-(\d+)$"), build_double_cycle_map),
+    (
+        "double-cycle-offset",
+        re.compile(r"^double-cycle-offset-(\d+)$"),
+        build_double_cycle_offset_map,
+    ),
+    (
+        "inner-cycle-boundary-points",
+        re.compile(r"^inner-cycle-boundary-points-(\d+)$"),
+        build_inner_cycle_boundary_points_map,
+    ),
+    (
+        "outer-cycle-center-points",
+        re.compile(r"^outer-cycle-center-points-(\d+)$"),
+        build_outer_cycle_center_points_map,
+    ),
+)
 
 _CANONICAL: Dict[str, MapRegistration] = {
     registration.name: registration for registration in _REGISTRATIONS
@@ -88,12 +110,13 @@ def canonical_map_name(name: str) -> str:
     registration = _LOOKUP.get(name)
     if registration is not None:
         return registration.name
-    match = _DYNAMIC_DOUBLE_CYCLE.fullmatch(name)
-    if match is not None and int(match.group(1)) >= 3:
-        return f"double-cycle-{int(match.group(1))}"
+    for prefix, pattern, _builder in _DYNAMIC_MAP_PATTERNS:
+        match = pattern.fullmatch(name)
+        if match is not None and int(match.group(1)) >= 3:
+            return f"{prefix}-{int(match.group(1))}"
     raise ValueError(
         f"Unknown map {name!r}; available: {', '.join(available_maps())}, "
-        "or double-cycle-N with N >= 3"
+        "or a supported two-ring family ending in -N with N >= 3"
     )
 
 
@@ -102,10 +125,11 @@ def build_map(name: str) -> PlanarMap:
     registration = _CANONICAL.get(canonical)
     if registration is not None:
         return registration.builder()
-    match = _DYNAMIC_DOUBLE_CYCLE.fullmatch(canonical)
-    if match is None:
-        raise RuntimeError(f"No builder for canonical map {canonical!r}")
-    return build_double_cycle_map(int(match.group(1)))
+    for _prefix, pattern, builder in _DYNAMIC_MAP_PATTERNS:
+        match = pattern.fullmatch(canonical)
+        if match is not None:
+            return builder(int(match.group(1)))
+    raise RuntimeError(f"No builder for canonical map {canonical!r}")
 
 
 def iterate_maps(names: Sequence[str]) -> Iterator[PlanarMap]:

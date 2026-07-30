@@ -330,7 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Override config.maps. Registered cases: "
             + ", ".join(available_maps())
-            + "; dynamic family: double-cycle-N."
+            + "; dynamic two-ring families also accept a trailing -N."
         ),
     )
     run_parser.add_argument("--output", type=Path)
@@ -356,7 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Disable the configured cyclic assignment and weak-order equivariance. "
-            "This is enabled by default only for double-cycle cases."
+            "This is enabled by default by cyclic two-ring campaign configs."
         ),
     )
     run_parser.add_argument("--no-solver", action="store_true")

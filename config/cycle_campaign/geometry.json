@@ -1,24 +1,24 @@
 {
   "input": {
-    "candidates_file": "output/cases/c3/candidates.jsonl"
+    "candidates_file": "output/cases/double-cycle-3/candidates.jsonl"
   },
   "output": {
+    "directory": "output/cases/double-cycle-3/geometry",
     "solutions_file": "geometric_solutions.jsonl",
     "summary_file": "geometry_summary.json",
     "checkpoint_file": "geometry_checkpoint.json",
     "failures_file": "geometry_failures.jsonl",
-    "write_failures": false,
-    "max_failure_records": 100,
-    "include_formal_candidate": true,
-    "directory": "output/cases/c3/geometry"
+    "write_failures": true,
+    "max_failure_records": 1000,
+    "include_formal_candidate": true
   },
   "geometry": {
     "intermediate_points_per_generic_curve": 2,
-    "arc_sample_count": 8,
-    "max_restarts": 2,
-    "max_function_evaluations": 100,
+    "arc_sample_count": 64,
+    "max_restarts": 96,
+    "max_function_evaluations": 12000,
     "random_seed": 0,
-    "maximum_curve_length": 4.0,
+    "maximum_curve_length": 6.0,
     "minimum_curve_length": 1e-06,
     "maximum_generic_turn_per_joint_pi": 0.95,
     "optimization_clearance": 1e-05,
@@ -32,8 +32,8 @@
   },
   "limits": {
     "max_candidates": null,
-    "max_solutions": 1,
-    "stop_on_first_solution": true
+    "max_solutions": null,
+    "stop_on_first_solution": false
   },
   "checkpoint": {
     "enabled": true,

@@ -1,0 +1,65 @@
+{
+  "suite_id": "cyclic-small",
+  "cases": [
+    {
+      "family": "parallel",
+      "size": 3
+    },
+    {
+      "family": "offset",
+      "size": 3
+    },
+    {
+      "family": "wide",
+      "size": 3
+    },
+    {
+      "family": "boundary-points",
+      "size": 3
+    },
+    {
+      "family": "center-points",
+      "size": 3
+    },
+    {
+      "family": "parallel",
+      "size": 4
+    },
+    {
+      "family": "offset",
+      "size": 4
+    },
+    {
+      "family": "wide",
+      "size": 4
+    },
+    {
+      "family": "boundary-points",
+      "size": 4
+    },
+    {
+      "family": "center-points",
+      "size": 4
+    },
+    {
+      "family": "parallel",
+      "size": 5
+    },
+    {
+      "family": "offset",
+      "size": 5
+    },
+    {
+      "family": "wide",
+      "size": 5
+    },
+    {
+      "family": "boundary-points",
+      "size": 5
+    },
+    {
+      "family": "center-points",
+      "size": 5
+    }
+  ]
+}
