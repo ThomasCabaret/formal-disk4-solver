@@ -1,0 +1,15 @@
+Word Solver Patch 1.0.0
+
+Files included:
+PATCH_NOTES_WORD_SOLVER_1.0.0.md
+PATCH_MANIFEST_WORD_SOLVER_1.0.0.txt
+src/formal_disk4/words/exact_partial.py
+tests/test_exact_partial.py
+
+Expected pre-patch SHA-256:
+src/formal_disk4/words/exact_partial.py  25a350a50e485cd4739146e43b2f1565c6a583d4de29b9ed8897ff400527ba82
+tests/test_exact_partial.py                 c4f47d71a4b6278574e4e384b8839d983c49b8403b641ad5ad103d40876f05c7
+
+Patched SHA-256:
+src/formal_disk4/words/exact_partial.py  816d7c3229a723a80ca80184fd93328dc8f61f8c2f6886245f973a3ced3bf0fa
+tests/test_exact_partial.py                 4b0ee895dbffeeac42f6915fcbb3679f72db44d86adbc320bb018549620925ff

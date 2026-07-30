@@ -94,6 +94,7 @@ class _CanonicalResidual:
     equations: Tuple[Equation, ...]
     variables: Tuple[str, ...]
     rename: Tuple[Tuple[str, str], ...]
+    signature: Tuple[object, ...]
 
     @property
     def key(self) -> Tuple[Equation, ...]:
@@ -123,13 +124,88 @@ class _MutableCounters:
     external_stop_reached: bool = False
 
 
-def _local_pattern(word: Word, known: Mapping[str, str]) -> Tuple[Tuple[int, bool], ...]:
+def _simplify_equation_fast(equation: Equation) -> Equation | bool | None:
+    """Equivalent to algebra.simplify_equation without quadratic pop(0) calls."""
+
+    left = equation.left
+    right = equation.right
+    prefix = 0
+    common = min(len(left), len(right))
+    while prefix < common and left[prefix] == right[prefix]:
+        prefix += 1
+
+    left_end = len(left)
+    right_end = len(right)
+    while (
+        left_end > prefix
+        and right_end > prefix
+        and left[left_end - 1] == right[right_end - 1]
+    ):
+        left_end -= 1
+        right_end -= 1
+
+    if prefix == left_end and prefix == right_end:
+        return None
+    if prefix == left_end or prefix == right_end:
+        return False
+    return Equation(left[prefix:left_end], right[prefix:right_end])
+
+
+def _simplify_system_fast(equations: Sequence[Equation]) -> Tuple[Equation, ...] | None:
+    """Local hot-path equivalent of simplify_system."""
+
+    output: list[Equation] = []
+    seen: set[Tuple[Word, Word]] = set()
+    for equation in equations:
+        simplified = _simplify_equation_fast(equation)
+        if simplified is False:
+            return None
+        if simplified is None:
+            continue
+        direct = (simplified.left, simplified.right)
+        reverse = (simplified.right, simplified.left)
+        key = min(direct, reverse)
+        if key not in seen:
+            seen.add(key)
+            output.append(simplified)
+    return tuple(output)
+
+
+def _substitute_equations_fast(
+    equations: Sequence[Equation], substitution: Mapping[str, Word]
+) -> Tuple[Equation, ...]:
+    """Substitute a small Nielsen map without rebuilding untouched literals."""
+
+    inverse_substitution = {
+        variable: inverse_word(word) for variable, word in substitution.items()
+    }
+
+    def substitute(word: Word) -> Word:
+        output: list[Literal] = []
+        extend = output.extend
+        append = output.append
+        for literal in word:
+            replacement = substitution.get(literal.variable)
+            if replacement is None:
+                append(literal)
+            elif literal.inverse:
+                extend(inverse_substitution[literal.variable])
+            else:
+                extend(replacement)
+        return tuple(output)
+
+    return tuple(
+        Equation(substitute(equation.left), substitute(equation.right))
+        for equation in equations
+    )
+
+
+def _local_pattern(word: Word, known: Mapping[str, int]) -> Tuple[Tuple[int, bool], ...]:
     local: Dict[str, int] = {}
     output = []
     for literal in word:
-        if literal.variable in known:
-            token = int(known[literal.variable][1:])
-        else:
+        token = known.get(literal.variable)
+        if token is None:
             if literal.variable not in local:
                 local[literal.variable] = len(local)
             token = 1_000_000 + local[literal.variable]
@@ -146,25 +222,32 @@ def _canonicalize_candidate(
     remaining = set(range(len(equations)))
     order: List[Tuple[int, bool]] = [(seed_index, seed_flip)]
     remaining.remove(seed_index)
-    renaming: Dict[str, str] = {}
+    renaming: Dict[str, int] = {}
     canonical_equations: List[Equation] = []
+    order_index = 0
 
     def rename_word(word: Word) -> Word:
         output = []
         for literal in word:
-            if literal.variable not in renaming:
-                renaming[literal.variable] = f"V{len(renaming)}"
-            output.append(Literal(renaming[literal.variable], literal.inverse))
+            variable_index = renaming.get(literal.variable)
+            if variable_index is None:
+                variable_index = len(renaming)
+                renaming[literal.variable] = variable_index
+            output.append(Literal(f"V{variable_index}", literal.inverse))
         return tuple(output)
 
-    while order:
-        equation_index, flip = order.pop(0)
+    while order_index < len(order):
+        equation_index, flip = order[order_index]
+        order_index += 1
         equation = equations[equation_index]
         left, right = (equation.right, equation.left) if flip else (equation.left, equation.right)
         canonical_equations.append(Equation(rename_word(left), rename_word(right)))
         if not remaining:
             continue
-        choices = []
+
+        selected_pattern: object | None = None
+        selected_index = -1
+        selected_flip = False
         for candidate_index in remaining:
             candidate = equations[candidate_index]
             for candidate_flip in (False, True):
@@ -173,23 +256,24 @@ def _canonicalize_candidate(
                     if candidate_flip
                     else (candidate.left, candidate.right)
                 )
-                choices.append(
+                choice = (
                     (
-                        (
-                            _local_pattern(candidate_left, renaming),
-                            _local_pattern(candidate_right, renaming),
-                        ),
-                        candidate_index,
-                        candidate_flip,
-                    )
+                        _local_pattern(candidate_left, renaming),
+                        _local_pattern(candidate_right, renaming),
+                    ),
+                    candidate_index,
+                    candidate_flip,
                 )
-        _, selected_index, selected_flip = min(choices)
+                if selected_pattern is None or choice < selected_pattern:
+                    selected_pattern = choice
+                    selected_index = candidate_index
+                    selected_flip = candidate_flip
         remaining.remove(selected_index)
         order.append((selected_index, selected_flip))
 
     for variable in sorted(set(all_variables)):
         if variable not in renaming:
-            renaming[variable] = f"V{len(renaming)}"
+            renaming[variable] = len(renaming)
 
     canonical_variables = tuple(f"V{index}" for index in range(len(renaming)))
     serialization = (
@@ -205,35 +289,40 @@ def _canonicalize_candidate(
     return serialization, _CanonicalResidual(
         equations=tuple(canonical_equations),
         variables=canonical_variables,
-        rename=tuple(sorted(renaming.items())),
+        rename=tuple(sorted((name, f"V{index}") for name, index in renaming.items())),
+        signature=serialization,
     )
 
 
 def canonicalize_residual(
     equations: Sequence[Equation], all_variables: Sequence[str]
 ) -> _CanonicalResidual | None:
-    simplified = simplify_system(equations)
+    simplified = _simplify_system_fast(equations)
     if simplified is None:
         return None
     if not simplified:
         renaming = {
             variable: f"V{index}" for index, variable in enumerate(sorted(set(all_variables)))
         }
+        signature: Tuple[object, ...] = ((), len(renaming))
         return _CanonicalResidual(
             equations=(),
             variables=tuple(renaming.values()),
             rename=tuple(sorted(renaming.items())),
+            signature=signature,
         )
-    candidates = []
-    for seed_index in range(len(simplified)):
-        for seed_flip in (False, True):
-            candidates.append(
-                _canonicalize_candidate(
-                    tuple(simplified), all_variables, seed_index, seed_flip
-                )
-            )
-    return min(candidates, key=lambda item: item[0])[1]
 
+    equations_tuple = tuple(simplified)
+    best: Tuple[Tuple[object, ...], _CanonicalResidual] | None = None
+    for seed_index in range(len(equations_tuple)):
+        for seed_flip in (False, True):
+            candidate = _canonicalize_candidate(
+                equations_tuple, all_variables, seed_index, seed_flip
+            )
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+    assert best is not None
+    return best[1]
 
 def _variables_in_words(words: Sequence[Word]) -> Tuple[str, ...]:
     return tuple(sorted({item.variable for word in words for item in word}))
@@ -396,6 +485,192 @@ def _environment_size(environment: Mapping[str, WordExpr]) -> int:
     return sum(expression_node_count(item) for item in environment.values())
 
 
+@dataclass(frozen=True)
+class _EnvironmentState:
+    expression_ids: Tuple[int, ...]
+    node_count: int
+
+
+class _ExpressionArena:
+    """Hash-consed internal representation for symbolic environments.
+
+    The public family representation remains unchanged. During graph search,
+    expressions are represented by small integer IDs, so state signatures do
+    not recursively hash or stringify large dataclass trees.
+    """
+
+    def __init__(self) -> None:
+        self._nodes: list[tuple[object, ...]] = []
+        self._sizes: list[int] = []
+        self._depths: list[int] = []
+        self._exponents: list[frozenset[str]] = []
+        self._atoms: dict[tuple[str, bool], int] = {}
+        self._concats: dict[tuple[int, ...], int] = {}
+        self._powers: dict[tuple[int, str], int] = {}
+        self._inverse: dict[int, int] = {}
+        self._materialized: dict[int, WordExpr] = {}
+        self.empty = self.concat(())
+
+    def atom(self, variable: str, inverse: bool = False) -> int:
+        key = (variable, inverse)
+        existing = self._atoms.get(key)
+        if existing is not None:
+            return existing
+        expression_id = len(self._nodes)
+        self._atoms[key] = expression_id
+        self._nodes.append(("atom", variable, inverse))
+        self._sizes.append(1)
+        self._depths.append(0)
+        self._exponents.append(frozenset())
+        return expression_id
+
+    def concat(self, parts: Sequence[int]) -> int:
+        flattened: list[int] = []
+        for expression_id in parts:
+            node = self._nodes[expression_id]
+            if node[0] == "concat":
+                flattened.extend(node[1])
+            else:
+                flattened.append(expression_id)
+        if not flattened:
+            key: tuple[int, ...] = ()
+        elif len(flattened) == 1:
+            return flattened[0]
+        else:
+            key = tuple(flattened)
+        existing = self._concats.get(key)
+        if existing is not None:
+            return existing
+        expression_id = len(self._nodes)
+        self._concats[key] = expression_id
+        self._nodes.append(("concat", key))
+        self._sizes.append(1 + sum(self._sizes[item] for item in key))
+        self._depths.append(max((self._depths[item] for item in key), default=0))
+        exponent_names: set[str] = set()
+        for item in key:
+            exponent_names.update(self._exponents[item])
+        self._exponents.append(frozenset(exponent_names))
+        return expression_id
+
+    def power(self, base: int, exponent: str) -> int:
+        key = (base, exponent)
+        existing = self._powers.get(key)
+        if existing is not None:
+            return existing
+        expression_id = len(self._nodes)
+        self._powers[key] = expression_id
+        self._nodes.append(("power", base, exponent))
+        self._sizes.append(1 + self._sizes[base])
+        self._depths.append(1 + self._depths[base])
+        self._exponents.append(self._exponents[base] | {exponent})
+        return expression_id
+
+    def from_word(self, word: Sequence[Literal]) -> int:
+        return self.concat(tuple(self.atom(item.variable, item.inverse) for item in word))
+
+    def inverse(self, expression_id: int) -> int:
+        existing = self._inverse.get(expression_id)
+        if existing is not None:
+            return existing
+        node = self._nodes[expression_id]
+        kind = node[0]
+        if kind == "atom":
+            result = self.atom(str(node[1]), not bool(node[2]))
+        elif kind == "concat":
+            result = self.concat(
+                tuple(self.inverse(item) for item in reversed(node[1]))
+            )
+        elif kind == "power":
+            result = self.power(self.inverse(int(node[1])), str(node[2]))
+        else:
+            raise AssertionError(kind)
+        self._inverse[expression_id] = result
+        self._inverse[result] = expression_id
+        return result
+
+    def substitute(
+        self,
+        expression_id: int,
+        replacements: Mapping[str, int],
+        memo: dict[int, int],
+    ) -> int:
+        existing = memo.get(expression_id)
+        if existing is not None:
+            return existing
+        node = self._nodes[expression_id]
+        kind = node[0]
+        if kind == "atom":
+            replacement = replacements.get(str(node[1]))
+            if replacement is None:
+                result = expression_id
+            elif bool(node[2]):
+                result = self.inverse(replacement)
+            else:
+                result = replacement
+        elif kind == "concat":
+            result = self.concat(
+                tuple(self.substitute(item, replacements, memo) for item in node[1])
+            )
+        elif kind == "power":
+            result = self.power(
+                self.substitute(int(node[1]), replacements, memo), str(node[2])
+            )
+        else:
+            raise AssertionError(kind)
+        memo[expression_id] = result
+        return result
+
+    def apply_environment(
+        self,
+        environment: _EnvironmentState,
+        replacements: Mapping[str, int],
+    ) -> _EnvironmentState:
+        memo: dict[int, int] = {}
+        expression_ids = tuple(
+            self.substitute(expression_id, replacements, memo)
+            for expression_id in environment.expression_ids
+        )
+        return _EnvironmentState(
+            expression_ids=expression_ids,
+            node_count=sum(self._sizes[item] for item in expression_ids),
+        )
+
+    def materialize(self, expression_id: int) -> WordExpr:
+        existing = self._materialized.get(expression_id)
+        if existing is not None:
+            return existing
+        node = self._nodes[expression_id]
+        kind = node[0]
+        if kind == "atom":
+            result: WordExpr = AtomExpr(str(node[1]), bool(node[2]))
+        elif kind == "concat":
+            result = concat(*(self.materialize(item) for item in node[1]))
+        elif kind == "power":
+            result = PowerExpr(self.materialize(int(node[1])), str(node[2]))
+        else:
+            raise AssertionError(kind)
+        self._materialized[expression_id] = result
+        return result
+
+    def materialize_environment(
+        self,
+        initial_variables: Sequence[str],
+        environment: _EnvironmentState,
+    ) -> Dict[str, WordExpr]:
+        return {
+            variable: self.materialize(expression_id)
+            for variable, expression_id in zip(
+                initial_variables, environment.expression_ids, strict=True
+            )
+        }
+
+    def exponent_names(self, environment: _EnvironmentState) -> frozenset[str]:
+        names: set[str] = set()
+        for expression_id in environment.expression_ids:
+            names.update(self._exponents[expression_id])
+        return frozenset(names)
+
+
 def _validate_family(
     original_equations: Sequence[Equation],
     environment: Mapping[str, WordExpr],
@@ -476,11 +751,15 @@ class ExactPartialWordSolver:
             )
             return
 
+        arena = _ExpressionArena()
         initial_rename = self.initial_residual.rename_map()
-        initial_environment: Dict[str, WordExpr] = {
-            variable: AtomExpr(initial_rename[variable])
-            for variable in self.initial_variables
-        }
+        initial_expression_ids = tuple(
+            arena.atom(initial_rename[variable]) for variable in self.initial_variables
+        )
+        initial_environment = _EnvironmentState(
+            expression_ids=initial_expression_ids,
+            node_count=len(initial_expression_ids),
+        )
         counters = _MutableCounters()
         should_stop = stop_predicate or (lambda: False)
         emitted_signatures: set[object] = set()
@@ -488,14 +767,40 @@ class ExactPartialWordSolver:
         family_id = 0
         stop = False
 
+        def next_exponent_name(environment: _EnvironmentState) -> str:
+            existing = arena.exponent_names(environment)
+            index = 0
+            while f"n{index}" in existing:
+                index += 1
+            return f"n{index}"
+
+        def loop_replacement_ids(
+            variables: Sequence[str], plan: _LoopPlan, exponent: str
+        ) -> Dict[str, int]:
+            replacements: Dict[str, int] = {
+                variable: arena.atom(variable) for variable in variables
+            }
+            for variable, prefix, suffix in plan.pivots:
+                parts: list[int] = []
+                if prefix:
+                    parts.append(arena.power(arena.from_word(prefix), exponent))
+                parts.append(arena.atom(variable))
+                if suffix:
+                    parts.append(arena.power(arena.from_word(suffix), exponent))
+                replacements[variable] = arena.concat(parts)
+            return replacements
+
         def emit_family(
-            environment: Mapping[str, WordExpr],
+            environment: _EnvironmentState,
             minimums: Mapping[str, int],
-            trace: Tuple[str, ...],
+            trace: Sequence[str],
         ) -> Iterator[ExactFormalFamily]:
             nonlocal family_id, stop
+            materialized_environment = arena.materialize_environment(
+                self.initial_variables, environment
+            )
             canonical_environment, canonical_minimums = canonicalize_environment(
-                environment, minimums
+                materialized_environment, minimums
             )
             signature = (canonical_environment, canonical_minimums)
             if signature in emitted_signatures:
@@ -523,7 +828,7 @@ class ExactPartialWordSolver:
                 kind=kind,
                 environment=canonical_environment,
                 exponent_minimums=canonical_minimums,
-                trace=trace,
+                trace=tuple(trace),
                 residual_graph_nodes=counters.visited_states,
                 validation_assignments=validation_assignments,
             )
@@ -535,13 +840,14 @@ class ExactPartialWordSolver:
 
         def search(
             residual: _CanonicalResidual,
-            environment: Mapping[str, WordExpr],
+            environment: _EnvironmentState,
             minimums: Mapping[str, int],
-            trace: Tuple[str, ...],
+            trace: list[str],
             used_cycles: frozenset[object],
-            path_residuals: Tuple[_CanonicalResidual, ...],
-            path_environments: Tuple[Mapping[str, WordExpr], ...],
-            path_edges: Tuple[Mapping[str, Word], ...],
+            path_residuals: list[_CanonicalResidual],
+            path_environments: list[_EnvironmentState],
+            path_edges: list[Mapping[str, Word]],
+            path_index: dict[Tuple[object, ...], int],
         ) -> Iterator[ExactFormalFamily]:
             nonlocal stop
             if stop:
@@ -557,16 +863,19 @@ class ExactPartialWordSolver:
             counters.visited_states += 1
 
             search_signature = (
-                residual.key,
-                tuple(sorted((name, repr(expr)) for name, expr in environment.items())),
+                residual.signature,
+                environment.expression_ids,
                 tuple(sorted(minimums.items())),
-                tuple(sorted(repr(item) for item in used_cycles)),
+                used_cycles,
             )
             if search_signature in seen_search_signatures:
                 return
             seen_search_signatures.add(search_signature)
 
-            if limits.max_expression_nodes is not None and _environment_size(environment) > limits.max_expression_nodes:
+            if (
+                limits.max_expression_nodes is not None
+                and environment.node_count > limits.max_expression_nodes
+            ):
                 counters.expression_limit_reached = True
                 return
 
@@ -574,7 +883,6 @@ class ExactPartialWordSolver:
                 yield from emit_family(environment, minimums, trace)
                 return
 
-            path_keys = tuple(item.key for item in path_residuals)
             for branch_name, substitution in branch_substitutions(
                 residual.equations, residual.variables
             ):
@@ -589,112 +897,136 @@ class ExactPartialWordSolver:
                     stop = True
                     return
                 counters.graph_edges += 1
-                raw_equations = substitute_equations(residual.equations, substitution)
-                raw_transition_words = [
+
+                raw_equations = _substitute_equations_fast(
+                    residual.equations, substitution
+                )
+                raw_transition_words = tuple(
                     substitution.get(variable, (Literal(variable),))
                     for variable in residual.variables
-                ]
+                )
                 raw_variables = _variables_in_words(
-                    tuple(raw_equations[index].left for index in range(len(raw_equations)))
-                    + tuple(raw_equations[index].right for index in range(len(raw_equations)))
-                    + tuple(raw_transition_words)
+                    tuple(equation.left for equation in raw_equations)
+                    + tuple(equation.right for equation in raw_equations)
+                    + raw_transition_words
                 )
                 child = canonicalize_residual(raw_equations, raw_variables)
                 if child is None:
                     continue
+
                 renaming = child.rename_map()
                 transition = _edge_transition(
                     residual.variables, substitution, renaming
                 )
-                replacements = {
-                    variable: expr_from_word(word)
+                replacement_ids = {
+                    variable: arena.from_word(word)
                     for variable, word in transition.items()
                 }
-                child_environment = {
-                    initial: substitute_expr(expression, replacements)
-                    for initial, expression in environment.items()
-                }
-                child_trace = trace + (branch_name,)
-
-                if child.key in path_keys:
-                    ancestor_index = path_keys.index(child.key)
-                    ancestor = path_residuals[ancestor_index]
-                    cycle_edges = path_edges[ancestor_index:] + (transition,)
-                    loop_transition = _compose_transitions(
-                        ancestor.variables, cycle_edges
-                    )
-                    cycle_signature = (
-                        ancestor.key,
-                        tuple(sorted(loop_transition.items())),
-                    )
-                    if cycle_signature in used_cycles:
-                        continue
-                    if child.variables != ancestor.variables:
-                        plan = None
-                        reason = "residual variable set changes around the cycle"
-                    else:
-                        plan, reason = _classify_fixed_context_loop(
-                            ancestor.variables, loop_transition
-                        )
-                    if plan is None:
-                        counters.unsupported_complex_components += 1
-                        self.unsupported_components.append(
-                            UnsupportedComponent(
-                                reason=reason,
-                                trace=child_trace,
-                                cycle_length=len(cycle_edges),
-                                residual_equations=tuple(
-                                    equation.to_text() for equation in ancestor.equations
-                                ),
-                                transformation=_transition_text(loop_transition),
-                            )
-                        )
-                        continue
-
-                    exponent = _next_exponent_name(
-                        path_environments[ancestor_index]
-                    )
-                    loop_replacements = _loop_replacements(
-                        ancestor.variables, plan, exponent
-                    )
-                    generalized_environment = {
-                        initial: substitute_expr(expression, loop_replacements)
-                        for initial, expression in path_environments[ancestor_index].items()
-                    }
-                    generalized_minimums = dict(minimums)
-                    generalized_minimums[exponent] = 1
-                    yield from search(
-                        ancestor,
-                        generalized_environment,
-                        generalized_minimums,
-                        child_trace + (f"compile_power:{exponent}",),
-                        used_cycles | {cycle_signature},
-                        (ancestor,),
-                        (generalized_environment,),
-                        (),
-                    )
-                    continue
-
-                yield from search(
-                    child,
-                    child_environment,
-                    minimums,
-                    child_trace,
-                    used_cycles,
-                    path_residuals + (child,),
-                    path_environments + (child_environment,),
-                    path_edges + (transition,),
+                child_environment = arena.apply_environment(
+                    environment, replacement_ids
                 )
+
+                trace.append(branch_name)
+                try:
+                    ancestor_index = path_index.get(child.signature)
+                    if ancestor_index is not None:
+                        ancestor = path_residuals[ancestor_index]
+                        cycle_edges = tuple(path_edges[ancestor_index:]) + (transition,)
+                        loop_transition = _compose_transitions(
+                            ancestor.variables, cycle_edges
+                        )
+                        cycle_signature = (
+                            ancestor.signature,
+                            tuple(sorted(loop_transition.items())),
+                        )
+                        if cycle_signature in used_cycles:
+                            continue
+                        if child.variables != ancestor.variables:
+                            plan = None
+                            reason = "residual variable set changes around the cycle"
+                        else:
+                            plan, reason = _classify_fixed_context_loop(
+                                ancestor.variables, loop_transition
+                            )
+                        if plan is None:
+                            counters.unsupported_complex_components += 1
+                            self.unsupported_components.append(
+                                UnsupportedComponent(
+                                    reason=reason,
+                                    trace=tuple(trace),
+                                    cycle_length=len(cycle_edges),
+                                    residual_equations=tuple(
+                                        equation.to_text()
+                                        for equation in ancestor.equations
+                                    ),
+                                    transformation=_transition_text(loop_transition),
+                                )
+                            )
+                            continue
+
+                        exponent = next_exponent_name(
+                            path_environments[ancestor_index]
+                        )
+                        loop_replacements = loop_replacement_ids(
+                            ancestor.variables, plan, exponent
+                        )
+                        generalized_environment = arena.apply_environment(
+                            path_environments[ancestor_index], loop_replacements
+                        )
+                        generalized_minimums = dict(minimums)
+                        generalized_minimums[exponent] = 1
+                        trace.append(f"compile_power:{exponent}")
+                        try:
+                            yield from search(
+                                ancestor,
+                                generalized_environment,
+                                generalized_minimums,
+                                trace,
+                                used_cycles | {cycle_signature},
+                                [ancestor],
+                                [generalized_environment],
+                                [],
+                                {ancestor.signature: 0},
+                            )
+                        finally:
+                            trace.pop()
+                        continue
+
+                    child_index = len(path_residuals)
+                    path_index[child.signature] = child_index
+                    path_residuals.append(child)
+                    path_environments.append(child_environment)
+                    path_edges.append(transition)
+                    try:
+                        yield from search(
+                            child,
+                            child_environment,
+                            minimums,
+                            trace,
+                            used_cycles,
+                            path_residuals,
+                            path_environments,
+                            path_edges,
+                            path_index,
+                        )
+                    finally:
+                        path_edges.pop()
+                        path_environments.pop()
+                        path_residuals.pop()
+                        del path_index[child.signature]
+                finally:
+                    trace.pop()
 
         yield from search(
             self.initial_residual,
             initial_environment,
             {},
-            (),
+            [],
             frozenset(),
-            (self.initial_residual,),
-            (initial_environment,),
-            (),
+            [self.initial_residual],
+            [initial_environment],
+            [],
+            {self.initial_residual.signature: 0},
         )
 
         emitted = family_id
@@ -733,3 +1065,4 @@ class ExactPartialWordSolver:
             exact_unsat=exact_unsat,
             status=status,
         )
+

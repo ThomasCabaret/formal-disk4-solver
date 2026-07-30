@@ -5,6 +5,7 @@ from formal_disk4.words.exact_partial import (
     ExactPartialWordSolver,
     SolverLimits,
     _classify_fixed_context_loop,
+    _simplify_system_fast,
 )
 from formal_disk4.words.families import (
     FamilyExpansionPolicy,
@@ -87,6 +88,39 @@ class ExactPartialSolverTests(unittest.TestCase):
         )
         self.assertEqual(solver.last_summary.status, "interrupted_external_stop")
         self.assertTrue(solver.last_summary.external_stop_reached)
+
+    def test_fast_simplifier_matches_reference_on_long_cancellation(self) -> None:
+        prefix = tuple(Literal("P") for _ in range(200))
+        suffix = tuple(Literal("S") for _ in range(200))
+        equations = (
+            Equation(prefix + word("X") + suffix, prefix + word("Y") + suffix),
+            Equation(word("A", "B"), word("A", "B")),
+        )
+        self.assertEqual(_simplify_system_fast(equations), simplify_system(equations))
+
+    def test_growth_regression_preserves_graph_semantics(self) -> None:
+        equations = (
+            Equation(
+                (Literal("X0"), Literal("X0"), Literal("X0", True)),
+                (Literal("X1", True), Literal("X0", True), Literal("X0")),
+            ),
+        )
+        solver = ExactPartialWordSolver(equations, ("X0", "X1"))
+        families = list(
+            solver.solve(
+                SolverLimits(
+                    max_graph_nodes=120,
+                    max_graph_edges=480,
+                    max_families=16,
+                    max_expression_nodes=2000,
+                )
+            )
+        )
+        self.assertEqual([family.kind for family in families], ["finite"])
+        self.assertEqual(solver.last_summary.visited_states, 120)
+        self.assertEqual(solver.last_summary.graph_edges, 352)
+        self.assertEqual(solver.last_summary.status, "unresolved_graph_limit")
+
 
 
 
