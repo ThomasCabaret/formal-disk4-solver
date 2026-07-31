@@ -188,16 +188,10 @@ def _preword_pipeline(config) -> PrewordPruningPipeline:
 class Figure2BFormalPipelineTests(unittest.TestCase):
     def test_exact_user_mapping_survives_every_formal_stage(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        config = load_config(root / "config/cases/double-cycle-6/search.json")
-        for config_name in ("search.json", "profile.json"):
-            case_config = load_config(
-                root / "config/cases/double-cycle-6" / config_name
-            )
-            linear = case_config["filters"]["preword_pruning"][
-                "linear_invariants"
-            ]
-            self.assertTrue(linear["enable_point_turns"])
-            self.assertFalse(linear["enforce_global_point_turn_balance"])
+        config = load_config(root / "config/cycle_campaign/search.json")
+        linear = config["filters"]["preword_pruning"]["linear_invariants"]
+        self.assertTrue(linear["enable_point_turns"])
+        self.assertFalse(linear["enforce_global_point_turn_balance"])
 
         planar_map, enumerator, placement = _figure2b_placement()
         compiled = compile_word_case(planar_map, placement)

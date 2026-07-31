@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from formal_disk4.enumeration.exterior_arc_repetition import (
     build_exterior_arc_repetition_constraint,
 )
 from formal_disk4.maps.registry import available_maps, build_map, canonical_map_name
+from formal_disk4.orchestration.catalog import CaseCatalog
+from formal_disk4.orchestration.pipeline import PipelineTask, materialize_task
 
 
 class CaseMapTests(unittest.TestCase):
@@ -69,18 +72,26 @@ class CaseMapTests(unittest.TestCase):
             self.assertTrue(constraint.applicable, name)
             self.assertEqual(len(constraint.arcs), 3, name)
 
-    def test_each_case_has_isolated_checkpoint_configuration(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "config" / "cases"
+    def test_each_catalog_case_has_isolated_checkpoint_configuration(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        catalog = CaseCatalog.load(root)
         output_directories = set()
-        for name in available_maps():
-            case_root = root / name
-            manifest = json.loads((case_root / "case.json").read_text(encoding="utf-8"))
-            search = json.loads((case_root / manifest["configs"]["search"]).read_text(encoding="utf-8"))
-            self.assertEqual(search["maps"], [name])
-            output = search["output"]["directory"]
-            self.assertNotIn(output, output_directories)
-            output_directories.add(output)
-            self.assertEqual(search["checkpoint"]["file"], "checkpoint.sqlite3")
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary)
+            for index, case in enumerate(catalog.cases):
+                materialized = materialize_task(
+                    root,
+                    case,
+                    PipelineTask(case.case_id, "search"),
+                    generated,
+                    index,
+                )
+                search = json.loads(materialized.config_path.read_text(encoding="utf-8"))
+                self.assertEqual(search["maps"], [case.map_name])
+                output = search["output"]["directory"]
+                self.assertNotIn(output, output_directories)
+                output_directories.add(output)
+                self.assertEqual(search["checkpoint"]["file"], "checkpoint.sqlite3")
 
 
 if __name__ == "__main__":

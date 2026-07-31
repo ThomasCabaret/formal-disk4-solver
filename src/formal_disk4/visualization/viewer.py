@@ -15,9 +15,10 @@ class JsonlSolutionSource:
 
     def __init__(self, path: Path) -> None:
         self.path = path.resolve()
-        if not self.path.exists():
-            raise FileNotFoundError(self.path)
+        self.exists = self.path.exists()
         self.offsets: list[int] = []
+        if not self.exists:
+            return
         with self.path.open("rb") as handle:
             while True:
                 offset = handle.tell()
@@ -26,8 +27,6 @@ class JsonlSolutionSource:
                     break
                 if line.strip():
                     self.offsets.append(offset)
-        if not self.offsets:
-            raise ValueError(f"No geometric solutions found in {self.path}")
 
     def __len__(self) -> int:
         return len(self.offsets)
@@ -76,8 +75,10 @@ class AssemblyViewer:
                 ["#e76f51", "#2a9d8f", "#e9c46a", "#457b9d", "#9b5de5"],
             )
         )
-        self.index = min(
-            max(0, int(viewer.get("start_index", 0))), self.solution_count - 1
+        self.index = (
+            min(max(0, int(viewer.get("start_index", 0))), self.solution_count - 1)
+            if self.solution_count
+            else 0
         )
         self.cache: OrderedDict[int, tuple[Mapping[str, Any], AssemblySolution]] = OrderedDict()
         self.cache_size = max(1, int(viewer.get("cache_size", 4)))
@@ -121,7 +122,10 @@ class AssemblyViewer:
         self.root.bind("<Right>", lambda _event: self.navigate(1))
         self.root.bind("<Home>", lambda _event: self.show_index(0))
         self.root.bind("<End>", lambda _event: self.show_index(self.solution_count - 1))
-        self.show_index(self.index)
+        if self.solution_count:
+            self.show_index(self.index)
+        else:
+            self._show_empty_state()
 
     def run(self) -> None:
         self.root.mainloop()
@@ -145,6 +149,9 @@ class AssemblyViewer:
         return value
 
     def show_index(self, index: int) -> None:
+        if not self.solution_count:
+            self._show_empty_state()
+            return
         index = max(0, min(index, self.solution_count - 1))
         try:
             record, assembly = self._load(index)
@@ -175,8 +182,25 @@ class AssemblyViewer:
         )
         self.redraw()
 
+    def _show_empty_state(self) -> None:
+        self.index = 0
+        self.current_record = None
+        self.current_assembly = None
+        self._rebuild_visibility_controls()
+        self.previous_button.configure(state="disabled")
+        self.next_button.configure(state="disabled")
+        self.solution_label.configure(text="No solution")
+        source_status = (
+            f"No geometric solution in {self.source.path}"
+            if self.source.exists
+            else f"No geometric solution file yet: {self.source.path}"
+        )
+        self.status.configure(text=source_status)
+        self.redraw()
+
     def navigate(self, delta: int) -> None:
-        self.show_index(self.index + delta)
+        if self.solution_count:
+            self.show_index(self.index + delta)
 
     def _rebuild_visibility_controls(self) -> None:
         for child in self.visibility_frame.winfo_children():
@@ -236,6 +260,23 @@ class AssemblyViewer:
     def redraw(self) -> None:
         self.canvas.delete("all")
         if self.current_assembly is None:
+            message = str(
+                self.config.get("viewer", {}).get(
+                    "empty_message", "No geometric solution available."
+                )
+            )
+            self.canvas.create_text(
+                max(1, self.canvas.winfo_width()) / 2,
+                max(1, self.canvas.winfo_height()) / 2,
+                text=message,
+                fill=str(
+                    self.config.get("viewer", {}).get(
+                        "empty_text_color", "#f2f2f2"
+                    )
+                ),
+                font=("TkDefaultFont", 18, "bold"),
+                justify="center",
+            )
             return
         for index, placement in enumerate(self.current_assembly.placements):
             variable = self.visible_vars.get(placement.piece)

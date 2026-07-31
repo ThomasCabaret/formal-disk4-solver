@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, Mapping
 
 from .validate import validate_solution_file
-from .viewer import JsonlSolutionSource, run_visualizer
+from .viewer import run_visualizer
 
 
 class VisualizationRunner:
@@ -15,6 +14,11 @@ class VisualizationRunner:
 
     def run(self, *, validate_only: bool = False) -> Dict[str, Any]:
         summary = validate_solution_file(self.config)
+        if summary["available_solutions"] == 0:
+            print(
+                f"[VIEWER] No geometric solutions found in {summary['solutions_file']}.",
+                flush=True,
+            )
         if not validate_only:
             run_visualizer(self.config)
         return summary

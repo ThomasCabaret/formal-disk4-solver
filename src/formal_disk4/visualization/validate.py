@@ -36,6 +36,7 @@ def validate_solution_file(config: Mapping[str, Any]) -> Dict[str, Any]:
         )
     return {
         "solutions_file": str(source.path),
+        "input_exists": source.exists,
         "available_solutions": len(source),
         "validated_solutions": checked,
         "maximum_interface_error": maximum_error,

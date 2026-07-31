@@ -134,6 +134,23 @@ class VisualizationAssemblyTests(unittest.TestCase):
         self.assertLess(placements["P1"].transform.determinant, 0.0)
         self.assertLess(assembly.validation.maximum_interface_error, 1e-12)
 
+    def test_empty_or_missing_solution_file_is_a_valid_empty_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            missing = directory / "missing.jsonl"
+            source = JsonlSolutionSource(missing)
+            self.assertFalse(source.exists)
+            self.assertEqual(len(source), 0)
+
+            empty = directory / "empty.jsonl"
+            empty.touch()
+            config = load_visualization_config(None)
+            config["input"]["solutions_file"] = str(empty)
+            summary = validate_solution_file(config)
+            self.assertTrue(summary["input_exists"])
+            self.assertEqual(summary["available_solutions"], 0)
+            self.assertEqual(summary["validated_solutions"], 0)
+
     def test_jsonl_source_and_validate_only_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             solution_path = build_pizza_geometry(Path(temporary))

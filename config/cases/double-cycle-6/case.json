@@ -14,5 +14,7 @@
       "policy": "range",
       "maximum_exponent": 1
     }
-  }
+  },
+  "catalog_enabled": false,
+  "deprecated_replacement": "config/case_families/cyclic-two-ring.json#parallel[size=6]"
 }

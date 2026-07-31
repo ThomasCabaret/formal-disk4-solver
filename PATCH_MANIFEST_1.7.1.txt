@@ -1,0 +1,36 @@
+Formal Disk4 Solver differential patch 1.7.1
+Base version: 1.7.0
+
+Modified files:
+README.md
+config/case_families/cyclic-two-ring.json
+config/cases/double-cycle-6/case.json
+config/suites/cyclic-n3.json
+config/suites/cyclic-n4.json
+config/suites/cyclic-n5.json
+config/suites/cyclic-small.json
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/campaigns/cyclic.py
+src/formal_disk4/maps/__init__.py
+src/formal_disk4/maps/registry.py
+src/formal_disk4/maps/two_ring_families.py
+src/formal_disk4/orchestration/catalog.py
+src/formal_disk4/orchestration/pipeline.py
+src/formal_disk4/visualization/runner.py
+src/formal_disk4/visualization/validate.py
+src/formal_disk4/visualization/viewer.py
+tests/test_case_maps.py
+tests/test_double_cycle.py
+tests/test_figure2b_formal.py
+tests/test_orchestration.py
+tests/test_two_ring_campaign.py
+tests/test_visualization.py
+
+New files:
+cleanup_deprecated_1.7.1.bat
+PATCH_NOTES_1.7.1.md
+PATCH_MANIFEST_1.7.1.txt
+
+Optional Git cleanup:
+Run cleanup_deprecated_1.7.1.bat after extraction to stage removal of obsolete wrappers and duplicate static configurations.

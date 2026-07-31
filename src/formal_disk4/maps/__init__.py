@@ -9,7 +9,6 @@ from .two_ring_families import (
     build_double_cycle_offset_map,
     build_inner_cycle_boundary_points_map,
     build_outer_cycle_center_points_map,
-    wide_family_obstruction,
 )
 
 __all__ = [
@@ -24,7 +23,6 @@ __all__ = [
     "build_double_cycle_offset_map",
     "build_inner_cycle_boundary_points_map",
     "build_outer_cycle_center_points_map",
-    "wide_family_obstruction",
     "build_k4_map",
     "build_k4_minus_point_map",
     "build_k4_minus_arc_map",

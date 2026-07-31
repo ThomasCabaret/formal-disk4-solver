@@ -1,0 +1,86 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "cyclic-two-ring",
+  "label": "Cyclic two-ring families",
+  "description": "Two cyclic tile orbits with imposed rotation_1 equivariance.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "cyclic",
+    "two-ring",
+    "weak-problem"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "cyclic_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_1",
+          "enforce_weak_orders": true
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "parallel",
+      "label_template": "Double cycle {size}",
+      "description": "Parallel exterior and interior cycles with matching radial contacts.",
+      "map_template": "double-cycle-{size}",
+      "parameter_values": {
+        "size": [
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    {
+      "id": "offset",
+      "label_template": "Double cycle offset {size}",
+      "description": "Two cyclic layers with offset cross-layer contacts.",
+      "map_template": "double-cycle-offset-{size}",
+      "parameter_values": {
+        "size": [
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    {
+      "id": "boundary-points",
+      "label_template": "Inner cycle boundary points {size}",
+      "description": "Interior tiles touch the disk boundary at points between exterior tiles.",
+      "map_template": "inner-cycle-boundary-points-{size}",
+      "parameter_values": {
+        "size": [
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    {
+      "id": "center-points",
+      "label_template": "Outer cycle center points {size}",
+      "description": "Exterior-cycle family with point contacts at the center.",
+      "map_template": "outer-cycle-center-points-{size}",
+      "parameter_values": {
+        "size": [
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    }
+  ]
+}

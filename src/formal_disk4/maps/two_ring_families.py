@@ -587,28 +587,3 @@ def build_outer_cycle_center_points_map(size: int) -> PlanarMap:
     result.validate()
     return result
 
-
-def wide_family_obstruction(size: int) -> dict[str, object]:
-    """Return the exact annular edge-count obstruction for DC3."""
-
-    if size < 3:
-        raise ValueError("A two-ring family requires size >= 3")
-    cycle_edges = 2 * size
-    cross_edges = 3 * size
-    requested_edges = cycle_edges + cross_edges
-    annulus_maximum_edges = 4 * size
-    return {
-        "family": "wide",
-        "size": size,
-        "case_id": f"double-cycle-wide-{size}",
-        "status": "structurally_impossible",
-        "reason": (
-            "The positive-interface graph asks for 5N annular edges, while a "
-            "planar annulus with N vertices on each boundary has at most 4N."
-        ),
-        "cycle_edges": cycle_edges,
-        "cross_edges": cross_edges,
-        "requested_edges": requested_edges,
-        "annulus_maximum_edges": annulus_maximum_edges,
-        "excess_edges": requested_edges - annulus_maximum_edges,
-    }

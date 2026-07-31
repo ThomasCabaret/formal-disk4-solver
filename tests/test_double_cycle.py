@@ -94,13 +94,22 @@ class DoubleCycleMapTests(unittest.TestCase):
         self.assertEqual(weak_orders.total_leaf_mass, 66)
         self.assertEqual(len(list(weak_orders.enumerate())), 66)
 
-    def test_case_manifest_uses_independent_output(self) -> None:
+    def test_parameterized_catalog_uses_independent_output(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        case_root = root / "config" / "cases" / "double-cycle-6"
-        manifest = json.loads((case_root / "case.json").read_text(encoding="utf-8"))
-        search = json.loads((case_root / "search.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["map"], "double-cycle-6")
-        self.assertEqual(search["maps"], ["double-cycle-6"])
+        family = json.loads(
+            (root / "config" / "case_families" / "cyclic-two-ring.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        parallel = next(
+            variant for variant in family["variants"] if variant["id"] == "parallel"
+        )
+        self.assertIn(6, parallel["parameter_values"]["size"])
+        search = json.loads(
+            (root / "config" / "cycle_campaign" / "search.json").read_text(
+                encoding="utf-8"
+            )
+        )
         self.assertEqual(search["enumeration"]["symmetry_mode"], "incremental")
         self.assertTrue(search["enumeration"]["track_exact_domain_size"])
         self.assertEqual(
@@ -111,10 +120,8 @@ class DoubleCycleMapTests(unittest.TestCase):
                 "enforce_weak_orders": True,
             },
         )
-        self.assertEqual(
-            search["output"]["directory"], "output/cases/double-cycle-6"
-        )
         self.assertEqual(search["checkpoint"]["file"], "checkpoint.sqlite3")
+
 
 
 if __name__ == "__main__":

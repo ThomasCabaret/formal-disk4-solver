@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "formal-disk4-solver"
-version = "1.6.0"
+version = "1.7.1"
 description = "Incremental formal contour solver prototype for congruent pieces tiling a disk"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 formal-disk4 = "formal_disk4.cli:main"
 formal-contour = "formal_disk4.cli:main"
+formal-disk4-gui = "formal_disk4.orchestration.gui:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -11,7 +11,6 @@ from formal_disk4.campaigns.cyclic import (
     suite_forwarded_arguments,
 )
 from formal_disk4.maps.registry import build_map, canonical_map_name
-from formal_disk4.maps.two_ring_families import wide_family_obstruction
 
 
 class TwoRingFamilyMapTests(unittest.TestCase):
@@ -83,25 +82,19 @@ class TwoRingFamilyMapTests(unittest.TestCase):
             self.assertEqual(canonical_map_name(name), name)
             self.assertEqual(build_map(name).name, name)
 
-    def test_wide_family_is_recorded_as_structurally_impossible(self) -> None:
-        for size in (3, 4, 5):
-            result = wide_family_obstruction(size)
-            self.assertEqual(result["requested_edges"], 5 * size)
-            self.assertEqual(result["annulus_maximum_edges"], 4 * size)
-            self.assertEqual(result["excess_edges"], size)
-            self.assertEqual(result["status"], "structurally_impossible")
-
 
 class CyclicCampaignTests(unittest.TestCase):
-    def test_family_names_cover_dc1_through_dc5(self) -> None:
+    def test_family_names_cover_the_supported_two_ring_cases(self) -> None:
         self.assertEqual(
             tuple(FAMILY_MAP_PREFIXES),
-            ("parallel", "offset", "wide", "boundary-points", "center-points"),
+            ("parallel", "offset", "boundary-points", "center-points"),
         )
         self.assertEqual(make_case("dc1", 3).case_id, "double-cycle-3")
         self.assertEqual(make_case("dc5", 5).case_id, "outer-cycle-center-points-5")
+        with self.assertRaises(ValueError):
+            make_case("dc3", 3)
 
-    def test_small_suite_contains_fifteen_independent_cases(self) -> None:
+    def test_small_suite_contains_twelve_independent_cases(self) -> None:
         root = Path(__file__).resolve().parents[1]
         previous = Path.cwd()
         try:
@@ -110,8 +103,8 @@ class CyclicCampaignTests(unittest.TestCase):
         finally:
             _ = previous
         self.assertEqual(suite_id, "cyclic-small")
-        self.assertEqual(len(cases), 15)
-        self.assertEqual(len({case.case_id for case in cases}), 15)
+        self.assertEqual(len(cases), 12)
+        self.assertEqual(len({case.case_id for case in cases}), 12)
         self.assertEqual({case.size for case in cases}, {3, 4, 5})
         self.assertEqual({case.family for case in cases}, set(FAMILY_MAP_PREFIXES))
 
@@ -148,10 +141,10 @@ class CyclicCampaignTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "config" / "suites"
         for size in (3, 4, 5):
             data = json.loads((root / f"cyclic-n{size}.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(data["cases"]), 5)
+            self.assertEqual(len(data["cases"]), 4)
             self.assertEqual({entry["size"] for entry in data["cases"]}, {size})
         small = json.loads((root / "cyclic-small.json").read_text(encoding="utf-8"))
-        self.assertEqual(len(small["cases"]), 15)
+        self.assertEqual(len(small["cases"]), 12)
 
 
 if __name__ == "__main__":

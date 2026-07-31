@@ -1,0 +1,19 @@
+Formal Disk4 Solver patch 1.7.0
+Base: project 1.6.0, compatible with the independent word-solver patch 1.0.0
+
+Modified files:
+- pyproject.toml
+- src/formal_disk4/__init__.py
+
+New files:
+- config/case_families/cyclic-two-ring.json
+- run_pipeline_gui.bat
+- src/formal_disk4/orchestration/__init__.py
+- src/formal_disk4/orchestration/catalog.py
+- src/formal_disk4/orchestration/gui.py
+- src/formal_disk4/orchestration/pipeline.py
+- tests/test_orchestration.py
+- PATCH_NOTES_1.7.0.md
+- PATCH_MANIFEST_1.7.0.txt
+
+No solver, pruning, map, geometry, visualization, or checkpoint implementation file is modified.

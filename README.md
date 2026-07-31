@@ -56,21 +56,6 @@ The full-pipeline action accepts `--restart` and `--no-resume`.  Search,
 profile, geometry and visualization modes pass their remaining arguments to the
 corresponding Python command.
 
-## Direct full-pipeline launchers
-
-```bat
-run_c3_pipeline.bat --restart
-run_c4_pipeline.bat --restart
-run_k4_pipeline.bat
-run_k4_minus_point_pipeline.bat
-run_k4_minus_arc_pipeline.bat
-run_double_cycle_6_pipeline.bat
-```
-
-The two validation cases normally stop on their first formal and geometric
-solution.  The three Stein searches are unbounded unless command-line limits
-are supplied.
-
 ## Independent outputs and checkpoints
 
 Every case writes below its own directory:
@@ -275,90 +260,53 @@ may introduce a genuine corner inside an atomic interval. The complete exact
 angle and total-turn equations are still enforced on every emitted formal
 profile.
 
-## Cyclic two-ring campaigns
+## Declarative case catalog and pipeline GUI
 
-Version 1.4.0 adds an external campaign runner for the five DC families and
-sizes `N=3,4,5`.  Each concrete case keeps its own output directory, SQLite
-search checkpoint, geometry line checkpoint and solution file under:
+Version 1.7.0 adds a local pipeline GUI backed by a declarative case catalog.
+Launch it from the project root with:
 
-```text
-output/cases/<case-id>/
+```bat
+run_pipeline_gui.bat
 ```
 
-The families accepted by `run_cycle_case.bat` are:
+Static cases are discovered from `config/cases/*/case.json`. Parameterized
+families are expanded from JSON documents under `config/case_families/`. The
+`double-cycle-N` family, including `double-cycle-6`, is defined in
+`config/case_families/cyclic-two-ring.json`; it no longer needs a dedicated
+case directory or launcher.
+
+A pipeline can mix formal search, geometry and visualization tasks. Since
+1.7.1, visualization tasks are launched as independent GUI processes: later
+tasks start immediately and multiple viewers can remain open at the same time.
+A missing or empty geometric solution file opens a viewer displaying
+`No geometric solution` instead of failing the pipeline.
+
+The supported cyclic two-ring families are:
 
 ```text
 parallel        DC1: both cycles, cross offsets {0}
 offset          DC2: both cycles, cross offsets {0,1}
-wide            DC3: both cycles, cross offsets {-1,0,1}
 boundary-points DC4: open outer cycle, inner cycle reaches the boundary
 center-points   DC5: open inner cycle, inverse central-point family
 ```
 
-DC3 is recorded as structurally impossible for positive-length interfaces: its
-annular graph requests `5N` edges while a planar annulus with `N` vertices on
-each boundary has at most `4N`.  The campaign still includes it and reports
-zero candidates rather than constructing a false planar map.
-
-Run one concrete case without adding a dedicated script:
+Structurally impossible families are intentionally absent from the catalog and
+from the predefined suites. The legacy command-line campaign wrappers remain
+available for direct scripted use:
 
 ```bat
 run_cycle_case.bat offset 4 search --restart --continue-after-profile
 run_cycle_case.bat boundary-points 5 geometry --restart --continue-after-solution
-run_cycle_case.bat center-points 3 count
-```
-
-The predefined suites are external JSON lists under `config/suites/`:
-
-```text
-cyclic-n3
-cyclic-n4
-cyclic-n5
-cyclic-small
-```
-
-`cyclic-small` contains all five families for `N=3,4,5`, hence fifteen
-independent cases. Start a fresh formal campaign with:
-
-```bat
-run_cycle_suite.bat cyclic-small search --restart-all --continue-after-profile
-```
-
-After interruption, resume it without any restart option:
-
-```bat
-run_cycle_suite.bat cyclic-small search --continue-after-profile
-```
-
-The suite starts again at the first list entry, but completed case checkpoints
-return immediately and the interrupted case resumes from its own SQLite
-cursor. There is deliberately no global campaign checkpoint.
-
-Run or resume geometry in the same way:
-
-```bat
-run_cycle_suite.bat cyclic-small geometry --restart-all --continue-after-solution
-run_cycle_suite.bat cyclic-small geometry --continue-after-solution
-```
-
-Count formal candidates and accepted geometric solutions:
-
-```bat
 run_cycle_suite.bat cyclic-small count
 ```
 
-This also writes:
+The predefined suites under `config/suites/` contain the four supported
+families for `N=3,4,5`; `cyclic-small` therefore contains twelve cases.
 
-```text
-output/suites/cyclic-small/counts.json
-output/suites/cyclic-small/counts.csv
-```
-
-Visualize every geometric solution from the suite in one combined viewer:
+After applying 1.7.1, run the optional cleanup script once inside the Git
+working tree to stage removal of obsolete per-case wrappers and duplicate
+configuration files:
 
 ```bat
-run_cycle_suite.bat cyclic-small visualize
+cleanup_deprecated_1.7.1.bat
 ```
-
-The combined JSONL is regenerated under `output/suites/cyclic-small/`; the
-per-case solution files remain authoritative and are never merged destructively.

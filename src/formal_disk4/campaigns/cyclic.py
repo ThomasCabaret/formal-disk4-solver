@@ -3,27 +3,21 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from formal_disk4.maps.two_ring_families import wide_family_obstruction
-
-
 FAMILY_MAP_PREFIXES = {
     "parallel": "double-cycle",
     "offset": "double-cycle-offset",
-    "wide": "double-cycle-wide",
     "boundary-points": "inner-cycle-boundary-points",
     "center-points": "outer-cycle-center-points",
 }
 FAMILY_ALIASES = {
     "dc1": "parallel",
     "dc2": "offset",
-    "dc3": "wide",
     "dc4": "boundary-points",
     "dc5": "center-points",
 }
@@ -43,17 +37,12 @@ class CyclicCase:
     def map_name(self) -> str:
         return self.case_id
 
-    @property
-    def structurally_impossible(self) -> bool:
-        return self.family == "wide"
-
     def to_dict(self) -> dict[str, object]:
         return {
             "family": self.family,
             "size": self.size,
             "case_id": self.case_id,
-            "map": None if self.structurally_impossible else self.map_name,
-            "structurally_impossible": self.structurally_impossible,
+            "map": self.map_name,
         }
 
 
@@ -107,34 +96,6 @@ def _write_json(path: Path, payload: Any) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
-
-
-def _write_structural_obstruction(root: Path, case: CyclicCase, *, restart: bool) -> None:
-    output = case_output_directory(root, case)
-    if restart and output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True, exist_ok=True)
-    obstruction = wide_family_obstruction(case.size)
-    _write_json(output / "structural_obstruction.json", obstruction)
-    (output / "candidates.jsonl").touch(exist_ok=True)
-    geometry = output / "geometry"
-    geometry.mkdir(parents=True, exist_ok=True)
-    (geometry / "geometric_solutions.jsonl").touch(exist_ok=True)
-    _write_json(
-        output / "campaign_case_status.json",
-        {
-            "case": case.to_dict(),
-            "search_completed": True,
-            "formal_candidates": 0,
-            "structural_obstruction": obstruction,
-        },
-    )
-    print(
-        f"[STRUCTURAL OBSTRUCTION] {case.case_id}: "
-        f"requested={obstruction['requested_edges']} annulus_maximum="
-        f"{obstruction['annulus_maximum_edges']}; zero candidates.",
-        flush=True,
-    )
 
 
 def _case_command(
@@ -212,7 +173,6 @@ def count_case(root: Path, case: CyclicCase) -> dict[str, object]:
         "family": case.family,
         "size": case.size,
         "case_id": case.case_id,
-        "structurally_impossible": case.structurally_impossible,
         "formal_candidates": formal,
         "geometry_seen": int(checkpoint.get("candidates_seen", 0)),
         "geometry_solved": solutions,
@@ -226,9 +186,8 @@ def print_count_table(rows: Sequence[dict[str, object]]) -> None:
     print(f"{'CASE':38} {'FORMAL':>8} {'TESTED':>8} {'SOLVED':>8} {'FAILED':>8}")
     print("-" * 76)
     for row in rows:
-        suffix = " [IMPOSSIBLE]" if row["structurally_impossible"] else ""
         print(
-            f"{str(row['case_id']) + suffix:38} "
+            f"{str(row['case_id']):38} "
             f"{int(row['formal_candidates']):8d} "
             f"{int(row['geometry_seen']):8d} "
             f"{int(row['geometry_solved']):8d} "
@@ -311,16 +270,6 @@ def run_single_case(case: CyclicCase, mode: str, extra: Sequence[str]) -> int:
     if mode == "count":
         rows = [count_case(root, case)]
         print_count_table(rows)
-        return 0
-    if case.structurally_impossible:
-        restart = "--restart" in extra
-        _write_structural_obstruction(root, case, restart=restart)
-        if mode == "visualize":
-            print("[VIEWER] No solutions: the positive-interface graph is nonplanar.")
-        elif mode == "geometry":
-            print("[GEOMETRY] No formal candidates to process.")
-        elif mode == "info":
-            print(json.dumps(wide_family_obstruction(case.size), indent=2))
         return 0
     return _run_command(_case_command(root, case, mode, extra))
 

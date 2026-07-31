@@ -1,0 +1,52 @@
+{
+  "schema_version": "formal-disk4-pipeline-v1",
+  "pipeline_id": "all6",
+  "name": "all6",
+  "tasks": [
+    {
+      "case_id": "inner-cycle-boundary-points-6",
+      "stage": "search",
+      "arguments": []
+    },
+    {
+      "case_id": "outer-cycle-center-points-6",
+      "stage": "search",
+      "arguments": []
+    },
+    {
+      "case_id": "double-cycle-6",
+      "stage": "search",
+      "arguments": []
+    },
+    {
+      "case_id": "inner-cycle-boundary-points-6",
+      "stage": "geometry",
+      "arguments": []
+    },
+    {
+      "case_id": "outer-cycle-center-points-6",
+      "stage": "geometry",
+      "arguments": []
+    },
+    {
+      "case_id": "double-cycle-6",
+      "stage": "geometry",
+      "arguments": []
+    },
+    {
+      "case_id": "inner-cycle-boundary-points-6",
+      "stage": "visualize",
+      "arguments": []
+    },
+    {
+      "case_id": "outer-cycle-center-points-6",
+      "stage": "visualize",
+      "arguments": []
+    },
+    {
+      "case_id": "double-cycle-6",
+      "stage": "visualize",
+      "arguments": []
+    }
+  ]
+}

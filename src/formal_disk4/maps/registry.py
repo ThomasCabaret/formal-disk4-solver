@@ -7,7 +7,7 @@ from typing import Callable, Dict, Iterator, Sequence
 from .base import PlanarMap
 from .c3 import build_c3_map
 from .c4 import build_c4_map
-from .double_cycle import build_double_cycle_6_map, build_double_cycle_map
+from .double_cycle import build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
@@ -38,12 +38,6 @@ _REGISTRATIONS = (
         build_c4_map,
         "Four-sector cycle validation case",
         aliases=("k4-pizza",),
-    ),
-    MapRegistration(
-        "double-cycle-6",
-        build_double_cycle_6_map,
-        "Twelve-tile validation family: two 6-cycles joined by matching contacts",
-        aliases=("dc6",),
     ),
     MapRegistration(
         "k4",
@@ -82,6 +76,16 @@ _DYNAMIC_MAP_PATTERNS = (
     ),
 )
 
+_DYNAMIC_ALIASES = {
+    "dc6": "double-cycle-6",
+}
+
+_FEATURED_DYNAMIC_MAPS = {
+    "double-cycle-6": (
+        "Twelve-tile validation family: two 6-cycles joined by matching contacts"
+    ),
+}
+
 _CANONICAL: Dict[str, MapRegistration] = {
     registration.name: registration for registration in _REGISTRATIONS
 }
@@ -96,17 +100,22 @@ for registration in _REGISTRATIONS:
 def available_maps() -> tuple[str, ...]:
     """Return stable canonical case identifiers, excluding legacy aliases."""
 
-    return tuple(registration.name for registration in _REGISTRATIONS)
+    names = [registration.name for registration in _REGISTRATIONS]
+    names[2:2] = _FEATURED_DYNAMIC_MAPS
+    return tuple(names)
 
 
 def map_descriptions() -> Dict[str, str]:
-    return {
+    descriptions = {
         registration.name: registration.description
         for registration in _REGISTRATIONS
     }
+    descriptions.update(_FEATURED_DYNAMIC_MAPS)
+    return descriptions
 
 
 def canonical_map_name(name: str) -> str:
+    name = _DYNAMIC_ALIASES.get(name, name)
     registration = _LOOKUP.get(name)
     if registration is not None:
         return registration.name
