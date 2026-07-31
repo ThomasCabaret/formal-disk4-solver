@@ -1,0 +1,14 @@
+Formal Disk4 Solver differential patch 1.7.4
+Base version: 1.7.3
+
+Files included:
+PATCH_NOTES_1.7.4.md
+PATCH_MANIFEST_1.7.4.txt
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/geometry/runner.py
+src/formal_disk4/geometry/status.py
+src/formal_disk4/orchestration/gui.py
+src/formal_disk4/orchestration/status.py
+tests/test_geometry.py
+tests/test_orchestration.py

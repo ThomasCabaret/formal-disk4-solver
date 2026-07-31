@@ -21,6 +21,7 @@ from formal_disk4.geometry.solver import (
     GeometrySolverConfig,
     NumericalContourSolver,
 )
+from formal_disk4.geometry.status import read_geometry_status_counts
 from formal_disk4.pipeline.runner import SolverRunner
 
 
@@ -393,6 +394,13 @@ class GeometrySolverTests(unittest.TestCase):
             self.assertEqual(checkpoint["scan_passes"], 1)
             self.assertNotIn("next_line", checkpoint)
             self.assertEqual(checkpoint["candidates_solved"], 1)
+            status_counts = read_geometry_status_counts(
+                geometry_output / "geometry_status.sqlite3"
+            )
+            self.assertIsNotNone(status_counts)
+            assert status_counts is not None
+            self.assertEqual(status_counts.solution_found, 1)
+            self.assertEqual(status_counts.considered, 1)
 
     def test_geometry_resume_retries_unsolved_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -430,6 +438,12 @@ class GeometrySolverTests(unittest.TestCase):
             first_summary = first_runner.run()
             self.assertEqual(first_summary["state"]["candidates_failed"], 1)
             self.assertEqual(first_summary["state"]["candidates_solved"], 0)
+            first_counts = read_geometry_status_counts(
+                geometry_output / "geometry_status.sqlite3"
+            )
+            self.assertIsNotNone(first_counts)
+            assert first_counts is not None
+            self.assertEqual(first_counts.no_solution_found, 1)
 
             # Simulate the 1.5.0 checkpoint that would previously have skipped
             # this failed line forever after extraction of the patch.
@@ -458,6 +472,48 @@ class GeometrySolverTests(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual(len(records), 1)
+            second_counts = read_geometry_status_counts(
+                geometry_output / "geometry_status.sqlite3"
+            )
+            self.assertIsNotNone(second_counts)
+            assert second_counts is not None
+            self.assertEqual(second_counts.solution_found, 1)
+            self.assertEqual(second_counts.no_solution_found, 0)
+            self.assertEqual(second_counts.considered, 1)
+
+    def test_geometry_status_distinguishes_fixed_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate_path = build_pizza_candidate(root)
+            geometry_output = root / "geometry-fixed-reject"
+            config = load_geometry_config(None)
+            config["input"]["candidates_file"] = str(candidate_path)
+            config["output"].update(
+                {
+                    "directory": str(geometry_output),
+                    "write_failures": False,
+                }
+            )
+            config["limits"].update({"max_candidates": 1})
+            config["checkpoint"].update(
+                {"enabled": True, "resume": True, "restart": True}
+            )
+            runner = GeometryRunner(config)
+            runner.solver.solve = lambda _problem: GeometryAttemptResult(
+                solution=None,
+                reason="fixed geometry failed validation: synthetic",
+                attempts=0,
+                best_cost=2.0,
+                best_validation=None,
+            )
+            runner.run()
+            counts = read_geometry_status_counts(
+                geometry_output / "geometry_status.sqlite3"
+            )
+            self.assertIsNotNone(counts)
+            assert counts is not None
+            self.assertEqual(counts.rejected_certain, 1)
+            self.assertEqual(counts.no_solution_found, 0)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import os
 import queue
 import shlex
 import threading
+import time
 import traceback
 import tkinter as tk
 from pathlib import Path
@@ -16,6 +17,7 @@ from formal_disk4.orchestration.pipeline import (
     PipelinePlan,
     PipelineTask,
 )
+from formal_disk4.orchestration.status import PipelineStatusReader
 
 
 class PipelineApp:
@@ -24,6 +26,7 @@ class PipelineApp:
         self.project_root = project_root.resolve()
         self.catalog = CaseCatalog.load(self.project_root)
         self.executor = PipelineExecutor(self.project_root, self.catalog)
+        self.status_reader = PipelineStatusReader(self.project_root)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.pipeline_tasks: list[PipelineTask] = []
         self.selected_cases: set[str] = set()
@@ -31,10 +34,11 @@ class PipelineApp:
         self.current_plan_path: Path | None = None
         self.log_line_count = 0
         self.closing = False
+        self.last_status_refresh = 0.0
 
         self.root.title("Formal Disk4 Pipeline Builder")
-        self.root.geometry("1220x820")
-        self.root.minsize(980, 680)
+        self.root.geometry("1480x900")
+        self.root.minsize(1120, 720)
         self._build_ui()
         self._populate_catalog()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -50,7 +54,7 @@ class PipelineApp:
         left = ttk.Frame(main, padding=6)
         right = ttk.Frame(main, padding=6)
         main.add(left, weight=1)
-        main.add(right, weight=1)
+        main.add(right, weight=2)
 
         left.columnconfigure(0, weight=1)
         left.rowconfigure(2, weight=1)
@@ -128,25 +132,51 @@ class PipelineApp:
         )
         self.pipeline_tree = ttk.Treeview(
             right,
-            columns=("order", "stage", "case", "arguments"),
+            columns=(
+                "order",
+                "stage",
+                "case",
+                "state",
+                "formal",
+                "geometry",
+                "certain",
+                "solved",
+                "no_solution",
+                "arguments",
+            ),
             show="headings",
             selectmode="extended",
         )
         for column, title, width in (
-            ("order", "#", 44),
-            ("stage", "Stage", 90),
-            ("case", "Case", 250),
-            ("arguments", "Arguments", 270),
+            ("order", "#", 38),
+            ("stage", "Stage", 76),
+            ("case", "Case", 225),
+            ("state", "State", 105),
+            ("formal", "Formal", 64),
+            ("geometry", "Geometry", 70),
+            ("certain", "Certain reject", 92),
+            ("solved", "Solution", 66),
+            ("no_solution", "No solution", 82),
+            ("arguments", "Arguments", 160),
         ):
             self.pipeline_tree.heading(column, text=title)
-            self.pipeline_tree.column(column, width=width, stretch=(column == "arguments"))
+            self.pipeline_tree.column(
+                column,
+                width=width,
+                anchor=("e" if column in {"formal", "geometry", "certain", "solved", "no_solution"} else "w"),
+                stretch=(column in {"case", "arguments"}),
+            )
         pipe_scroll = ttk.Scrollbar(right, orient=tk.VERTICAL, command=self.pipeline_tree.yview)
-        self.pipeline_tree.configure(yscrollcommand=pipe_scroll.set)
+        pipe_scroll_x = ttk.Scrollbar(right, orient=tk.HORIZONTAL, command=self.pipeline_tree.xview)
+        self.pipeline_tree.configure(
+            yscrollcommand=pipe_scroll.set, xscrollcommand=pipe_scroll_x.set
+        )
         self.pipeline_tree.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         pipe_scroll.grid(row=1, column=1, sticky="ns", pady=(6, 0))
+        pipe_scroll_x.grid(row=2, column=0, sticky="ew")
 
         controls = ttk.Frame(right)
-        controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        controls.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         for index in range(8):
             controls.columnconfigure(index, weight=1)
         ttk.Button(controls, text="Up", command=lambda: self._move_tasks(-1)).grid(
@@ -184,7 +214,7 @@ class PipelineApp:
         ).grid(row=1, column=6, columnspan=2, sticky="e", pady=(6, 0))
 
         progress_box = ttk.LabelFrame(right, text="Progress", padding=8)
-        progress_box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        progress_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         progress_box.columnconfigure(1, weight=1)
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(progress_box, textvariable=self.status_var).grid(
@@ -198,8 +228,13 @@ class PipelineApp:
         self.pipeline_progress.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
 
         console_box = ttk.LabelFrame(right, text="Console", padding=6)
-        console_box.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
-        right.rowconfigure(4, weight=1)
+        ttk.Label(
+            right,
+            text="Geometry counts are distinct formal candidates; ~ marks legacy approximate counters.",
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
+        console_box.grid(row=6, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        right.rowconfigure(6, weight=1)
         console_box.columnconfigure(0, weight=1)
         console_box.rowconfigure(0, weight=1)
         self.console = tk.Text(console_box, height=13, wrap="none", state=tk.DISABLED)
@@ -336,14 +371,79 @@ class PipelineApp:
         self._refresh_pipeline_tree()
 
     def _refresh_pipeline_tree(self) -> None:
+        selected = tuple(self.pipeline_tree.selection())
         self.pipeline_tree.delete(*self.pipeline_tree.get_children(""))
         for index, task in enumerate(self.pipeline_tasks):
             self.pipeline_tree.insert(
                 "",
                 "end",
                 iid=str(index),
-                values=(index + 1, task.stage, task.case_id, " ".join(task.arguments)),
+                values=(
+                    index + 1,
+                    task.stage,
+                    task.case_id,
+                    "reading",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    " ".join(task.arguments),
+                ),
             )
+        valid = [item for item in selected if self.pipeline_tree.exists(item)]
+        if valid:
+            self.pipeline_tree.selection_set(*valid)
+        self._refresh_pipeline_statuses(force=True)
+
+    def _refresh_pipeline_statuses(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self.last_status_refresh < 1.0:
+            return
+        self.last_status_refresh = now
+        by_case = {}
+        for index, task in enumerate(self.pipeline_tasks):
+            item = str(index)
+            if not self.pipeline_tree.exists(item):
+                continue
+            try:
+                status = by_case.setdefault(
+                    task.case_id, self.status_reader.read(self.catalog.get(task.case_id))
+                )
+                stage_state = (
+                    status.search_state
+                    if task.stage == "search"
+                    else status.geometry_state
+                    if task.stage == "geometry"
+                    else ("ready" if status.solutions_found else "no solution")
+                )
+                prefix = "" if status.exact_geometry_counts else "~"
+                values = (
+                    index + 1,
+                    task.stage,
+                    task.case_id,
+                    stage_state,
+                    status.formal_candidates,
+                    f"{prefix}{status.geometry_considered}",
+                    f"{prefix}{status.rejected_certain}",
+                    f"{prefix}{status.solutions_found}",
+                    f"{prefix}{status.no_solution_found}",
+                    " ".join(task.arguments),
+                )
+            except Exception:
+                values = (
+                    index + 1,
+                    task.stage,
+                    task.case_id,
+                    "status error",
+                    "?",
+                    "?",
+                    "?",
+                    "?",
+                    "?",
+                    " ".join(task.arguments),
+                )
+            self.pipeline_tree.item(item, values=values)
 
     def _selected_pipeline_indices(self) -> list[int]:
         return sorted(int(item) for item in self.pipeline_tree.selection())
@@ -553,6 +653,7 @@ class PipelineApp:
                     messagebox.showerror("Pipeline error", str(payload).splitlines()[-1], parent=self.root)
         except queue.Empty:
             pass
+        self._refresh_pipeline_statuses()
         self.root.after(100, self._poll_events)
 
     def _finish_run(self, returncode: int) -> None:

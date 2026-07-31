@@ -12,6 +12,13 @@ from formal_disk4.pipeline.output import JsonlWriter, NullJsonlWriter, atomic_wr
 
 from .model import parse_formal_geometry_problem
 from .solver import GeometrySolverConfig, NumericalContourSolver
+from .status import (
+    NO_SOLUTION_FOUND,
+    REJECTED_CERTAIN,
+    SOLUTION_FOUND,
+    GeometryStatusStore,
+    remove_sqlite_files,
+)
 
 
 GEOMETRY_CHECKPOINT_VERSION = 2
@@ -52,6 +59,9 @@ class GeometryRunner:
         self.failures_path = self.output_directory / str(
             output.get("failures_file", "geometry_failures.jsonl")
         )
+        self.status_path = self.output_directory / str(
+            output.get("status_file", "geometry_status.sqlite3")
+        )
         self.solver = NumericalContourSolver(
             GeometrySolverConfig.from_mapping(self.config["geometry"])
         )
@@ -85,6 +95,7 @@ class GeometryRunner:
             ):
                 if path.exists():
                     path.unlink()
+            remove_sqlite_files(self.status_path)
             return self._initial_state()
         if not resume or not self.checkpoint_path.exists():
             return self._initial_state()
@@ -155,6 +166,15 @@ class GeometryRunner:
             )
         state = self._load_state()
         solved_profile_ids = self._load_solved_profile_ids()
+        legacy_attempts_exist = any(
+            int(state.get(name, 0)) > 0
+            for name in ("candidates_seen", "candidates_failed", "fixed_candidates_evaluated")
+        )
+        status_store = GeometryStatusStore(
+            self.status_path,
+            history_complete=(self.status_path.exists() or not legacy_attempts_exist),
+        )
+        status_store.record_existing_solutions(solved_profile_ids)
         # The persisted solution file is authoritative. A stale checkpoint must
         # never claim that a missing solution record is already resolved.
         state["candidates_solved"] = len(solved_profile_ids)
@@ -246,6 +266,13 @@ class GeometryRunner:
                             record["formal_candidate"] = candidate
                         solution_writer.write(record)
                         solved_profile_ids.add(problem.formal_profile_id)
+                        status_store.record(
+                            problem.formal_profile_id,
+                            SOLUTION_FOUND,
+                            reason=result.reason,
+                            attempts=result.attempts,
+                            best_cost=result.best_cost,
+                        )
                         validation = result.solution.validation
                         print(
                             "[GEOMETRIC SOLUTION] "
@@ -258,6 +285,18 @@ class GeometryRunner:
                         )
                     else:
                         state["candidates_failed"] = int(state["candidates_failed"]) + 1
+                        status = (
+                            REJECTED_CERTAIN
+                            if result.reason.startswith("fixed geometry failed")
+                            else NO_SOLUTION_FOUND
+                        )
+                        status_store.record(
+                            problem.formal_profile_id,
+                            status,
+                            reason=result.reason,
+                            attempts=result.attempts,
+                            best_cost=result.best_cost,
+                        )
                         failure_writer.write(
                             {
                                 "formal_profile_id": problem.formal_profile_id,
@@ -290,6 +329,7 @@ class GeometryRunner:
                         break
                 else:
                     state["completed"] = True
+                    status_store.set_history_complete(True)
                     stop_reason = "completed"
         except KeyboardInterrupt:
             stop_reason = "keyboard_interrupt"
@@ -306,6 +346,7 @@ class GeometryRunner:
             self._save_state(state)
             solution_writer.close()
             failure_writer.close()
+            status_store.close()
 
         summary = {
             "schema_version": "geometry-run-summary-v1",
@@ -313,6 +354,7 @@ class GeometryRunner:
             "output_directory": str(self.output_directory),
             "solutions_file": str(self.solutions_path),
             "checkpoint_file": str(self.checkpoint_path),
+            "status_file": str(self.status_path),
             "stop_reason": stop_reason,
             "state": state,
             "geometry_config": self.config["geometry"],
