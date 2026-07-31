@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations
-from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
 
 from formal_disk4.constraints.angle_lp import AngleEquation, AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
@@ -12,6 +12,9 @@ from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 from .assignments import AssignmentTransform, ContourAssignment
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 from .symmetry import MappingSymmetryQuotient
+
+if TYPE_CHECKING:
+    from formal_disk4.preword.prefix_topology import PrefixRadiusArcTopologyFilter
 
 
 EventSink = Callable[[str, int], None]
@@ -79,6 +82,7 @@ class WeakOrderEnumerator:
         required_equivariance_transform: AssignmentTransform | None = None,
         equivariance_piece_orbits: Sequence[Sequence[int]] = (),
         mapping_symmetry: MappingSymmetryQuotient | None = None,
+        prefix_topology_filter: "PrefixRadiusArcTopologyFilter | None" = None,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -94,6 +98,7 @@ class WeakOrderEnumerator:
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
         self.track_exact_leaf_mass = track_exact_leaf_mass
         self.required_equivariance_transform = required_equivariance_transform
+        self.prefix_topology_filter = prefix_topology_filter
         self.mapping_symmetry = (
             mapping_symmetry
             if mapping_symmetry is not None or symmetry_mode == "off"
@@ -493,6 +498,39 @@ class WeakOrderEnumerator:
             self.event_sink("symmetry_pruned_nodes", 1)
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
             return
+
+        if self.prefix_topology_filter is not None:
+            try:
+                prefix_topology = self.prefix_topology_filter.analyze(
+                    positions, len(blocks)
+                )
+            except Exception:
+                # Prefix pruning is only an optimization.  Any implementation
+                # error must conservatively keep the whole subtree.
+                self.event_sink("prefix_topology_errors", 1)
+            else:
+                if prefix_topology.applicable:
+                    self.event_sink(
+                        "prefix_topology_cache_hits"
+                        if prefix_topology.cache_hit
+                        else "prefix_topology_checks",
+                        1,
+                    )
+                if not prefix_topology.feasible:
+                    self.event_sink("prefix_topology_pruned_nodes", 1)
+                    reason_key = (
+                        prefix_topology.reason.lower()
+                        .replace("same-radius ", "")
+                        .replace("mapped ", "mapped_")
+                        .replace(" ", "_")
+                        .replace("/", "_")
+                        .replace("-", "_")
+                    )
+                    self.event_sink(f"prefix_topology_rejection_{reason_key}", 1)
+                    self._mark_subtree_complete(
+                        path, self._subtree_leaf_mass(counters)
+                    )
+                    return
 
         complete = all(
             counter == len(sequence)

@@ -1,0 +1,16 @@
+Formal Disk4 Solver differential patch 1.8.0
+Base version: 1.7.4
+
+Files included:
+PATCH_NOTES_1.8.0.md
+PATCH_MANIFEST_1.8.0.txt
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/constraints/hybrid_linear.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/preword/__init__.py
+src/formal_disk4/preword/arc_topology.py
+src/formal_disk4/preword/prefix_topology.py
+tests/test_prefix_topology.py
+tests/test_preword_linear.py

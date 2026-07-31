@@ -175,10 +175,36 @@ class RadiusArcTopologyFilter:
         placement: Placement,
         compiled: CompiledWordCase,
     ) -> RadiusArcTopologyResult:
+        return self.analyze_compiled(
+            planar_map,
+            placement.length_rows,
+            compiled,
+        )
+
+    def analyze_compiled(
+        self,
+        planar_map: PlanarMap,
+        length_rows: Sequence[Sequence[int]],
+        compiled: CompiledWordCase,
+        *,
+        additional_hard_outer_boundaries: Iterable[int] = (),
+    ) -> RadiusArcTopologyResult:
+        """Analyze an already compiled, possibly conservative partial case.
+
+        ``additional_hard_outer_boundaries`` is used by the weak-order prefix
+        filter for hard boundary points whose adjacent outer arc is not yet
+        closed in the current prefix.  Adding such fixed boundaries can only
+        expose contradictions; unresolved arcs and interfaces are omitted.
+        """
+
         size = len(compiled.atomic_variables)
         variable_index = {name: index for index, name in enumerate(compiled.atomic_variables)}
-        equality_space = _EqualitySpace(size, placement.length_rows)
-        hard_outer_boundaries = self._hard_outer_boundaries(planar_map, compiled, variable_index, size)
+        equality_rows = tuple(tuple(int(value) for value in row) for row in length_rows)
+        equality_space = _EqualitySpace(size, equality_rows)
+        hard_outer_boundaries = frozenset(
+            set(self._hard_outer_boundaries(planar_map, compiled, variable_index, size))
+            | {int(value) for value in additional_hard_outer_boundaries}
+        )
         seeds = self._outer_seed_intervals(compiled, variable_index, size)
 
         endpoint_checks = 0
@@ -272,7 +298,7 @@ class RadiusArcTopologyFilter:
                                     source_start,
                                     point,
                                     source_end,
-                                    placement.length_rows,
+                                    equality_rows,
                                 ):
                                     return reject(
                                         "mapped same-radius circular arc crosses a hard outer endpoint"
@@ -291,7 +317,7 @@ class RadiusArcTopologyFilter:
                                     source_end,
                                     target.prefixes[other_start_index],
                                     target.prefixes[other_end_index],
-                                    placement.length_rows,
+                                    equality_rows,
                                 ):
                                     return reject(
                                         "mapped circular arc is forced to overlap opposite circular sign"

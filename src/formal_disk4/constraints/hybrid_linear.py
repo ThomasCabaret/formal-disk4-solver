@@ -8,7 +8,7 @@ from typing import Iterable, Sequence, Tuple
 import numpy as np
 from scipy.optimize import linprog
 
-from formal_disk4.constraints.rational_lp import RationalSimplex
+from formal_disk4.constraints.rational_lp import maximize_free_variables
 
 
 @dataclass(frozen=True)
@@ -171,6 +171,98 @@ class HybridMarginOracle:
         finally:
             self.float_seconds += time.perf_counter() - started
 
+    @staticmethod
+    def _reduce_equalities(
+        width: int,
+        equalities: Sequence[LinearConstraint],
+    ) -> tuple[
+        bool,
+        tuple[int, ...],
+        tuple[Fraction, ...],
+        tuple[tuple[Fraction, ...], ...],
+    ]:
+        """Eliminate exact equalities and parameterize the affine solution space.
+
+        Returns ``(consistent, free_columns, constants, coefficients)`` with
+        ``x_j = constants[j] + sum(coefficients[j][k] * y_k)``.  Arithmetic is
+        entirely rational, so this is only a change of representation before
+        the exact simplex, not a new pruning rule.
+        """
+
+        rows = [
+            [*item.coefficients, item.rhs]
+            for item in equalities
+        ]
+        pivot_columns: list[int] = []
+        pivot_row = 0
+        for column in range(width):
+            selected = next(
+                (index for index in range(pivot_row, len(rows)) if rows[index][column]),
+                None,
+            )
+            if selected is None:
+                continue
+            rows[pivot_row], rows[selected] = rows[selected], rows[pivot_row]
+            divisor = rows[pivot_row][column]
+            rows[pivot_row] = [value / divisor for value in rows[pivot_row]]
+            for row_index, row in enumerate(rows):
+                if row_index == pivot_row:
+                    continue
+                factor = row[column]
+                if factor:
+                    rows[row_index] = [
+                        value - factor * pivot_value
+                        for value, pivot_value in zip(row, rows[pivot_row])
+                    ]
+            pivot_columns.append(column)
+            pivot_row += 1
+            if pivot_row == len(rows):
+                break
+
+        for row in rows[pivot_row:]:
+            if not any(row[:width]) and row[width]:
+                return False, (), (), ()
+
+        pivot_set = set(pivot_columns)
+        free_columns = tuple(
+            column for column in range(width) if column not in pivot_set
+        )
+        free_index = {column: index for index, column in enumerate(free_columns)}
+        constants = [Fraction(0) for _ in range(width)]
+        coefficients = [
+            [Fraction(0) for _ in free_columns]
+            for _ in range(width)
+        ]
+        for column in free_columns:
+            coefficients[column][free_index[column]] = Fraction(1)
+        for row_index, column in enumerate(pivot_columns):
+            row = rows[row_index]
+            constants[column] = row[width]
+            for free_column in free_columns:
+                coefficients[column][free_index[free_column]] = -row[free_column]
+        return (
+            True,
+            free_columns,
+            tuple(constants),
+            tuple(tuple(row) for row in coefficients),
+        )
+
+    @staticmethod
+    def _substitute_reduced_constraint(
+        constraint: LinearConstraint,
+        constants: Sequence[Fraction],
+        coefficients: Sequence[Sequence[Fraction]],
+    ) -> tuple[tuple[Fraction, ...], Fraction]:
+        reduced = [Fraction(0) for _ in range(len(coefficients[0]) if coefficients else 0)]
+        constant = Fraction(0)
+        for variable_index, value in enumerate(constraint.coefficients):
+            if not value:
+                continue
+            constant += value * constants[variable_index]
+            for free_index, coefficient in enumerate(coefficients[variable_index]):
+                reduced[free_index] += value * coefficient
+        return tuple(reduced), constraint.rhs - constant
+
     def _solve_exact(
         self,
         domains: Sequence[str],
@@ -181,53 +273,59 @@ class HybridMarginOracle:
         started = time.perf_counter()
         self.exact_calls += 1
         try:
-            columns: list[tuple[int, int | None]] = []
-            expanded_width = 0
-            for domain in domains:
-                if domain == "nonnegative":
-                    columns.append((expanded_width, None))
-                    expanded_width += 1
-                else:
-                    columns.append((expanded_width, expanded_width + 1))
-                    expanded_width += 2
-
-            def expand(coefficients: Sequence[Fraction]) -> list[Fraction]:
-                row = [Fraction(0) for _ in range(expanded_width)]
-                for coefficient, (positive, negative) in zip(coefficients, columns):
-                    row[positive] += coefficient
-                    if negative is not None:
-                        row[negative] -= coefficient
-                return row
-
-            matrix: list[list[Fraction]] = []
-            rhs: list[Fraction] = []
-            for item in equalities:
-                row = expand(item.coefficients)
-                matrix.append(row)
-                rhs.append(item.rhs)
-                matrix.append([-value for value in row])
-                rhs.append(-item.rhs)
-            for item in inequalities:
-                matrix.append(expand(item.coefficients))
-                rhs.append(item.rhs)
-
-            objective = [Fraction(0) for _ in range(expanded_width)]
-            margin_positive, margin_negative = columns[margin_index]
-            objective[margin_positive] = Fraction(1)
-            if margin_negative is not None:
-                objective[margin_negative] = Fraction(-1)
-
-            solution = RationalSimplex(matrix, rhs, objective).solve()
-            feasible = (
-                solution.status == "optimal"
-                and solution.optimum is not None
-                and solution.optimum > 0
+            width = len(domains)
+            consistent, free_columns, constants, coefficients = self._reduce_equalities(
+                width, equalities
             )
+            if not consistent:
+                return HybridLinearResult(
+                    feasible=False,
+                    margin=None,
+                    status="exact:infeasible",
+                    exact_certificate_used=True,
+                )
+
+            reduced_inequalities = [
+                self._substitute_reduced_constraint(item, constants, coefficients)
+                for item in inequalities
+            ]
+            # Preserve every original non-negativity domain after eliminating
+            # pivot variables.  A variable x >= 0 is encoded as -x <= 0.
+            for variable_index, domain in enumerate(domains):
+                if domain != "nonnegative":
+                    continue
+                reduced_inequalities.append(
+                    (
+                        tuple(-value for value in coefficients[variable_index]),
+                        constants[variable_index],
+                    )
+                )
+
+            objective = tuple(coefficients[margin_index])
+            objective_constant = constants[margin_index]
+            if not free_columns:
+                feasible_region = all(
+                    not any(row) and Fraction(0) <= rhs
+                    for row, rhs in reduced_inequalities
+                )
+                status = "optimal" if feasible_region else "infeasible"
+                optimum = objective_constant if feasible_region else None
+            else:
+                solution = maximize_free_variables(reduced_inequalities, objective)
+                status = solution.status
+                optimum = (
+                    None
+                    if solution.optimum is None
+                    else objective_constant + solution.optimum
+                )
+
+            feasible = status == "optimal" and optimum is not None and optimum > 0
             return HybridLinearResult(
                 feasible=feasible,
-                margin=solution.optimum,
-                status=f"exact:{solution.status}",
+                margin=optimum,
+                status=f"exact:{status}",
                 exact_certificate_used=True,
             )
         finally:
             self.exact_seconds += time.perf_counter() - started
+

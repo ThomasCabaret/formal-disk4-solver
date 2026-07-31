@@ -24,6 +24,7 @@ from formal_disk4.profiles.canonical import conservative_profile_key
 from formal_disk4.profiles.decorations import DecorationInfeasible
 from formal_disk4.profiles.filters import ProfileFilterPipeline
 from formal_disk4.preword import (
+    PrefixRadiusArcTopologyFilter,
     PrewordLinearInvariantFilter,
     PrewordPruningPipeline,
     RadiusArcTopologyFilter,
@@ -686,6 +687,26 @@ class SolverRunner:
                         self._search_state["weak_order"] = {}
 
                     resume_weak = self._search_state.get("weak_order", {})
+                    prefix_topology_filter = None
+                    preword_config = self.config["filters"].get(
+                        "preword_pruning", {}
+                    )
+                    topology_config = preword_config.get("topology", {})
+                    if (
+                        bool(preword_config.get("enabled", True))
+                        and bool(topology_config.get("enabled", True))
+                    ):
+                        prefix_topology_filter = PrefixRadiusArcTopologyFilter(
+                            planar_map,
+                            assignment,
+                            tolerance=tolerance,
+                            enable_endpoint_crossing=bool(
+                                topology_config.get("enable_endpoint_crossing", True)
+                            ),
+                            max_intervals=int(
+                                topology_config.get("max_intervals", 1024)
+                            ),
+                        )
                     weak_orders = WeakOrderEnumerator(
                         planar_map=planar_map,
                         assignment=assignment,
@@ -738,6 +759,7 @@ class SolverRunner:
                             if str(self.config["enumeration"]["symmetry_mode"]) != "off"
                             else None
                         ),
+                        prefix_topology_filter=prefix_topology_filter,
                     )
                     self._current_weak_orders = weak_orders
                     placement_started = time.perf_counter()
