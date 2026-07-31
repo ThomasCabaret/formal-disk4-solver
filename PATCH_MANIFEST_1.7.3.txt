@@ -1,0 +1,12 @@
+Formal Disk4 Solver differential patch 1.7.3
+Base version: 1.7.2 after the optional 1.7.1 cleanup
+
+Files included:
+PATCH_NOTES_1.7.3.md
+PATCH_MANIFEST_1.7.3.txt
+pyproject.toml
+config/case_families/cyclic-two-ring-rotation2.json
+src/formal_disk4/__init__.py
+src/formal_disk4/orchestration/gui.py
+src/formal_disk4/orchestration/pipeline.py
+tests/test_orchestration.py

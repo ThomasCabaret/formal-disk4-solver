@@ -1,0 +1,10 @@
+formal_disk4_solver patch 1.7.2
+Base version: 1.7.1
+
+187d5219261a2c03ce9becbb001085cbf79135d1bc97c693763098b66f02c5dc  pyproject.toml
+3c18ec2a9f37e1af71e91fb405ecb3ede24c6c052eb508a2ee49dc63a4e421fd  README.md
+9a86ccfb60b1d68dcc8f506d06ab7193b4c7b18529b4b18cb337543545b6520f  src/formal_disk4/__init__.py
+adb26641d07665e6164fd9102c17b323bb194b2fea489e6e4afcd96060b22659  src/formal_disk4/orchestration/gui.py
+1838f71fec5d0c887bc73aa0d7f01abf91f10420ddc0385171c41f0d93790f94  src/formal_disk4/orchestration/pipeline.py
+effe60d63571e0f983b7fdbee7610dcc4f226a744b07bbd0c0414b6f4b81a6d0  tests/test_orchestration.py
+1840d094a184b63c341cbf6ae2ae740b318706296bb657c6684b6222405d628d  PATCH_NOTES_1.7.2.md

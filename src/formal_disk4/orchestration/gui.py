@@ -30,12 +30,14 @@ class PipelineApp:
         self.running = False
         self.current_plan_path: Path | None = None
         self.log_line_count = 0
+        self.closing = False
 
         self.root.title("Formal Disk4 Pipeline Builder")
         self.root.geometry("1220x820")
         self.root.minsize(980, 680)
         self._build_ui()
         self._populate_catalog()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_events)
 
     def _build_ui(self) -> None:
@@ -177,7 +179,7 @@ class PipelineApp:
         self.resume_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             controls,
-            text="Resume pipeline state",
+            text="Resume existing work/checkpoints",
             variable=self.resume_var,
         ).grid(row=1, column=6, columnspan=2, sticky="e", pady=(6, 0))
 
@@ -490,6 +492,30 @@ class PipelineApp:
             self.status_var.set("Stop requested after current task")
             self.stop_button.configure(state=tk.DISABLED)
 
+    def _on_close(self) -> None:
+        if not self.running:
+            self.root.destroy()
+            return
+        if self.closing:
+            return
+        should_stop = messagebox.askyesno(
+            "Stop running task",
+            "A search or geometry task is still running. Stop it now, save its "
+            "checkpoint, then close the pipeline GUI?",
+            parent=self.root,
+        )
+        if not should_stop:
+            return
+        self.closing = True
+        self.run_button.configure(state=tk.DISABLED)
+        self.stop_button.configure(state=tk.DISABLED)
+        self.status_var.set("Stopping current task and saving its checkpoint")
+        self._append_console(
+            "[GUI CLOSE] Interrupting the current solver and waiting for its "
+            "checkpoint save."
+        )
+        self.executor.request_interrupt_current()
+
     def _poll_events(self) -> None:
         try:
             while True:
@@ -534,6 +560,9 @@ class PipelineApp:
         self.run_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
         self.task_progress.stop()
+        if self.closing:
+            self.root.after_idle(self.root.destroy)
+            return
         if returncode == 0:
             self.status_var.set("Pipeline complete or paused cleanly")
         else:

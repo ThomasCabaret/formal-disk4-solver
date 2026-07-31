@@ -1,0 +1,60 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "cyclic-two-ring-rotation2",
+  "label": "Cyclic two-ring N=4 - rotation_2",
+  "description": "Two cyclic tile orbits of size 4 with imposed half-turn equivariance.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "cyclic",
+    "two-ring",
+    "weak-problem",
+    "rotation-2",
+    "size-4"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "cyclic_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_2",
+          "enforce_weak_orders": true
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "parallel",
+      "case_id_template": "double-cycle-4-rotation-2",
+      "label": "Double cycle 4 - rotation_2",
+      "description": "Parallel exterior and interior 4-cycles with imposed half-turn symmetry.",
+      "map_template": "double-cycle-4"
+    },
+    {
+      "id": "offset",
+      "case_id_template": "double-cycle-offset-4-rotation-2",
+      "label": "Double cycle offset 4 - rotation_2",
+      "description": "Offset two-layer 4-cycle with imposed half-turn symmetry.",
+      "map_template": "double-cycle-offset-4"
+    },
+    {
+      "id": "boundary-points",
+      "case_id_template": "inner-cycle-boundary-points-4-rotation-2",
+      "label": "Inner cycle boundary points 4 - rotation_2",
+      "description": "Boundary-point two-layer size-4 case with imposed half-turn symmetry.",
+      "map_template": "inner-cycle-boundary-points-4"
+    },
+    {
+      "id": "center-points",
+      "case_id_template": "outer-cycle-center-points-4-rotation-2",
+      "label": "Outer cycle center points 4 - rotation_2",
+      "description": "Center-point two-layer size-4 case with imposed half-turn symmetry.",
+      "map_template": "outer-cycle-center-points-4"
+    }
+  ]
+}

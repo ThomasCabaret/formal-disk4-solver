@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -12,11 +17,61 @@ from formal_disk4.orchestration.pipeline import (
     PipelinePlan,
     PipelineTask,
     TaskProgress,
+    _TaskLease,
     materialize_task,
+    task_checkpoint_completed,
+)
+from formal_disk4.pipeline.checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
+    search_fingerprint,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _minimal_search_config(output_directory: str) -> dict[str, object]:
+    return {
+        "maps": ["c3"],
+        "enumeration": {},
+        "solver": {},
+        "filters": {},
+        "output": {"directory": output_directory},
+        "checkpoint": {
+            "enabled": True,
+            "resume": True,
+            "restart": False,
+            "file": "checkpoint.sqlite3",
+        },
+    }
+
+
+def _write_search_checkpoint(path: Path, config: dict[str, object], *, completed: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "CREATE TABLE search_checkpoint("
+            "singleton INTEGER PRIMARY KEY, schema_version INTEGER, "
+            "config_fingerprint TEXT, updated_utc TEXT, completed INTEGER, "
+            "state_json TEXT, stats_json TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE survivors("
+            "profile_key TEXT PRIMARY KEY, created_utc TEXT, payload_json TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO search_checkpoint VALUES(1, ?, ?, '', ?, '{}', '{}')",
+            (
+                CHECKPOINT_SCHEMA_VERSION,
+                search_fingerprint(config),
+                1 if completed else 0,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
 
 
 class CaseCatalogTests(unittest.TestCase):
@@ -40,6 +95,38 @@ class CaseCatalogTests(unittest.TestCase):
             case.source,
             ROOT / "config" / "case_families" / "cyclic-two-ring.json",
         )
+
+    def test_rotation_2_size_4_cases_are_available(self) -> None:
+        expected = {
+            "double-cycle-4-rotation-2": "double-cycle-4",
+            "double-cycle-offset-4-rotation-2": "double-cycle-offset-4",
+            "inner-cycle-boundary-points-4-rotation-2":
+                "inner-cycle-boundary-points-4",
+            "outer-cycle-center-points-4-rotation-2":
+                "outer-cycle-center-points-4",
+        }
+        for case_id, map_name in expected.items():
+            with self.subTest(case_id=case_id):
+                case = self.catalog.get(case_id)
+                self.assertEqual(case.map_name, map_name)
+                self.assertEqual(
+                    case.output_directory, Path("output") / "cases" / case_id
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    materialized = materialize_task(
+                        ROOT,
+                        case,
+                        PipelineTask(case_id, "search"),
+                        Path(directory),
+                        task_index=0,
+                    )
+                    config = json.loads(
+                        materialized.config_path.read_text(encoding="utf-8")
+                    )
+                equivariance = config["enumeration"]["cyclic_equivariance"]
+                self.assertTrue(equivariance["enabled"])
+                self.assertTrue(equivariance["enforce_weak_orders"])
+                self.assertEqual(equivariance["automorphism"], "rotation_2")
 
     def test_static_visualizer_alias_is_exposed_as_visualize(self) -> None:
         case = self.catalog.get("k4")
@@ -118,6 +205,174 @@ class PipelineModelTests(unittest.TestCase):
             0.472,
         )
         self.assertIsNone(tracker.feed("ordinary line"))
+
+
+    def test_fresh_materialization_restarts_search_and_geometry_checkpoints(self) -> None:
+        catalog = CaseCatalog.load(ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory)
+            search = materialize_task(
+                ROOT,
+                catalog.get("k4"),
+                PipelineTask("k4", "search"),
+                generated,
+                task_index=0,
+                restart_checkpoint=True,
+            )
+            geometry = materialize_task(
+                ROOT,
+                catalog.get("k4"),
+                PipelineTask("k4", "geometry"),
+                generated,
+                task_index=1,
+                restart_checkpoint=True,
+            )
+            visualize = materialize_task(
+                ROOT,
+                catalog.get("k4"),
+                PipelineTask("k4", "visualize"),
+                generated,
+                task_index=2,
+                restart_checkpoint=True,
+            )
+        self.assertEqual(search.command[-1], "--restart")
+        self.assertEqual(geometry.command[-1], "--restart")
+        self.assertNotIn("--restart", visualize.command)
+
+    def test_fresh_materialization_does_not_duplicate_explicit_restart(self) -> None:
+        catalog = CaseCatalog.load(ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            materialized = materialize_task(
+                ROOT,
+                catalog.get("k4"),
+                PipelineTask("k4", "search", ("--restart",)),
+                Path(directory),
+                task_index=0,
+                restart_checkpoint=True,
+            )
+        self.assertEqual(materialized.command.count("--restart"), 1)
+
+    def test_stage_checkpoint_not_pipeline_state_controls_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "search.json"
+            config = _minimal_search_config("output/cases/demo")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            case = CaseDefinition(
+                case_id="demo",
+                label="Demo",
+                description="",
+                map_name="c3",
+                group="Test",
+                config_paths={"search": config_path},
+                output_directory=Path("output/cases/demo"),
+            )
+            catalog = CaseCatalog(root, (case,))
+            executor = PipelineExecutor(root, catalog)
+            calls: list[tuple[str, ...]] = []
+
+            def run_process(materialized, _index, _count, _callbacks, _log):
+                calls.append(materialized.command)
+                return 0
+
+            executor._run_process = run_process  # type: ignore[method-assign]
+            plan = PipelinePlan(
+                "same-plan", "Same plan", (PipelineTask("demo", "search"),)
+            )
+            self.assertEqual(executor.run(plan, resume=False), 0)
+            # The first run marks the pipeline task complete, but no solver
+            # checkpoint exists. Resume must execute the task again.
+            self.assertEqual(executor.run(plan, resume=True), 0)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--restart", calls[0])
+        self.assertNotIn("--restart", calls[1])
+
+    def test_only_compatible_completed_search_checkpoint_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "search.json"
+            config = _minimal_search_config("output/cases/demo")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            case = CaseDefinition(
+                case_id="demo",
+                label="Demo",
+                description="",
+                map_name="c3",
+                group="Test",
+                config_paths={"search": config_path},
+                output_directory=Path("output/cases/demo"),
+            )
+            materialized = materialize_task(
+                root, case, PipelineTask("demo", "search"), root / "generated", 0
+            )
+            effective = json.loads(
+                materialized.config_path.read_text(encoding="utf-8")
+            )
+            checkpoint = root / "output/cases/demo/checkpoint.sqlite3"
+            candidates = root / "output/cases/demo/candidates.jsonl"
+            candidates.parent.mkdir(parents=True, exist_ok=True)
+            candidates.write_text("", encoding="utf-8")
+            _write_search_checkpoint(checkpoint, effective, completed=False)
+            self.assertFalse(task_checkpoint_completed(root, materialized))
+            checkpoint.unlink()
+            _write_search_checkpoint(checkpoint, effective, completed=True)
+            self.assertTrue(task_checkpoint_completed(root, materialized))
+
+    def test_active_task_lease_blocks_a_second_solver_for_the_same_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "search.json"
+            config = _minimal_search_config("output/cases/demo")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            case = CaseDefinition(
+                case_id="demo",
+                label="Demo",
+                description="",
+                map_name="c3",
+                group="Test",
+                config_paths={"search": config_path},
+                output_directory=Path("output/cases/demo"),
+            )
+            materialized = materialize_task(
+                root, case, PipelineTask("demo", "search"), root / "generated", 0
+            )
+            lease = _TaskLease.acquire(root, materialized)
+            lease.attach_child(os.getpid())
+            try:
+                with self.assertRaisesRegex(RuntimeError, "still active"):
+                    _TaskLease.acquire(root, materialized)
+            finally:
+                lease.release()
+
+    def test_interrupt_request_signals_the_active_child(self) -> None:
+        if sys.platform == "win32":
+            self.skipTest("The Windows console-group signal is covered on Windows.")
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "interrupted.txt"
+            ready = Path(temporary) / "ready.txt"
+            script = (
+                "import pathlib,signal,time\n"
+                f"p=pathlib.Path({str(marker)!r})\n"
+                f"ready=pathlib.Path({str(ready)!r})\n"
+                "def stop(_s,_f): p.write_text('ok'); raise SystemExit(0)\n"
+                "signal.signal(signal.SIGINT, stop)\n"
+                "ready.write_text('ready')\n"
+                "while True: time.sleep(0.05)\n"
+            )
+            process = subprocess.Popen([sys.executable, "-S", "-c", script])
+            executor = PipelineExecutor(ROOT, CaseCatalog.load(ROOT))
+            with executor._process_lock:
+                executor.current_process = process
+            deadline = time.monotonic() + 5.0
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists())
+            executor.request_interrupt_current()
+            process.wait(timeout=5)
+            with executor._process_lock:
+                executor.current_process = None
+            self.assertTrue(marker.exists())
 
     def test_visualize_tasks_are_launched_without_waiting_for_previous_viewers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

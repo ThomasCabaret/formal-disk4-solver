@@ -281,6 +281,13 @@ tasks start immediately and multiple viewers can remain open at the same time.
 A missing or empty geometric solution file opens a viewer displaying
 `No geometric solution` instead of failing the pipeline.
 
+Since 1.7.2, the GUI option is named `Resume existing work/checkpoints`. When
+checked, completed pipeline tasks are skipped and solver checkpoints are
+resumed. When unchecked, the pipeline state is cleared and `--restart` is
+automatically added to every search and geometry task. Visualization tasks are
+not affected. A fresh geometry task therefore discards its previous geometric
+solutions, as the normal `geometry --restart` command does.
+
 The supported cyclic two-ring families are:
 
 ```text
