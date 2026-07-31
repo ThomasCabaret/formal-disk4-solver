@@ -120,6 +120,10 @@ class ExactPartialSolverTests(unittest.TestCase):
         self.assertEqual(solver.last_summary.visited_states, 120)
         self.assertEqual(solver.last_summary.graph_edges, 352)
         self.assertEqual(solver.last_summary.status, "unresolved_graph_limit")
+        progress = solver.progress_snapshot()
+        self.assertEqual(progress["phase"], "done")
+        self.assertEqual(progress["visited_states"], 120)
+        self.assertEqual(progress["graph_edges"], 352)
 
 
 

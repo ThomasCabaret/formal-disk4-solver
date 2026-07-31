@@ -162,6 +162,11 @@ class WeakOrderEnumerator:
         self._processed_leaf_mass = int(state.get("processed_leaf_mass", 0))
         self._placement_id = int(state.get("placement_id", 0))
         self._last_completed_path = self._resume_path
+        self._current_phase = "initialized"
+        self._current_path: Tuple[int, ...] = ()
+        self._current_counters: Tuple[int, ...] = tuple(0 for _ in self.target_counters)
+        self._current_block_count = 0
+        self._current_resolved_occurrences = 0
 
     @property
     def processed_leaf_mass(self) -> int:
@@ -212,6 +217,37 @@ class WeakOrderEnumerator:
             "processed_leaf_mass": self._processed_leaf_mass,
             "placement_id": self._placement_id,
         }
+
+    def progress_snapshot(self) -> Dict[str, object]:
+        """Return a compact, reproducible description of the active DFS node."""
+        return {
+            "phase": self._current_phase,
+            "depth": len(self._current_path),
+            "path": list(self._current_path),
+            "path_tail": list(self._current_path[-12:]),
+            "counters": list(self._current_counters),
+            "target_counters": list(self.target_counters),
+            "block_count": self._current_block_count,
+            "resolved_occurrences": self._current_resolved_occurrences,
+            "placement_id": self._placement_id,
+            "processed_leaf_mass": self._processed_leaf_mass,
+            "total_leaf_mass": self.total_leaf_mass,
+        }
+
+    def _set_progress(
+        self,
+        phase: str,
+        *,
+        path: Tuple[int, ...],
+        counters: Tuple[int, ...],
+        block_count: int,
+        positions: Tuple[int, ...],
+    ) -> None:
+        self._current_phase = phase
+        self._current_path = path
+        self._current_counters = counters
+        self._current_block_count = int(block_count)
+        self._current_resolved_occurrences = sum(counters)
 
     def _mark_subtree_complete(
         self, path: Tuple[int, ...], leaf_mass: int = 0
@@ -483,8 +519,22 @@ class WeakOrderEnumerator:
                 return
             if self._resume_path[: len(path)] != path:
                 return
+        self._set_progress(
+            "enter_node",
+            path=path,
+            counters=counters,
+            block_count=len(blocks),
+            positions=positions,
+        )
         self.event_sink("placement_nodes", 1)
 
+        self._set_progress(
+            "exterior_arc_repetition",
+            path=path,
+            counters=counters,
+            block_count=len(blocks),
+            positions=positions,
+        )
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             # Once every possible repeated exterior-arc pair has separated an
             # endpoint, no descendant can restore equality in a past block.
@@ -494,12 +544,26 @@ class WeakOrderEnumerator:
             )
             return
 
+        self._set_progress(
+            "symmetry_prefix",
+            path=path,
+            counters=counters,
+            block_count=len(blocks),
+            positions=positions,
+        )
         if not self._prefix_is_canonical(blocks):
             self.event_sink("symmetry_pruned_nodes", 1)
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
             return
 
         if self.prefix_topology_filter is not None:
+            self._set_progress(
+                "prefix_topology",
+                path=path,
+                counters=counters,
+                block_count=len(blocks),
+                positions=positions,
+            )
             try:
                 prefix_topology = self.prefix_topology_filter.analyze(
                     positions, len(blocks)
@@ -536,6 +600,14 @@ class WeakOrderEnumerator:
             counter == len(sequence)
             for counter, sequence in zip(counters, self.assignment.sequences)
         )
+        if complete:
+            self._set_progress(
+                "symmetry_leaf",
+                path=path,
+                counters=counters,
+                block_count=len(blocks),
+                positions=positions,
+            )
         if complete and not self._leaf_is_canonical(blocks):
             # The complete intrinsic-symmetry quotient is an integer permutation
             # check. Run it before any newly resolved LP at this leaf and before
@@ -547,6 +619,13 @@ class WeakOrderEnumerator:
         block_count = len(blocks)
         length_rows = self._resolved_length_rows(positions, block_count)
         if self.enable_length_filter and len(length_rows) > previous_length_equation_count:
+            self._set_progress(
+                "length_lp",
+                path=path,
+                counters=counters,
+                block_count=block_count,
+                positions=positions,
+            )
             self.event_sink("length_checks", 1)
             length_result = self.length_oracle.analyze(block_count, length_rows)
             if not length_result.feasible:
@@ -556,6 +635,13 @@ class WeakOrderEnumerator:
 
         angle_equations = self._resolved_angle_equations(positions, block_count)
         if self.enable_angle_filter and len(angle_equations) > previous_angle_equation_count:
+            self._set_progress(
+                "angle_lp",
+                path=path,
+                counters=counters,
+                block_count=block_count,
+                positions=positions,
+            )
             self.event_sink("angle_checks", 1)
             angle_result = self.angle_oracle.analyze(block_count, angle_equations)
             if not angle_result.feasible:
@@ -599,6 +685,13 @@ class WeakOrderEnumerator:
             if counter < len(sequence):
                 available_mask |= 1 << piece_index
 
+        self._set_progress(
+            "generate_children",
+            path=path,
+            counters=counters,
+            block_count=block_count,
+            positions=positions,
+        )
         candidates = []
         for mask in self._candidate_masks(available_mask):
             appended = self._append_block(blocks, counters, positions, mask)

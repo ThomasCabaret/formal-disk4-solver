@@ -54,6 +54,10 @@ class PrewordPruningPipeline:
         self.linear_filter = linear_filter
         self.enable_topology = bool(enable_topology)
         self.enable_linear_invariants = bool(enable_linear_invariants)
+        self._current_phase = "idle"
+
+    def progress_snapshot(self) -> Dict[str, object]:
+        return {"phase": self._current_phase}
 
     def analyze(
         self,
@@ -61,16 +65,21 @@ class PrewordPruningPipeline:
         placement: Placement,
         compiled: CompiledWordCase,
     ) -> PrewordPruningResult:
+        self._current_phase = "topology"
         topology = (
             self.topology_filter.analyze(planar_map, placement, compiled)
             if self.enable_topology
             else self.topology_filter.seed_only(compiled)
         )
         if not topology.feasible:
+            self._current_phase = "done"
             return PrewordPruningResult(False, topology.reason, topology, None)
         if not self.enable_linear_invariants:
+            self._current_phase = "done"
             return PrewordPruningResult(True, "feasible", topology, None)
+        self._current_phase = "linear_invariants"
         linear = self.linear_filter.analyze(planar_map, placement, compiled, topology)
+        self._current_phase = "done"
         return PrewordPruningResult(
             linear.feasible,
             linear.reason,

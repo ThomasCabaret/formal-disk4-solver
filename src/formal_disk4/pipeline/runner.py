@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from copy import deepcopy
 from dataclasses import dataclass
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -34,6 +36,7 @@ from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimit
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 
 from .checkpoint import CheckpointStore, search_fingerprint
+from .heartbeat import HeartbeatReporter
 from .output import JsonlWriter, NullJsonlWriter, atomic_write_json
 from .stats import RunStats
 
@@ -57,7 +60,17 @@ class SolverRunner:
         self._stop_requested = False
         self._seen_profile_keys: set[str] = set()
         self._current_weak_orders: WeakOrderEnumerator | None = None
+        self._current_word_solver: ExactPartialWordSolver | None = None
+        self._current_assignment: ContourAssignment | None = None
+        self._current_occurrence_names: Tuple[str, ...] = ()
+        self._current_placement: object | None = None
+        self._current_compiled: object | None = None
         self._current_map_name = "pending"
+        self._stage_lock = threading.Lock()
+        self._current_stage = "initializing"
+        self._stage_started_at = time.perf_counter()
+        self._stage_context: Dict[str, object] = {}
+        self._heartbeat_reporter: HeartbeatReporter | None = None
         self._search_state: Dict[str, Any] = {
             "version": 1,
             "map_index": 0,
@@ -77,6 +90,10 @@ class SolverRunner:
         output_config = self.config["output"]
         self.output_directory = Path(output_config["directory"]).resolve()
         self.output_directory.mkdir(parents=True, exist_ok=True)
+        self.diagnostics_directory = self.output_directory / "diagnostics"
+        self.diagnostics_directory.mkdir(parents=True, exist_ok=True)
+        self.heartbeat_latest_path = self.diagnostics_directory / "heartbeat_latest.json"
+        self.heartbeat_history_path = self.diagnostics_directory / "heartbeat_history.jsonl"
         save_config(self.config, self.output_directory / "effective_config.json")
 
         checkpoint_config = self.config.get("checkpoint", {})
@@ -161,6 +178,208 @@ class SolverRunner:
             ),
         )
 
+    def _set_stage(self, stage: str, **context: object) -> None:
+        now = time.perf_counter()
+        with self._stage_lock:
+            changed = stage != self._current_stage or context != self._stage_context
+            self._current_stage = str(stage)
+            self._stage_context = dict(context)
+            if changed:
+                self._stage_started_at = now
+
+    @staticmethod
+    def _short_hash(payload: object, prefix: str) -> str:
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return f"{prefix}-{hashlib.sha256(encoded).hexdigest()[:16]}"
+
+    def _progress_message(self) -> str:
+        elapsed = self.stats.elapsed_seconds
+        nodes = self.stats.get("placement_nodes")
+        rate = nodes / elapsed if elapsed else 0.0
+        percent = self._progress_percentage()
+        _assignment_mass, _assignment_total, assignment_percent = self._current_assignment_progress()
+        exact_progress = bool(
+            self.config["enumeration"].get("track_exact_domain_size", True)
+        )
+        overall_text = f"{percent:5.1f}%" if exact_progress else "  n/a "
+        assignment_text = (
+            f"{assignment_percent:5.1f}%" if exact_progress else "  n/a "
+        )
+        assignment_position = int(self._search_state.get("assignment_id", 0)) + 1
+        rejected_profiles = (
+            self.stats.get("decoration_rejections")
+            + self.stats.get("profile_filter_rejections")
+        )
+        return (
+            f"[{elapsed:9.2f}s] map={self._current_map_name} "
+            f"overall~{overall_text} "
+            f"assignment={assignment_position}/{max(1, self._total_assignment_count)} "
+            f"current~{assignment_text} "
+            f"nodes={nodes} ({rate:,.0f}/s) "
+            f"length_pruned={self.stats.get('length_pruned_nodes')} "
+            f"angle_pruned={self.stats.get('angle_pruned_nodes')} "
+            f"outer_arc_pruned={self.stats.get('exterior_arc_repetition_pruned_nodes')} "
+            f"placements={self.stats.get('surviving_placements')} "
+            f"preword_pruned={self.stats.get('preword_rejections')} "
+            f"word_systems={self.stats.get('solver_cases')} "
+            f"families={self.stats.get('word_families')}"
+            f"[finite={self.stats.get('word_family_finite')},"
+            f"power={self.stats.get('word_family_power')},"
+            f"nested={self.stats.get('word_family_nested_power')}] "
+            f"specializations={self.stats.get('family_specializations')} "
+            f"unexpanded={self.stats.get('families_not_specialized')} "
+            f"joint_angle_rejections={self.stats.get('decoration_rejection_joint_angular_feasibility')} "
+            f"profile_rejections={rejected_profiles} "
+            f"profiles={self.stats.get('profiles_emitted')}"
+        )
+
+    def _heartbeat_snapshot(self) -> Dict[str, object]:
+        now = time.perf_counter()
+        with self._stage_lock:
+            stage = self._current_stage
+            stage_started_at = self._stage_started_at
+            stage_context = dict(self._stage_context)
+
+        snapshot: Dict[str, object] = {
+            "schema_version": "formal-contour-heartbeat-v1",
+            "map": self._current_map_name,
+            "stage": stage,
+            "stage_elapsed_seconds": max(0.0, now - stage_started_at),
+            "elapsed_seconds": self.stats.elapsed_seconds,
+            "progress_line": self._progress_message(),
+            "context": stage_context,
+            "checkpoint": str(self.checkpoint_store.path),
+        }
+
+        if self._current_weak_orders is not None:
+            weak = self._current_weak_orders.progress_snapshot()
+            path = weak.get("path", [])
+            weak["path_id"] = self._short_hash(path, "wo")
+            snapshot["weak_order"] = weak
+
+        if stage == "preword_pruning":
+            snapshot["preword"] = self.preword_pruning.progress_snapshot()
+
+        if self._current_word_solver is not None:
+            snapshot["word_solver"] = self._current_word_solver.progress_snapshot()
+
+        reproducer: Dict[str, object] = {
+            "map": self._current_map_name,
+            "stage": stage,
+            "context": stage_context,
+        }
+        if self._current_assignment is not None and self._current_occurrence_names:
+            reproducer["assignment"] = self._current_assignment.to_dict(
+                self._current_occurrence_names
+            )
+        if self._current_placement is not None and self._current_occurrence_names:
+            reproducer["placement"] = self._current_placement.to_dict(
+                self._current_occurrence_names
+            )
+        if self._current_compiled is not None:
+            reproducer["word_case"] = self._current_compiled.to_dict()
+        if self._current_weak_orders is not None:
+            reproducer["weak_order"] = self._current_weak_orders.progress_snapshot()
+        snapshot["reproducer"] = reproducer
+        return snapshot
+
+    def _emit_heartbeat(self, snapshot: Mapping[str, object]) -> None:
+        print(
+            "[HEARTBEAT] " + str(snapshot.get("progress_line", "")),
+            file=sys.stderr,
+            flush=True,
+        )
+        stage = str(snapshot.get("stage", "unknown"))
+        stage_elapsed = float(snapshot.get("stage_elapsed_seconds", 0.0))
+        context = snapshot.get("context", {})
+        details = [f"stage={stage}", f"stage_elapsed={stage_elapsed:.1f}s"]
+        if isinstance(context, Mapping):
+            for key in ("assignment_id", "placement_id", "work_id"):
+                if context.get(key) is not None:
+                    details.append(f"{key}={context[key]}")
+        weak = snapshot.get("weak_order")
+        if isinstance(weak, Mapping):
+            details.extend(
+                [
+                    f"weak_phase={weak.get('phase')}",
+                    f"depth={weak.get('depth')}",
+                    f"blocks={weak.get('block_count')}",
+                    f"path_id={weak.get('path_id')}",
+                    f"path_tail={weak.get('path_tail')}",
+                ]
+            )
+        preword = snapshot.get("preword")
+        if isinstance(preword, Mapping):
+            details.append(f"preword_phase={preword.get('phase')}")
+        word = snapshot.get("word_solver")
+        if isinstance(word, Mapping):
+            details.extend(
+                [
+                    f"word_phase={word.get('phase')}",
+                    f"states={word.get('visited_states')}",
+                    f"edges={word.get('graph_edges')}",
+                    f"word_depth={word.get('depth')}",
+                    f"residual={word.get('equation_count')}eq/{word.get('literal_count')}lit",
+                ]
+            )
+        stack = snapshot.get("stack")
+        if isinstance(stack, Sequence) and stack:
+            top = stack[-1]
+            if isinstance(top, Mapping):
+                details.append(
+                    "at="
+                    f"{Path(str(top.get('filename', ''))).name}:"
+                    f"{top.get('line')}:{top.get('function')}"
+                )
+        details.append(f"snapshot={self.heartbeat_latest_path}")
+        print(
+            "[HEARTBEAT STATE] " + " ".join(details),
+            file=sys.stderr,
+            flush=True,
+        )
+        atomic_write_json(self.heartbeat_latest_path, dict(snapshot))
+        compact = {
+            key: snapshot.get(key)
+            for key in (
+                "heartbeat_utc",
+                "map",
+                "stage",
+                "stage_elapsed_seconds",
+                "elapsed_seconds",
+                "context",
+                "weak_order",
+                "preword",
+                "word_solver",
+                "stack",
+            )
+            if key in snapshot
+        }
+        with self.heartbeat_history_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(compact, sort_keys=True, default=str) + "\n")
+
+    def _start_heartbeat(self) -> None:
+        progress = self.config.get("progress", {})
+        if not bool(progress.get("enabled", True)):
+            return
+        if not bool(progress.get("heartbeat_enabled", True)):
+            return
+        configured = float(progress.get("heartbeat_interval_seconds", 60.0))
+        interval = min(60.0, max(1.0, configured))
+        self._heartbeat_reporter = HeartbeatReporter(
+            interval_seconds=interval,
+            worker_thread_id=threading.get_ident(),
+            snapshot_provider=self._heartbeat_snapshot,
+            snapshot_sink=self._emit_heartbeat,
+        )
+        self._heartbeat_reporter.start()
+
+    def _stop_heartbeat(self) -> None:
+        if self._heartbeat_reporter is not None:
+            self._heartbeat_reporter.stop()
+            self._heartbeat_reporter = None
+
     def _event(self, name: str, amount: int = 1) -> None:
         self.stats.increment(name, amount)
         self._maybe_progress()
@@ -229,46 +448,7 @@ class SolverRunner:
         if not force and now - self._last_progress < interval:
             return
         self._last_progress = now
-        elapsed = self.stats.elapsed_seconds
-        nodes = self.stats.get("placement_nodes")
-        rate = nodes / elapsed if elapsed else 0.0
-        percent = self._progress_percentage()
-        _assignment_mass, _assignment_total, assignment_percent = self._current_assignment_progress()
-        exact_progress = bool(
-            self.config["enumeration"].get("track_exact_domain_size", True)
-        )
-        overall_text = f"{percent:5.1f}%" if exact_progress else "  n/a "
-        assignment_text = (
-            f"{assignment_percent:5.1f}%" if exact_progress else "  n/a "
-        )
-        assignment_position = int(self._search_state.get("assignment_id", 0)) + 1
-        rejected_profiles = (
-            self.stats.get("decoration_rejections")
-            + self.stats.get("profile_filter_rejections")
-        )
-        message = (
-            f"[{elapsed:9.2f}s] map={self._current_map_name} "
-            f"overall~{overall_text} "
-            f"assignment={assignment_position}/{max(1, self._total_assignment_count)} "
-            f"current~{assignment_text} "
-            f"nodes={nodes} ({rate:,.0f}/s) "
-            f"length_pruned={self.stats.get('length_pruned_nodes')} "
-            f"angle_pruned={self.stats.get('angle_pruned_nodes')} "
-            f"outer_arc_pruned={self.stats.get('exterior_arc_repetition_pruned_nodes')} "
-            f"placements={self.stats.get('surviving_placements')} "
-            f"preword_pruned={self.stats.get('preword_rejections')} "
-            f"word_systems={self.stats.get('solver_cases')} "
-            f"families={self.stats.get('word_families')}"
-            f"[finite={self.stats.get('word_family_finite')},"
-            f"power={self.stats.get('word_family_power')},"
-            f"nested={self.stats.get('word_family_nested_power')}] "
-            f"specializations={self.stats.get('family_specializations')} "
-            f"unexpanded={self.stats.get('families_not_specialized')} "
-            f"joint_angle_rejections={self.stats.get('decoration_rejection_joint_angular_feasibility')} "
-            f"profile_rejections={rejected_profiles} "
-            f"profiles={self.stats.get('profiles_emitted')}"
-        )
-        print(message, file=sys.stderr, flush=True)
+        print(self._progress_message(), file=sys.stderr, flush=True)
 
     def _checkpoint_state_payload(self) -> Dict[str, Any]:
         state = dict(self._search_state)
@@ -636,6 +816,8 @@ class SolverRunner:
         )
         tolerance = float(self.config["enumeration"]["lp_tolerance"])
         exhausted = True
+        self._set_stage("starting_search")
+        self._start_heartbeat()
 
         try:
             start_map_index = int(self._search_state.get("map_index", 0))
@@ -645,6 +827,7 @@ class SolverRunner:
                 assignment_enumerator = context.assignment_enumerator
                 mass_per_assignment = context.mass_per_assignment
                 self._current_map_name = planar_map.name
+                self._set_stage("map_setup", map_index=map_index)
                 self._search_state["map_index"] = map_index
                 if not bool(self._search_state.get("map_started", False)):
                     self.stats.increment("maps_processed")
@@ -659,6 +842,12 @@ class SolverRunner:
                         exhausted = False
                         break
                     assignment = context.assignment_at(assignment_id)
+                    self._current_assignment = assignment
+                    self._current_occurrence_names = assignment_enumerator.occurrence_names
+                    self._set_stage(
+                        "assignment_setup",
+                        assignment_id=assignment_id,
+                    )
                     if assignment is None:
                         self.stats.increment("symmetry_pruned_assignments")
                         self._search_state["completed_leaf_mass"] = int(
@@ -762,6 +951,13 @@ class SolverRunner:
                         prefix_topology_filter=prefix_topology_filter,
                     )
                     self._current_weak_orders = weak_orders
+                    self._current_placement = None
+                    self._current_compiled = None
+                    self._current_word_solver = None
+                    self._set_stage(
+                        "weak_order_enumeration",
+                        assignment_id=assignment.assignment_id,
+                    )
                     placement_started = time.perf_counter()
 
                     for placement in weak_orders.enumerate():
@@ -782,9 +978,21 @@ class SolverRunner:
                                 }
                             )
 
+                        self._current_placement = placement
+                        self._current_compiled = None
+                        self._current_word_solver = None
+                        placement_context = {
+                            "assignment_id": assignment.assignment_id,
+                            "placement_id": placement.placement_id,
+                        }
+                        self._set_stage("word_compilation", **placement_context)
                         started = time.perf_counter()
                         try:
                             compiled = compile_word_case(planar_map, placement)
+                            self._current_compiled = compiled
+                            placement_context["work_id"] = self._short_hash(
+                                compiled.to_dict(), "ws"
+                            )
                             self.stats.increment("word_cases_compiled")
                         except Exception as error:
                             self.stats.increment("compile_errors")
@@ -797,6 +1005,10 @@ class SolverRunner:
                                     "assignment_id": assignment.assignment_id,
                                     "placement_id": placement.placement_id,
                                 },
+                            )
+                            self._set_stage(
+                                "weak_order_enumeration",
+                                assignment_id=assignment.assignment_id,
                             )
                             placement_started = time.perf_counter()
                             continue
@@ -812,6 +1024,7 @@ class SolverRunner:
                         if bool(preword_config.get("enabled", True)):
                             preword_started = time.perf_counter()
                             self.stats.increment("preword_checks")
+                            self._set_stage("preword_pruning", **placement_context)
                             try:
                                 preword_result = self.preword_pruning.analyze(
                                     planar_map,
@@ -882,6 +1095,10 @@ class SolverRunner:
                                     .replace("-", "_")
                                 )
                                 self.stats.increment(f"preword_rejection_{reason_key}")
+                                self._set_stage(
+                                    "weak_order_enumeration",
+                                    assignment_id=assignment.assignment_id,
+                                )
                                 placement_started = time.perf_counter()
                                 if self._placement_limit_reached():
                                     exhausted = False
@@ -889,15 +1106,22 @@ class SolverRunner:
                                 continue
 
                         if not bool(solver_config["enabled"]):
+                            self._set_stage(
+                                "weak_order_enumeration",
+                                assignment_id=assignment.assignment_id,
+                            )
                             placement_started = time.perf_counter()
                             if self._placement_limit_reached():
                                 exhausted = False
                                 break
                             continue
 
+                        self._set_stage("word_solver_initialization", **placement_context)
                         solver = ExactPartialWordSolver(
                             compiled.effective_solver_equations, compiled.solver_variables
                         )
+                        self._current_word_solver = solver
+                        self._set_stage("word_solver", **placement_context)
                         self.stats.increment("solver_cases")
                         families_before = self.stats.get("word_families")
                         try:
@@ -908,6 +1132,7 @@ class SolverRunner:
                                 )
                             )
                             while True:
+                                self._set_stage("word_solver", **placement_context)
                                 solver_started = time.perf_counter()
                                 try:
                                     family = next(family_iterator)
@@ -928,6 +1153,12 @@ class SolverRunner:
                                         "exact_partial_word_solver",
                                         time.perf_counter() - solver_started,
                                     )
+                                self._set_stage(
+                                    "family_processing",
+                                    **placement_context,
+                                    family_id=family.family_id,
+                                    family_kind=family.kind,
+                                )
                                 self.stats.increment("word_families")
                                 self.stats.increment(f"word_family_{family.kind}")
                                 if bool(output_config.get("write_families", False)):
@@ -950,6 +1181,11 @@ class SolverRunner:
                                 for specialization in expand_family(family, expansion_policy):
                                     specialization_count += 1
                                     self.stats.increment("family_specializations")
+                                    self._set_stage(
+                                        "profile_decoration",
+                                        **placement_context,
+                                        family_id=family.family_id,
+                                    )
                                     profile_started = time.perf_counter()
                                     try:
                                         profile = build_formal_profile(
@@ -1144,10 +1380,17 @@ class SolverRunner:
                         if self._placement_limit_reached():
                             exhausted = False
                             break
+                        self._set_stage(
+                            "weak_order_enumeration",
+                            assignment_id=assignment.assignment_id,
+                        )
                         placement_started = time.perf_counter()
 
                     self._search_state["weak_order"] = weak_orders.checkpoint_state()
                     self._current_weak_orders = None
+                    self._current_placement = None
+                    self._current_compiled = None
+                    self._current_word_solver = None
                     if self._should_stop():
                         exhausted = False
                         break
@@ -1185,6 +1428,8 @@ class SolverRunner:
                 flush=True,
             )
         finally:
+            self._set_stage("finalizing")
+            self._stop_heartbeat()
             if exhausted and not self._stop_requested:
                 self._mark_top_level_safe()
             self._save_checkpoint(force=True, completed=exhausted and not self._stop_requested)

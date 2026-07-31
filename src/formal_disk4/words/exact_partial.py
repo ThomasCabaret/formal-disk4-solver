@@ -709,9 +709,24 @@ class ExactPartialWordSolver:
     def __init__(self, equations: Sequence[Equation], initial_variables: Sequence[str]) -> None:
         self.original_equations = tuple(equations)
         self.initial_variables = tuple(initial_variables)
+        self._progress: Dict[str, object] = {
+            "phase": "initial_canonicalization",
+            "visited_states": 0,
+            "graph_edges": 0,
+            "depth": 0,
+            "equation_count": len(self.original_equations),
+            "literal_count": sum(
+                len(equation.left) + len(equation.right)
+                for equation in self.original_equations
+            ),
+            "variable_count": len(self.initial_variables),
+            "environment_nodes": 0,
+            "trace_tail": [],
+        }
         initial = canonicalize_residual(self.original_equations, self.initial_variables)
         self.initial_residual = initial
         self.unsupported_components: list[UnsupportedComponent] = []
+        self._progress["phase"] = "ready" if initial is not None else "exact_unsat"
         self.last_summary = SolverRunSummary(
             visited_states=0,
             graph_edges=0,
@@ -728,12 +743,16 @@ class ExactPartialWordSolver:
             status="not_run",
         )
 
+    def progress_snapshot(self) -> Dict[str, object]:
+        return dict(self._progress)
+
     def solve(
         self,
         limits: SolverLimits,
         stop_predicate: Callable[[], bool] | None = None,
     ) -> Iterator[ExactFormalFamily]:
         if self.initial_residual is None:
+            self._progress["phase"] = "exact_unsat"
             self.last_summary = SolverRunSummary(
                 visited_states=0,
                 graph_edges=0,
@@ -766,6 +785,46 @@ class ExactPartialWordSolver:
         seen_search_signatures: set[object] = set()
         family_id = 0
         stop = False
+
+        def update_progress(
+            phase: str,
+            *,
+            residual: _CanonicalResidual | None = None,
+            environment: _EnvironmentState | None = None,
+            trace: Sequence[str] = (),
+            branch: str | None = None,
+            raw_equations: Sequence[Equation] | None = None,
+        ) -> None:
+            equations = (
+                tuple(raw_equations)
+                if raw_equations is not None
+                else (residual.equations if residual is not None else ())
+            )
+            variables = residual.variables if residual is not None else ()
+            self._progress = {
+                "phase": phase,
+                "visited_states": counters.visited_states,
+                "graph_edges": counters.graph_edges,
+                "emitted_families": family_id,
+                "depth": len(trace),
+                "equation_count": len(equations),
+                "literal_count": sum(
+                    len(equation.left) + len(equation.right)
+                    for equation in equations
+                ),
+                "variable_count": len(variables),
+                "environment_nodes": (
+                    environment.node_count if environment is not None else 0
+                ),
+                "branch": branch,
+                "trace_tail": list(trace[-12:]),
+            }
+
+        update_progress(
+            "search_start",
+            residual=self.initial_residual,
+            environment=initial_environment,
+        )
 
         def next_exponent_name(environment: _EnvironmentState) -> str:
             existing = arena.exponent_names(environment)
@@ -850,6 +909,12 @@ class ExactPartialWordSolver:
             path_index: dict[Tuple[object, ...], int],
         ) -> Iterator[ExactFormalFamily]:
             nonlocal stop
+            update_progress(
+                "search_node",
+                residual=residual,
+                environment=environment,
+                trace=trace,
+            )
             if stop:
                 return
             if should_stop():
@@ -883,6 +948,12 @@ class ExactPartialWordSolver:
                 yield from emit_family(environment, minimums, trace)
                 return
 
+            update_progress(
+                "branch_generation",
+                residual=residual,
+                environment=environment,
+                trace=trace,
+            )
             for branch_name, substitution in branch_substitutions(
                 residual.equations, residual.variables
             ):
@@ -897,6 +968,13 @@ class ExactPartialWordSolver:
                     stop = True
                     return
                 counters.graph_edges += 1
+                update_progress(
+                    "substitute_equations",
+                    residual=residual,
+                    environment=environment,
+                    trace=trace,
+                    branch=branch_name,
+                )
 
                 raw_equations = _substitute_equations_fast(
                     residual.equations, substitution
@@ -910,6 +988,14 @@ class ExactPartialWordSolver:
                     + tuple(equation.right for equation in raw_equations)
                     + raw_transition_words
                 )
+                update_progress(
+                    "canonicalize_residual",
+                    residual=residual,
+                    environment=environment,
+                    trace=trace,
+                    branch=branch_name,
+                    raw_equations=raw_equations,
+                )
                 child = canonicalize_residual(raw_equations, raw_variables)
                 if child is None:
                     continue
@@ -922,6 +1008,13 @@ class ExactPartialWordSolver:
                     variable: arena.from_word(word)
                     for variable, word in transition.items()
                 }
+                update_progress(
+                    "update_environment",
+                    residual=child,
+                    environment=environment,
+                    trace=trace,
+                    branch=branch_name,
+                )
                 child_environment = arena.apply_environment(
                     environment, replacement_ids
                 )
@@ -1030,6 +1123,11 @@ class ExactPartialWordSolver:
         )
 
         emitted = family_id
+        update_progress(
+            "finalizing",
+            residual=self.initial_residual,
+            environment=initial_environment,
+        )
         exact_unsat = (
             emitted == 0
             and counters.unsupported_complex_components == 0
@@ -1065,4 +1163,12 @@ class ExactPartialWordSolver:
             exact_unsat=exact_unsat,
             status=status,
         )
+        self._progress = {
+            **self._progress,
+            "phase": "done",
+            "visited_states": counters.visited_states,
+            "graph_edges": counters.graph_edges,
+            "emitted_families": emitted,
+            "status": status,
+        }
 

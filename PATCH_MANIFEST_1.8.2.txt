@@ -1,0 +1,11 @@
+PATCH_NOTES_1.8.2.md
+PATCH_MANIFEST_1.8.2.txt
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/pipeline/heartbeat.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/preword/filter.py
+src/formal_disk4/words/exact_partial.py
+tests/test_heartbeat.py
+tests/test_exact_partial.py
