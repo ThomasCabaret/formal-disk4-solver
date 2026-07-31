@@ -1,0 +1,14 @@
+formal-disk4 solver patch 1.8.1
+Base version: 1.8.0
+Extract at the repository root and overwrite existing files.
+
+Files:
+b72ae50c56b59d15557ad8b9594e2c938a9e49f8c8a2a2475f106c92f945c871  pyproject.toml
+c3c87c0ba5f9d079362b615f6d5bf447a350575897b1b45e57299da8f9641f15  src/formal_disk4/__init__.py
+38e694ad81e446a3f5865768a506c7fdbdd772682e43732f77cc29882b7037e6  src/formal_disk4/cli.py
+f94646f97528afd29114d407bea55f9feb1e0cf0d85fb20013a175b9f423d3fb  src/formal_disk4/maps/__init__.py
+e353055a55f72698e2f5c322aa9a03d5f6c29c7761f647b5a2561deab2e4eb51  src/formal_disk4/maps/registry.py
+721f8ae616cd10b73bb194e42b10b7ab1b6610b69c2fd2522c6dd63b161987da  src/formal_disk4/maps/three_ring_families.py
+9d4ccaaaee0867efa050da7f52b7aa907cbaae5349d4ba3a84632e8fc0fb617a  config/case_families/cyclic-three-ring.json
+a1242afe6998f4fbbedef2fbac69c1a4d575227ec10abebe378bcfdfc0c4d307  tests/test_three_ring_campaign.py
+05600157076bac31d3dc7e212dc78c3c92dcaa3382d574ed7ef8e36091c968df  PATCH_NOTES_1.8.1.md

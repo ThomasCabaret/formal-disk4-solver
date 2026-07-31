@@ -1,0 +1,73 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "cyclic-three-ring",
+  "label": "Cyclic three-ring families",
+  "description": "Three cyclic tile orbits with imposed rotation_1 equivariance.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "cyclic",
+    "three-ring",
+    "nine-tiles",
+    "weak-problem"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "cyclic_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_1",
+          "enforce_weak_orders": true
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "parallel",
+      "case_id_template": "three-ring-parallel-3",
+      "label": "Three rings of 3 - parallel / parallel",
+      "description": "Three 3-cycles with one matching interface between corresponding tiles of adjacent layers.",
+      "map_template": "three-ring-parallel-3"
+    },
+    {
+      "id": "boundary-points",
+      "case_id_template": "three-ring-boundary-points-3",
+      "label": "Three rings of 3 - open outer layer / boundary points",
+      "description": "The outer tiles do not contact each other; each middle tile reaches the disk boundary at the point between two outer arcs, while the two inner layers remain parallel cycles.",
+      "map_template": "three-ring-boundary-points-3"
+    },
+    {
+      "id": "outer-offset",
+      "case_id_template": "three-ring-outer-offset-3",
+      "label": "Three rings of 3 - offset / parallel",
+      "description": "Offset contacts between the outer and middle layers, parallel contacts between middle and inner layers.",
+      "map_template": "three-ring-outer-offset-3"
+    },
+    {
+      "id": "inner-offset",
+      "case_id_template": "three-ring-inner-offset-3",
+      "label": "Three rings of 3 - parallel / offset",
+      "description": "Parallel contacts between the outer and middle layers, offset contacts between middle and inner layers.",
+      "map_template": "three-ring-inner-offset-3"
+    },
+    {
+      "id": "offset-same",
+      "case_id_template": "three-ring-offset-same-3",
+      "label": "Three rings of 3 - offset / offset, same chirality",
+      "description": "Both annuli use the same cyclic offset orientation.",
+      "map_template": "three-ring-offset-same-3"
+    },
+    {
+      "id": "offset-opposite",
+      "case_id_template": "three-ring-offset-opposite-3",
+      "label": "Three rings of 3 - offset / offset, opposite chirality",
+      "description": "The inner annulus uses the opposite cyclic offset orientation from the outer annulus.",
+      "map_template": "three-ring-offset-opposite-3"
+    }
+  ]
+}

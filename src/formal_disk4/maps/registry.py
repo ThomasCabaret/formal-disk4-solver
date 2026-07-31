@@ -16,6 +16,14 @@ from .two_ring_families import (
     build_inner_cycle_boundary_points_map,
     build_outer_cycle_center_points_map,
 )
+from .three_ring_families import (
+    build_three_ring_boundary_points_map,
+    build_three_ring_inner_offset_map,
+    build_three_ring_offset_opposite_map,
+    build_three_ring_offset_same_map,
+    build_three_ring_outer_offset_map,
+    build_three_ring_parallel_map,
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,36 @@ _DYNAMIC_MAP_PATTERNS = (
         re.compile(r"^outer-cycle-center-points-(\d+)$"),
         build_outer_cycle_center_points_map,
     ),
+    (
+        "three-ring-parallel",
+        re.compile(r"^three-ring-parallel-(\d+)$"),
+        build_three_ring_parallel_map,
+    ),
+    (
+        "three-ring-boundary-points",
+        re.compile(r"^three-ring-boundary-points-(\d+)$"),
+        build_three_ring_boundary_points_map,
+    ),
+    (
+        "three-ring-outer-offset",
+        re.compile(r"^three-ring-outer-offset-(\d+)$"),
+        build_three_ring_outer_offset_map,
+    ),
+    (
+        "three-ring-inner-offset",
+        re.compile(r"^three-ring-inner-offset-(\d+)$"),
+        build_three_ring_inner_offset_map,
+    ),
+    (
+        "three-ring-offset-same",
+        re.compile(r"^three-ring-offset-same-(\d+)$"),
+        build_three_ring_offset_same_map,
+    ),
+    (
+        "three-ring-offset-opposite",
+        re.compile(r"^three-ring-offset-opposite-(\d+)$"),
+        build_three_ring_offset_opposite_map,
+    ),
 )
 
 _DYNAMIC_ALIASES = {
@@ -125,7 +163,7 @@ def canonical_map_name(name: str) -> str:
             return f"{prefix}-{int(match.group(1))}"
     raise ValueError(
         f"Unknown map {name!r}; available: {', '.join(available_maps())}, "
-        "or a supported two-ring family ending in -N with N >= 3"
+        "or a supported cyclic family ending in -N with N >= 3"
     )
 
 
