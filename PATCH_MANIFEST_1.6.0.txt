@@ -1,0 +1,29 @@
+Formal Disk4 Solver differential patch 1.6.0
+Base version: 1.5.1
+
+MODIFIED
+config/cases/double-cycle-6/profile.json
+config/cases/double-cycle-6/search.json
+config/cycle_campaign/search.json
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/cli.py
+src/formal_disk4/enumeration/__init__.py
+src/formal_disk4/enumeration/assignments.py
+src/formal_disk4/enumeration/weak_orders.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+tests/test_assignments.py
+tests/test_double_cycle.py
+tests/test_pizza3.py
+tests/test_pizza4.py
+tests/test_two_ring_campaign.py
+
+NEW
+src/formal_disk4/enumeration/symmetry.py
+tests/test_symmetry_quotient.py
+PATCH_NOTES_1.6.0.md
+PATCH_MANIFEST_1.6.0.txt
+
+REMOVED
+(none)

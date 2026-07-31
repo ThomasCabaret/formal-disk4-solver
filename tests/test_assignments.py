@@ -11,7 +11,7 @@ class AssignmentTests(unittest.TestCase):
             allow_reflections=False,
             symmetry_mode="assignment",
         )
-        self.assertEqual(enumerator.raw_assignment_count(), 192)
+        self.assertEqual(enumerator.raw_assignment_count(), 64)
         self.assertEqual(len(list(enumerator.enumerate())), 32)
 
     def test_reflected_assignment_orbits(self) -> None:
@@ -20,7 +20,7 @@ class AssignmentTests(unittest.TestCase):
             allow_reflections=True,
             symmetry_mode="assignment",
         )
-        self.assertEqual(enumerator.raw_assignment_count(), 1536)
+        self.assertEqual(enumerator.raw_assignment_count(), 512)
         self.assertEqual(len(list(enumerator.enumerate())), 256)
 
 

@@ -38,8 +38,8 @@ class FourPiecePizzaTests(unittest.TestCase):
         enumerator = AssignmentEnumerator(
             planar_map, allow_reflections=True, symmetry_mode="assignment"
         )
-        self.assertEqual(enumerator.raw_assignment_count(), 648)
-        self.assertEqual(len(tuple(enumerator.enumerate())), 99)
+        self.assertEqual(enumerator.raw_assignment_count(), 216)
+        self.assertEqual(len(tuple(enumerator.enumerate())), 114)
 
     def test_obvious_quarter_sector_profile_survives(self) -> None:
         planar_map = build_c4_map()

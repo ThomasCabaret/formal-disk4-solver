@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from formal_disk4.config import load_config
@@ -125,6 +126,48 @@ class CheckpointTests(unittest.TestCase):
             self.assertTrue(second_summary["checkpoint"]["resumed"])
             second_nodes = second_summary["statistics"]["counters"].get("placement_nodes", 0)
             self.assertGreaterEqual(second_nodes, first_nodes)
+
+    def test_unexpected_errors_taint_without_stopping_the_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = load_config(None)
+            config["maps"] = ["c3"]
+            config["output"]["directory"] = temporary
+            config["progress"]["enabled"] = False
+            config["checkpoint"].update(
+                {"enabled": False, "resume": False, "restart": True}
+            )
+            config["limits"].update(
+                {
+                    "max_assignments": 1,
+                    "max_nodes": 100,
+                    "max_placements": None,
+                    "max_profiles": None,
+                    "time_limit_seconds": None,
+                }
+            )
+            with patch(
+                "formal_disk4.pipeline.runner.compile_word_case",
+                side_effect=RuntimeError("synthetic compile failure"),
+            ):
+                summary = SolverRunner(config).run()
+
+            self.assertTrue(summary["tainted"])
+            self.assertGreater(summary["unexpected_error_count"], 0)
+            self.assertEqual(
+                summary["unexpected_errors_by_stage"]["compile_word_case"],
+                summary["unexpected_error_count"],
+            )
+            self.assertEqual(summary["statistics"]["stop_reason"], "max_nodes")
+            error_records = [
+                json.loads(line)
+                for line in (Path(temporary) / "errors.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(error_records)
+            self.assertEqual(error_records[0]["stage"], "compile_word_case")
+            self.assertIn("Traceback", error_records[0]["traceback"])
 
 
 if __name__ == "__main__":

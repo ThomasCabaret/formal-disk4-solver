@@ -256,6 +256,16 @@ def command_counts(args: argparse.Namespace) -> int:
         ),
         "enumerated_assignment_domain": assignment_count,
         "symmetry_mode": args.symmetry,
+        "intrinsic_symmetry_group_size": len(enumerator.mapping_symmetry.group),
+        "admissible_symmetry_group_size": len(
+            enumerator.mapping_symmetry.quotient_group
+        ),
+        "effective_mapping_symmetry_actions": len(
+            enumerator.mapping_symmetry.mapping_actions
+        ),
+        "complete_mapping_quotient_enabled": (
+            enumerator.mapping_symmetry.complete_mapping_quotient_enabled
+        ),
         "exterior_arc_repetition": repetition_summary,
         "raw_weak_orders_per_assignment": weak_per_assignment,
         "estimated_raw_weak_orders_over_assignment_domain": (

@@ -132,6 +132,18 @@ class CyclicCampaignTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             suite_forwarded_arguments("search", ["--restart"])
 
+    def test_cycle_campaign_enables_intrinsic_mapping_quotient(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        search = json.loads(
+            (root / "config" / "cycle_campaign" / "search.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(search["enumeration"]["symmetry_mode"], "incremental")
+        self.assertTrue(
+            search["enumeration"]["cyclic_equivariance"]["enforce_weak_orders"]
+        )
+
     def test_suite_files_are_external_case_lists(self) -> None:
         root = Path(__file__).resolve().parents[1] / "config" / "suites"
         for size in (3, 4, 5):

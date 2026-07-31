@@ -41,10 +41,10 @@ class PizzaMapTests(unittest.TestCase):
         reflected = AssignmentEnumerator(
             planar_map, allow_reflections=True, symmetry_mode="assignment"
         )
-        self.assertEqual(direct.raw_assignment_count(), 27)
-        self.assertEqual(len(tuple(direct.enumerate())), 7)
-        self.assertEqual(reflected.raw_assignment_count(), 108)
-        self.assertEqual(len(tuple(reflected.enumerate())), 22)
+        self.assertEqual(direct.raw_assignment_count(), 9)
+        self.assertEqual(len(tuple(direct.enumerate())), 6)
+        self.assertEqual(reflected.raw_assignment_count(), 36)
+        self.assertEqual(len(tuple(reflected.enumerate())), 21)
 
     def test_obvious_sector_profile_survives_current_filters(self) -> None:
         planar_map = build_c3_map()

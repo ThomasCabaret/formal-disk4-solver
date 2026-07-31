@@ -16,7 +16,11 @@ from formal_disk4.geometry.model import (
     parse_formal_geometry_problem,
 )
 from formal_disk4.geometry.runner import GeometryRunner
-from formal_disk4.geometry.solver import GeometrySolverConfig, NumericalContourSolver
+from formal_disk4.geometry.solver import (
+    GeometryAttemptResult,
+    GeometrySolverConfig,
+    NumericalContourSolver,
+)
 from formal_disk4.pipeline.runner import SolverRunner
 
 
@@ -232,7 +236,6 @@ class GeometrySolverTests(unittest.TestCase):
                 places=8,
             )
 
-
     def test_staged_solver_validates_only_near_closure(self) -> None:
         class CountingSolver(NumericalContourSolver):
             def __init__(self, config):
@@ -386,8 +389,75 @@ class GeometrySolverTests(unittest.TestCase):
             checkpoint = json.loads(
                 (geometry_output / "geometry_checkpoint.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(checkpoint["next_line"], 2)
+            self.assertEqual(checkpoint["version"], 2)
+            self.assertEqual(checkpoint["scan_passes"], 1)
+            self.assertNotIn("next_line", checkpoint)
             self.assertEqual(checkpoint["candidates_solved"], 1)
+
+    def test_geometry_resume_retries_unsolved_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate_path = build_pizza_candidate(root)
+            geometry_output = root / "geometry-retry"
+            config = load_geometry_config(None)
+            config["input"]["candidates_file"] = str(candidate_path)
+            config["output"].update(
+                {
+                    "directory": str(geometry_output),
+                    "include_formal_candidate": True,
+                    "write_failures": True,
+                }
+            )
+            config["limits"].update(
+                {
+                    "max_candidates": 1,
+                    "max_solutions": 1,
+                    "stop_on_first_solution": True,
+                }
+            )
+            config["checkpoint"].update(
+                {"enabled": True, "resume": True, "restart": True}
+            )
+
+            first_runner = GeometryRunner(config)
+            first_runner.solver.solve = lambda _problem: GeometryAttemptResult(
+                solution=None,
+                reason="synthetic_failure",
+                attempts=1,
+                best_cost=1.0,
+                best_validation=None,
+            )
+            first_summary = first_runner.run()
+            self.assertEqual(first_summary["state"]["candidates_failed"], 1)
+            self.assertEqual(first_summary["state"]["candidates_solved"], 0)
+
+            # Simulate the 1.5.0 checkpoint that would previously have skipped
+            # this failed line forever after extraction of the patch.
+            checkpoint_path = geometry_output / "geometry_checkpoint.json"
+            legacy_checkpoint = json.loads(
+                checkpoint_path.read_text(encoding="utf-8")
+            )
+            legacy_checkpoint["version"] = 1
+            legacy_checkpoint["next_line"] = 2
+            legacy_checkpoint.pop("scan_passes", None)
+            legacy_checkpoint.pop("candidates_skipped_solved", None)
+            checkpoint_path.write_text(
+                json.dumps(legacy_checkpoint), encoding="utf-8"
+            )
+
+            config["checkpoint"]["restart"] = False
+            second_summary = GeometryRunner(config).run()
+            self.assertEqual(second_summary["stop_reason"], "first_solution")
+            self.assertEqual(second_summary["state"]["candidates_seen"], 2)
+            self.assertEqual(second_summary["state"]["candidates_solved"], 1)
+            records = [
+                json.loads(line)
+                for line in (
+                    geometry_output / "geometric_solutions.jsonl"
+                ).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(records), 1)
 
 
 if __name__ == "__main__":

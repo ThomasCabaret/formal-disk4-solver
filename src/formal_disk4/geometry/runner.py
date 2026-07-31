@@ -14,7 +14,7 @@ from .model import parse_formal_geometry_problem
 from .solver import GeometrySolverConfig, NumericalContourSolver
 
 
-GEOMETRY_CHECKPOINT_VERSION = 1
+GEOMETRY_CHECKPOINT_VERSION = 2
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -61,8 +61,9 @@ class GeometryRunner:
             "version": GEOMETRY_CHECKPOINT_VERSION,
             "input_path": str(self.input_path),
             "input_fingerprint": _file_fingerprint(self.input_path),
-            "next_line": 1,
+            "scan_passes": 0,
             "candidates_seen": 0,
+            "candidates_skipped_solved": 0,
             "candidates_solved": 0,
             "candidates_failed": 0,
             "optimizer_attempts": 0,
@@ -88,7 +89,8 @@ class GeometryRunner:
         if not resume or not self.checkpoint_path.exists():
             return self._initial_state()
         state = _read_json(self.checkpoint_path)
-        if int(state.get("version", -1)) != GEOMETRY_CHECKPOINT_VERSION:
+        version = int(state.get("version", -1))
+        if version not in (1, GEOMETRY_CHECKPOINT_VERSION):
             raise RuntimeError(
                 "Geometry checkpoint version is incompatible. Use --restart."
             )
@@ -97,19 +99,53 @@ class GeometryRunner:
                 "Geometry checkpoint refers to a different candidates file. Use --restart "
                 "or choose another geometry output directory."
             )
-        current_fingerprint = _file_fingerprint(self.input_path)
-        previous_fingerprint = str(state.get("input_fingerprint", ""))
-        if previous_fingerprint != current_fingerprint:
-            # The formal search can append survivors. Keep the line cursor when the
-            # path is unchanged, but mark the new fingerprint for future resumes.
-            state["input_fingerprint"] = current_fingerprint
+        if version == 1:
+            # Version 1 stored a permanent line cursor. Migrate conservatively by
+            # discarding that cursor and rescanning every unresolved candidate.
+            state.pop("next_line", None)
+            state["version"] = GEOMETRY_CHECKPOINT_VERSION
+            state.setdefault("scan_passes", 0)
+            state.setdefault("candidates_skipped_solved", 0)
             state["completed"] = False
+        current_fingerprint = _file_fingerprint(self.input_path)
+        if str(state.get("input_fingerprint", "")) != current_fingerprint:
+            state["completed"] = False
+        state["input_fingerprint"] = current_fingerprint
         return state
 
     def _save_state(self, state: Mapping[str, Any]) -> None:
         if not bool(self.config.get("checkpoint", {}).get("enabled", True)):
             return
         atomic_write_json(self.checkpoint_path, state)
+
+    def _load_solved_profile_ids(self) -> set[str]:
+        """Read persisted solutions so resume never depends on a line cursor."""
+        solved: set[str] = set()
+        if not self.solutions_path.exists():
+            return solved
+        with self.solutions_path.open(
+            "r", encoding="utf-8", errors="replace"
+        ) as handle:
+            for line_number, line in enumerate(handle, 1):
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    record = json.loads(text)
+                except json.JSONDecodeError as error:
+                    # A malformed old record must never cause a formal candidate to
+                    # be skipped. It may only lead to a harmless duplicate solution.
+                    print(
+                        "[GEOMETRY CHECKPOINT WARNING] "
+                        f"Ignoring malformed solution record at line {line_number}: {error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
+                profile_id = record.get("formal_profile_id")
+                if isinstance(profile_id, str) and profile_id:
+                    solved.add(profile_id)
+        return solved
 
     def run(self) -> Dict[str, Any]:
         if not self.input_path.exists():
@@ -118,15 +154,24 @@ class GeometryRunner:
                 "Run the formal search first."
             )
         state = self._load_state()
+        solved_profile_ids = self._load_solved_profile_ids()
+        # The persisted solution file is authoritative. A stale checkpoint must
+        # never claim that a missing solution record is already resolved.
+        state["candidates_solved"] = len(solved_profile_ids)
+        state["scan_passes"] = int(state.get("scan_passes", 0)) + 1
+        state["completed"] = False
         started = time.perf_counter()
         output = self.config["output"]
-        append = int(state.get("next_line", 1)) > 1 and self.solutions_path.exists()
-        solution_writer = JsonlWriter(self.solutions_path, flush_every=1, append=append)
+        solution_writer = JsonlWriter(
+            self.solutions_path,
+            flush_every=1,
+            append=self.solutions_path.exists(),
+        )
         failure_writer = (
             JsonlWriter(
                 self.failures_path,
                 flush_every=1,
-                append=append,
+                append=self.failures_path.exists(),
                 max_records=int(output.get("max_failure_records", 1000)),
             )
             if bool(output.get("write_failures", False))
@@ -138,18 +183,13 @@ class GeometryRunner:
         stop_on_first = bool(limits.get("stop_on_first_solution", False))
         include_formal = bool(output.get("include_formal_candidate", True))
         stop_reason = "completed"
+        session_candidates_attempted = 0
 
         try:
             with self.input_path.open("r", encoding="utf-8") as handle:
                 for line_number, line in enumerate(handle, 1):
-                    if line_number < int(state.get("next_line", 1)):
-                        continue
-                    if max_candidates is not None and int(state["candidates_seen"]) >= int(max_candidates):
-                        stop_reason = "max_candidates"
-                        break
                     text = line.strip()
                     if not text:
-                        state["next_line"] = line_number + 1
                         continue
                     candidate = json.loads(text)
                     problem = parse_formal_geometry_problem(
@@ -157,6 +197,24 @@ class GeometryRunner:
                         source_path=self.input_path,
                         source_line=line_number,
                     )
+                    if problem.formal_profile_id in solved_profile_ids:
+                        state["candidates_skipped_solved"] = int(
+                            state.get("candidates_skipped_solved", 0)
+                        ) + 1
+                        continue
+                    if (
+                        max_candidates is not None
+                        and session_candidates_attempted >= int(max_candidates)
+                    ):
+                        stop_reason = "max_candidates"
+                        break
+                    if (
+                        max_solutions is not None
+                        and int(state["candidates_solved"]) >= int(max_solutions)
+                    ):
+                        stop_reason = "max_solutions"
+                        break
+                    session_candidates_attempted += 1
                     print(
                         "[GEOMETRY] "
                         f"candidate={problem.formal_profile_id} map={problem.map_name} "
@@ -187,6 +245,7 @@ class GeometryRunner:
                         if include_formal:
                             record["formal_candidate"] = candidate
                         solution_writer.write(record)
+                        solved_profile_ids.add(problem.formal_profile_id)
                         validation = result.solution.validation
                         print(
                             "[GEOMETRIC SOLUTION] "
@@ -216,7 +275,6 @@ class GeometryRunner:
                             file=sys.stderr,
                             flush=True,
                         )
-                    state["next_line"] = line_number + 1
                     state["elapsed_seconds"] = float(state.get("elapsed_seconds", 0.0)) + (
                         time.perf_counter() - started
                     )
@@ -236,7 +294,7 @@ class GeometryRunner:
         except KeyboardInterrupt:
             stop_reason = "keyboard_interrupt"
             print(
-                "[GEOMETRY] Interrupted by user; saving the compact line checkpoint.",
+                "[GEOMETRY] Interrupted by user; saving the conservative checkpoint.",
                 file=sys.stderr,
                 flush=True,
             )

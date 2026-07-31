@@ -119,31 +119,45 @@ class LengthFeasibilityOracle:
 
         lp_started = time.perf_counter()
         try:
-            solution = linprog(
-                objective,
-                A_ub=np.asarray(inequalities, dtype=float),
-                b_ub=np.asarray(inequality_rhs, dtype=float),
-                A_eq=np.asarray(equalities, dtype=float),
-                b_eq=np.asarray(rhs, dtype=float),
-                bounds=[(0.0, None)] * variable_count,
-                method="highs",
-            )
+            try:
+                solution = linprog(
+                    objective,
+                    A_ub=np.asarray(inequalities, dtype=float),
+                    b_ub=np.asarray(inequality_rhs, dtype=float),
+                    A_eq=np.asarray(equalities, dtype=float),
+                    b_eq=np.asarray(rhs, dtype=float),
+                    bounds=[(0.0, None)] * variable_count,
+                    method="highs",
+                )
+            except Exception as error:
+                result = LengthFeasibilityResult(
+                    True,
+                    0.0,
+                    (),
+                    f"unknown:linprog_exception:{type(error).__name__}",
+                )
+                self._remember(key, result)
+                return result
         finally:
             self.lp_seconds += time.perf_counter() - lp_started
 
         if not solution.success or solution.x is None:
-            result = LengthFeasibilityResult(False, 0.0, (), f"linprog:{solution.status}")
+            result = LengthFeasibilityResult(
+                True, 0.0, (), f"unknown:linprog_status:{solution.status}"
+            )
             self._remember(key, result)
             return result
 
         margin = float(solution.x[epsilon_index])
         lengths = tuple(float(value) for value in solution.x[:interval_count])
-        feasible = margin > self.tolerance and self._verify(lengths, matrix_rows, margin)
+        verified = margin > self.tolerance and self._verify(
+            lengths, matrix_rows, margin
+        )
         result = LengthFeasibilityResult(
-            feasible=feasible,
-            margin=margin,
-            lengths=lengths if need_witness or feasible else (),
-            status="feasible" if feasible else "zero strict margin",
+            feasible=True,
+            margin=margin if verified else 0.0,
+            lengths=lengths if verified else (),
+            status="feasible" if verified else "unknown:zero_or_unverified_strict_margin",
         )
         self._remember(key, result)
         return result

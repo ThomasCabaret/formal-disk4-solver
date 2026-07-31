@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import time
 from typing import Iterable, Sequence, Tuple
 
@@ -27,6 +28,46 @@ class AngleFeasibilityResult:
     def angles_pi(self) -> Tuple[float, ...]:
         """Backward-compatible prototype angles for the positive contour orientation."""
         return tuple(1.0 - value for value in self.turns_pi)
+
+
+def _exactly_consistent(
+    point_count: int,
+    equations: Sequence[Tuple[Tuple[int, ...], float]],
+) -> bool:
+    """Check equality consistency over rationals before using the float LP."""
+    matrix = []
+    for coefficients, rhs in equations:
+        if len(coefficients) != point_count:
+            raise ValueError("Angle equation coefficient count does not match point_count")
+        matrix.append(
+            [Fraction(value) for value in coefficients] + [Fraction(str(rhs))]
+        )
+    row = 0
+    for column in range(point_count):
+        pivot = next(
+            (index for index in range(row, len(matrix)) if matrix[index][column]),
+            None,
+        )
+        if pivot is None:
+            continue
+        matrix[row], matrix[pivot] = matrix[pivot], matrix[row]
+        pivot_value = matrix[row][column]
+        matrix[row] = [value / pivot_value for value in matrix[row]]
+        for index in range(len(matrix)):
+            if index == row or not matrix[index][column]:
+                continue
+            factor = matrix[index][column]
+            matrix[index] = [
+                value - factor * pivot_entry
+                for value, pivot_entry in zip(matrix[index], matrix[row])
+            ]
+        row += 1
+        if row == len(matrix):
+            break
+    return not any(
+        all(value == 0 for value in equation[:-1]) and equation[-1] != 0
+        for equation in matrix
+    )
 
 
 class AngleFeasibilityOracle:
@@ -84,6 +125,13 @@ class AngleFeasibilityOracle:
             self.cache_hits += 1
             return cached
 
+        if not _exactly_consistent(point_count, normalized):
+            result = AngleFeasibilityResult(
+                False, 0.0, (), "infeasible_certified:inconsistent_equalities"
+            )
+            self._cache[key] = result
+            return result
+
         variable_count = point_count + 1
         epsilon_index = point_count
         objective = np.zeros(variable_count, dtype=float)
@@ -112,31 +160,45 @@ class AngleFeasibilityOracle:
 
         lp_started = time.perf_counter()
         try:
-            solution = linprog(
-                objective,
-                A_ub=np.asarray(a_ub, dtype=float),
-                b_ub=np.asarray(b_ub, dtype=float),
-                A_eq=np.asarray(a_eq, dtype=float) if a_eq else None,
-                b_eq=np.asarray(b_eq, dtype=float) if b_eq else None,
-                bounds=[(None, None)] * point_count + [(0.0, None)],
-                method="highs",
-            )
+            try:
+                solution = linprog(
+                    objective,
+                    A_ub=np.asarray(a_ub, dtype=float),
+                    b_ub=np.asarray(b_ub, dtype=float),
+                    A_eq=np.asarray(a_eq, dtype=float) if a_eq else None,
+                    b_eq=np.asarray(b_eq, dtype=float) if b_eq else None,
+                    bounds=[(None, None)] * point_count + [(0.0, None)],
+                    method="highs",
+                )
+            except Exception as error:
+                result = AngleFeasibilityResult(
+                    True,
+                    0.0,
+                    (),
+                    f"unknown:linprog_exception:{type(error).__name__}",
+                )
+                self._cache[key] = result
+                return result
         finally:
             self.lp_seconds += time.perf_counter() - lp_started
 
         if not solution.success or solution.x is None:
-            result = AngleFeasibilityResult(False, 0.0, (), f"linprog:{solution.status}")
+            result = AngleFeasibilityResult(
+                True, 0.0, (), f"unknown:linprog_status:{solution.status}"
+            )
             self._cache[key] = result
             return result
 
         margin = float(solution.x[epsilon_index])
         turns = tuple(float(value) for value in solution.x[:point_count])
-        feasible = margin > self.tolerance and self._verify(turns, normalized, margin)
+        verified = margin > self.tolerance and self._verify(
+            turns, normalized, margin
+        )
         result = AngleFeasibilityResult(
-            feasible,
-            margin,
-            turns if need_witness or feasible else (),
-            "feasible" if feasible else "zero strict margin",
+            True,
+            margin if verified else 0.0,
+            turns if verified else (),
+            "feasible" if verified else "unknown:zero_or_unverified_strict_margin",
         )
         if len(self._cache) > 200_000:
             self._cache.clear()

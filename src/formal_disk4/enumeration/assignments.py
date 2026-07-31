@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
+from typing import Dict, Iterator, List, Sequence, Tuple
 
 from formal_disk4.maps.base import MapAutomorphism, Occurrence, PlanarMap
+
+from .symmetry import MappingSymmetryQuotient, SymmetryAction
 
 
 def rotate(values: Sequence[Occurrence], offset: int) -> Tuple[Occurrence, ...]:
@@ -41,6 +43,7 @@ def cyclic_orientation_phase(
 @dataclass(frozen=True)
 class AssignmentTransform:
     automorphism_name: str
+    piece_map: Tuple[int, ...]
     occurrence_map: Tuple[int, ...]
     reverse_cycle: bool
 
@@ -81,7 +84,7 @@ class ContourAssignment:
 
 
 class AssignmentEnumerator:
-    """Enumerate phase/orientation assignments, optionally quotienting map symmetry."""
+    """Enumerate phase/orientation assignments with a lazy symmetry quotient."""
 
     def __init__(
         self,
@@ -89,6 +92,7 @@ class AssignmentEnumerator:
         allow_reflections: bool = True,
         symmetry_mode: str = "incremental",
         required_equivariance: str | None = None,
+        required_equivariance_on_weak_orders: bool = True,
     ) -> None:
         if symmetry_mode not in {"off", "assignment", "incremental"}:
             raise ValueError("symmetry_mode must be off, assignment, or incremental")
@@ -96,10 +100,15 @@ class AssignmentEnumerator:
         self.allow_reflections = allow_reflections
         self.symmetry_mode = symmetry_mode
         self.required_equivariance = required_equivariance
+        self.required_equivariance_on_weak_orders = bool(
+            required_equivariance_on_weak_orders
+        )
         self.piece_names = tuple(piece.name for piece in planar_map.pieces)
         self.piece_index = {name: index for index, name in enumerate(self.piece_names)}
         self.occurrences = planar_map.occurrences()
-        self.occurrence_index = {occurrence: index for index, occurrence in enumerate(self.occurrences)}
+        self.occurrence_index = {
+            occurrence: index for index, occurrence in enumerate(self.occurrences)
+        }
         self.occurrence_names = tuple(occurrence.name for occurrence in self.occurrences)
         self.base_sequences = tuple(
             tuple(
@@ -109,7 +118,14 @@ class AssignmentEnumerator:
             for piece in planar_map.pieces
         )
         self.reference_index = self.piece_index[planar_map.reference_piece]
-        self.transforms = self._build_normalized_transforms()
+        self.mapping_symmetry = MappingSymmetryQuotient(
+            planar_map,
+            required_equivariance=required_equivariance,
+            required_equivariance_on_weak_orders=(
+                self.required_equivariance_on_weak_orders
+            ),
+        )
+        self.transforms = self._build_assignment_transforms()
         self._required_automorphism = self._resolve_required_automorphism()
         self._required_occurrence_map, self._required_piece_map = (
             self._build_required_maps()
@@ -118,14 +134,31 @@ class AssignmentEnumerator:
         )
         self._equivariance_piece_orbits = self._build_equivariance_piece_orbits()
 
+    @property
+    def symmetry_enabled(self) -> bool:
+        return self.symmetry_mode != "off"
+
     def _piece_options(self) -> Tuple[Tuple[Tuple[int, ...], ...], ...]:
         options: List[Tuple[Tuple[int, ...], ...]] = []
         for piece_index, base in enumerate(self.base_sequences):
             piece_options: List[Tuple[int, ...]] = []
-            signs = (1,) if piece_index == self.reference_index or not self.allow_reflections else (1, -1)
+            signs = (
+                (1,)
+                if piece_index == self.reference_index or not self.allow_reflections
+                else (1, -1)
+            )
             for sign in signs:
                 oriented = base if sign == 1 else tuple(reversed(base))
-                for phase in range(len(base)):
+                phases = (
+                    (0,)
+                    if (
+                        self.symmetry_enabled
+                        and self.mapping_symmetry.complete_mapping_quotient_enabled
+                        and piece_index == self.reference_index
+                    )
+                    else range(len(base))
+                )
+                for phase in phases:
                     piece_options.append(tuple(oriented[phase:] + oriented[:phase]))
             options.append(tuple(piece_options))
         return tuple(options)
@@ -168,7 +201,6 @@ class AssignmentEnumerator:
                 current = self._required_piece_map[current]
             if current != seed:
                 raise ValueError("Required equivariance piece map is not a permutation cycle")
-            # Use the anchored reference copy as representative of its orbit.
             if self.reference_index in orbit:
                 offset = orbit.index(self.reference_index)
                 orbit = orbit[offset:] + orbit[:offset]
@@ -183,7 +215,7 @@ class AssignmentEnumerator:
         self, choices: Sequence[Tuple[int, ...]]
     ) -> Tuple[Tuple[int, ...], ...]:
         # A required map rotation determines every copy in a piece orbit from
-        # one representative.  This is a search assumption, not a symmetry quotient.
+        # one representative. This is a search assumption, not a symmetry quotient.
         sequences: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
         for orbit, representative_sequence in zip(
             self._equivariance_piece_orbits, choices
@@ -218,71 +250,51 @@ class AssignmentEnumerator:
         for choices in product(*representative_options):
             yield self._equivariant_sequences_from_choices(choices)
 
-    def _map_sequences(
-        self,
-        sequences: Tuple[Tuple[int, ...], ...],
-        automorphism: MapAutomorphism,
-    ) -> Tuple[Tuple[Tuple[int, ...], ...], bool, Tuple[int, ...]]:
-        mapped: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
-        occurrence_map = [0] * len(self.occurrences)
-        for source_id, occurrence in enumerate(self.occurrences):
-            target = automorphism.map_occurrence(occurrence)
-            occurrence_map[source_id] = self.occurrence_index[target]
+    @staticmethod
+    def _assignment_transform(action: SymmetryAction) -> AssignmentTransform:
+        return AssignmentTransform(
+            automorphism_name=action.name,
+            piece_map=action.piece_permutation,
+            occurrence_map=action.occurrence_permutation,
+            reverse_cycle=action.orientation_sign == -1,
+        )
 
-        for source_piece_index, source_sequence in enumerate(sequences):
-            source_piece = self.piece_names[source_piece_index]
-            target_piece = automorphism.map_piece(source_piece)
-            target_piece_index = self.piece_index[target_piece]
-            mapped[target_piece_index] = tuple(occurrence_map[item] for item in source_sequence)
-
-        mapped_sequences = tuple(item for item in mapped if item is not None)
-        if len(mapped_sequences) != len(self.piece_names):
-            raise RuntimeError("Incomplete transformed assignment")
-
-        central_sequence = mapped_sequences[self.reference_index]
-        central_base = self.base_sequences[self.reference_index]
-        central_sign, _ = cyclic_orientation_phase(central_sequence, central_base)
-        reverse_cycle = central_sign == -1
-        if reverse_cycle:
-            mapped_sequences = tuple(anchored_reverse(sequence) for sequence in mapped_sequences)
-
-        return mapped_sequences, reverse_cycle, tuple(occurrence_map)
-
-    def _build_normalized_transforms(self) -> Tuple[AssignmentTransform, ...]:
-        # The occurrence permutation is map-level data.  The optional reversal needed
-        # to restore the orientation of the reference contour can depend on the current
-        # assignment when an automorphism moves the reference piece to another copy.
-        transforms: List[AssignmentTransform] = []
-        for automorphism in self.planar_map.automorphisms:
-            occurrence_map = tuple(
-                self.occurrence_index[automorphism.map_occurrence(occurrence)]
-                for occurrence in self.occurrences
+    def _build_assignment_transforms(self) -> Tuple[AssignmentTransform, ...]:
+        actions = (
+            self.mapping_symmetry.assignment_group
+            if self.symmetry_enabled
+            else (
+                next(
+                    action
+                    for action in self.mapping_symmetry.group
+                    if action.piece_permutation
+                    == tuple(range(len(self.piece_names)))
+                    and action.vertex_permutation
+                    == tuple(range(len(self.planar_map.vertices)))
+                ),
             )
-            transforms.append(
-                AssignmentTransform(
-                    automorphism_name=automorphism.name,
-                    occurrence_map=occurrence_map,
-                    reverse_cycle=False,
-                )
-            )
-        return tuple(transforms)
+        )
+        return tuple(self._assignment_transform(action) for action in actions)
 
     def apply_transform(
         self,
         sequences: Tuple[Tuple[int, ...], ...],
         transform: AssignmentTransform,
     ) -> Tuple[Tuple[Tuple[int, ...], ...], AssignmentTransform]:
-        automorphism = next(
-            item
-            for item in self.planar_map.automorphisms
-            if item.name == transform.automorphism_name
-        )
-        mapped, reverse_cycle, occurrence_map = self._map_sequences(sequences, automorphism)
-        return mapped, AssignmentTransform(
-            automorphism_name=transform.automorphism_name,
-            occurrence_map=occurrence_map,
-            reverse_cycle=reverse_cycle,
-        )
+        mapped: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
+        for source_piece_index, source_sequence in enumerate(sequences):
+            target_piece_index = transform.piece_map[source_piece_index]
+            mapped[target_piece_index] = tuple(
+                transform.occurrence_map[item] for item in source_sequence
+            )
+        mapped_sequences = tuple(item for item in mapped if item is not None)
+        if len(mapped_sequences) != len(self.piece_names):
+            raise RuntimeError("Incomplete transformed assignment")
+        if transform.reverse_cycle:
+            mapped_sequences = tuple(
+                anchored_reverse(sequence) for sequence in mapped_sequences
+            )
+        return mapped_sequences, transform
 
     def transform_sequences(
         self,
@@ -303,58 +315,10 @@ class AssignmentEnumerator:
             phases.append(phase)
         return tuple(signs), tuple(phases)
 
-    def enumerate(self) -> Iterator[ContourAssignment]:
-        emitted_keys: set[Tuple[Tuple[int, ...], ...]] = set()
-        assignment_id = 0
-        for sequences in self._raw_sequences():
-            key = tuple(sequences)
-            transformed = tuple(
-                self.apply_transform(sequences, transform) for transform in self.transforms
-            )
-            if self.symmetry_mode != "off":
-                canonical_key = min(mapped for mapped, _actual in transformed)
-                if key != canonical_key:
-                    continue
-            else:
-                canonical_key = key
-
-            if canonical_key in emitted_keys:
-                continue
-            emitted_keys.add(canonical_key)
-
-            stabilizer = tuple(
-                actual
-                for mapped, actual in transformed
-                if mapped == sequences
-            )
-            signs, phases = self._assignment_metadata(sequences)
-            yield ContourAssignment(
-                assignment_id=assignment_id,
-                piece_names=self.piece_names,
-                sequences=sequences,
-                orientation_signs=signs,
-                cyclic_offsets=phases,
-                stabilizer=stabilizer,
-                canonical_key=canonical_key,
-                required_equivariance=self.required_equivariance,
-            )
-            assignment_id += 1
-
-
-    def assignment_at(self, assignment_id: int) -> ContourAssignment:
-        """Return one raw assignment without scanning previous assignments.
-
-        This random-access path is intentionally restricted to symmetry_mode=off.
-        Large map families can then checkpoint an assignment index without first
-        materializing or replaying a multi-billion-element Cartesian product.
-        """
-
-        if self.symmetry_mode != "off":
-            raise ValueError("assignment_at requires symmetry_mode='off'")
+    def _sequences_at(self, assignment_id: int) -> Tuple[Tuple[int, ...], ...]:
         total = self.raw_assignment_count()
         if assignment_id < 0 or assignment_id >= total:
             raise IndexError("Assignment index outside the raw domain")
-
         options = self._piece_options()
         remainder = int(assignment_id)
         if self._required_automorphism is None:
@@ -364,28 +328,34 @@ class AssignmentEnumerator:
                 option_index = remainder % radix
                 remainder //= radix
                 selected[piece_index] = options[piece_index][option_index]
-            sequences = tuple(selected)
-        else:
-            representative_options = tuple(
-                options[orbit[0]] for orbit in self._equivariance_piece_orbits
-            )
-            selected_representatives: List[Tuple[int, ...]] = [()] * len(
-                representative_options
-            )
-            for orbit_index in range(len(representative_options) - 1, -1, -1):
-                radix = len(representative_options[orbit_index])
-                option_index = remainder % radix
-                remainder //= radix
-                selected_representatives[orbit_index] = representative_options[
-                    orbit_index
-                ][option_index]
-            sequences = self._equivariant_sequences_from_choices(
-                selected_representatives
-            )
+            return tuple(selected)
 
+        representative_options = tuple(
+            options[orbit[0]] for orbit in self._equivariance_piece_orbits
+        )
+        selected_representatives: List[Tuple[int, ...]] = [()] * len(
+            representative_options
+        )
+        for orbit_index in range(len(representative_options) - 1, -1, -1):
+            radix = len(representative_options[orbit_index])
+            option_index = remainder % radix
+            remainder //= radix
+            selected_representatives[orbit_index] = representative_options[
+                orbit_index
+            ][option_index]
+        return self._equivariant_sequences_from_choices(selected_representatives)
+
+    def assignment_at(self, assignment_id: int) -> ContourAssignment:
+        """Return one raw assignment by mixed-radix index.
+
+        With symmetry enabled, the returned object may be non-canonical. Use
+        canonical_assignment_at() in a search pipeline.
+        """
+        sequences = self._sequences_at(assignment_id)
         transformed = tuple(
             self.apply_transform(sequences, transform) for transform in self.transforms
         )
+        canonical_key = min(mapped for mapped, _actual in transformed)
         stabilizer = tuple(
             actual for mapped, actual in transformed if mapped == sequences
         )
@@ -397,9 +367,21 @@ class AssignmentEnumerator:
             orientation_signs=signs,
             cyclic_offsets=phases,
             stabilizer=stabilizer,
-            canonical_key=sequences,
+            canonical_key=canonical_key,
             required_equivariance=self.required_equivariance,
         )
+
+    def canonical_assignment_at(self, assignment_id: int) -> ContourAssignment | None:
+        assignment = self.assignment_at(assignment_id)
+        if self.symmetry_enabled and assignment.sequences != assignment.canonical_key:
+            return None
+        return assignment
+
+    def enumerate(self) -> Iterator[ContourAssignment]:
+        for assignment_id in range(self.raw_assignment_count()):
+            assignment = self.canonical_assignment_at(assignment_id)
+            if assignment is not None:
+                yield assignment
 
     def unrestricted_raw_assignment_count(self) -> int:
         count = 1
@@ -409,7 +391,16 @@ class AssignmentEnumerator:
                 if piece_index == self.reference_index or not self.allow_reflections
                 else 2
             )
-            count *= len(base) * orientation_count
+            phase_count = (
+                1
+                if (
+                    self.symmetry_enabled
+                    and self.mapping_symmetry.complete_mapping_quotient_enabled
+                    and piece_index == self.reference_index
+                )
+                else len(base)
+            )
+            count *= phase_count * orientation_count
         return count
 
     def raw_assignment_count(self) -> int:
@@ -426,13 +417,15 @@ class AssignmentEnumerator:
     ) -> AssignmentTransform | None:
         if self.required_equivariance is None:
             return None
-        for transform in assignment.stabilizer:
-            if transform.automorphism_name == self.required_equivariance:
-                if transform.reverse_cycle:
-                    raise ValueError(
-                        "Required cyclic equivariance must preserve prototype orientation"
-                    )
-                return transform
-        raise ValueError(
-            "Assignment does not satisfy its declared required equivariance"
-        )
+        action = self.mapping_symmetry.action_by_name(self.required_equivariance)
+        transform = self._assignment_transform(action)
+        mapped, _ = self.apply_transform(assignment.sequences, transform)
+        if mapped != assignment.sequences:
+            raise ValueError(
+                "Assignment does not satisfy its declared required equivariance"
+            )
+        if transform.reverse_cycle:
+            raise ValueError(
+                "Required cyclic equivariance must preserve prototype orientation"
+            )
+        return transform

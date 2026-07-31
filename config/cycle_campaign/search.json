@@ -64,7 +64,7 @@
     }
   },
   "enumeration": {
-    "symmetry_mode": "off",
+    "symmetry_mode": "incremental",
     "track_exact_domain_size": true,
     "exterior_arc_repetition": {
       "enabled": true

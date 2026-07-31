@@ -1,0 +1,20 @@
+PATCH 1.5.1 - apply over 1.5.0
+
+Modified files:
+- pyproject.toml
+- src/formal_disk4/__init__.py
+- src/formal_disk4/constraints/angle_lp.py
+- src/formal_disk4/constraints/length_lp.py
+- src/formal_disk4/geometry/runner.py
+- src/formal_disk4/pipeline/runner.py
+- tests/test_checkpoint.py
+- tests/test_constraints.py
+- tests/test_geometry.py
+- tests/test_weak_orders.py
+
+New files:
+- PATCH_NOTES_1.5.1.md
+- PATCH_MANIFEST_1.5.1.txt
+
+Removed files:
+- none

@@ -11,6 +11,7 @@ from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
 from .assignments import AssignmentTransform, ContourAssignment
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
+from .symmetry import MappingSymmetryQuotient
 
 
 EventSink = Callable[[str, int], None]
@@ -77,6 +78,7 @@ class WeakOrderEnumerator:
         track_exact_leaf_mass: bool = True,
         required_equivariance_transform: AssignmentTransform | None = None,
         equivariance_piece_orbits: Sequence[Sequence[int]] = (),
+        mapping_symmetry: MappingSymmetryQuotient | None = None,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -92,6 +94,14 @@ class WeakOrderEnumerator:
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
         self.track_exact_leaf_mass = track_exact_leaf_mass
         self.required_equivariance_transform = required_equivariance_transform
+        self.mapping_symmetry = (
+            mapping_symmetry
+            if mapping_symmetry is not None or symmetry_mode == "off"
+            else MappingSymmetryQuotient(
+                planar_map,
+                required_equivariance=assignment.required_equivariance,
+            )
+        )
         self.equivariance_piece_orbits = tuple(
             tuple(int(index) for index in orbit)
             for orbit in equivariance_piece_orbits
@@ -338,10 +348,13 @@ class WeakOrderEnumerator:
         return blocks == best
 
     def _leaf_is_canonical(self, blocks: Tuple[Tuple[int, ...], ...]) -> bool:
-        if self.symmetry_mode != "incremental" or len(self.assignment.stabilizer) <= 1:
+        if (
+            self.symmetry_mode == "off"
+            or self.mapping_symmetry is None
+            or not self.mapping_symmetry.complete_mapping_quotient_enabled
+        ):
             return True
-        best = min(self._transform_blocks(blocks, transform) for transform in self.assignment.stabilizer)
-        return blocks == best
+        return self.mapping_symmetry.is_canonical_mapping(blocks)
 
     def _candidate_masks(
         self, available_mask: int, *, require_reference: bool = False
@@ -481,6 +494,18 @@ class WeakOrderEnumerator:
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
             return
 
+        complete = all(
+            counter == len(sequence)
+            for counter, sequence in zip(counters, self.assignment.sequences)
+        )
+        if complete and not self._leaf_is_canonical(blocks):
+            # The complete intrinsic-symmetry quotient is an integer permutation
+            # check. Run it before any newly resolved LP at this leaf and before
+            # compile_word_case / preword LP / word solving in the pipeline.
+            self.event_sink("symmetry_pruned_leaves", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+
         block_count = len(blocks)
         length_rows = self._resolved_length_rows(positions, block_count)
         if self.enable_length_filter and len(length_rows) > previous_length_equation_count:
@@ -500,15 +525,7 @@ class WeakOrderEnumerator:
                 self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
                 return
 
-        complete = all(
-            counter == len(sequence)
-            for counter, sequence in zip(counters, self.assignment.sequences)
-        )
         if complete:
-            if not self._leaf_is_canonical(blocks):
-                self.event_sink("symmetry_pruned_leaves", 1)
-                self._mark_subtree_complete(path, 1)
-                return
             length_result = self.length_oracle.analyze(
                 block_count, length_rows, need_witness=True
             ) if self.enable_length_filter else None

@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from formal_disk4.constraints.angle_lp import AngleEquation, AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
@@ -16,6 +18,48 @@ class ConstraintTests(unittest.TestCase):
         oracle = LengthFeasibilityOracle()
         result = oracle.analyze(3, ((1, 1, 0),))
         self.assertFalse(result.feasible)
+
+    def test_length_lp_exception_is_inconclusive(self) -> None:
+        oracle = LengthFeasibilityOracle()
+        with patch(
+            "formal_disk4.constraints.length_lp.linprog",
+            side_effect=RuntimeError("backend failure"),
+        ):
+            result = oracle.analyze(2, ((1, -1),))
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.lengths, ())
+        self.assertTrue(result.status.startswith("unknown:linprog_exception"))
+
+    def test_length_lp_negative_status_is_inconclusive(self) -> None:
+        oracle = LengthFeasibilityOracle()
+        with patch(
+            "formal_disk4.constraints.length_lp.linprog",
+            return_value=SimpleNamespace(success=False, x=None, status=4),
+        ):
+            result = oracle.analyze(2, ((1, -1),))
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.status, "unknown:linprog_status:4")
+
+    def test_angle_lp_exception_is_inconclusive(self) -> None:
+        oracle = AngleFeasibilityOracle()
+        with patch(
+            "formal_disk4.constraints.angle_lp.linprog",
+            side_effect=RuntimeError("backend failure"),
+        ):
+            result = oracle.analyze(1, (AngleEquation((1,), 0.0),))
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.turns_pi, ())
+        self.assertTrue(result.status.startswith("unknown:linprog_exception"))
+
+    def test_angle_lp_negative_status_is_inconclusive(self) -> None:
+        oracle = AngleFeasibilityOracle()
+        with patch(
+            "formal_disk4.constraints.angle_lp.linprog",
+            return_value=SimpleNamespace(success=False, x=None, status=4),
+        ):
+            result = oracle.analyze(1, (AngleEquation((1,), 0.0),))
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.status, "unknown:linprog_status:4")
 
     def test_angle_coincidence_contradiction(self) -> None:
         oracle = AngleFeasibilityOracle()
@@ -48,7 +92,6 @@ class ConstraintTests(unittest.TestCase):
         result = oracle.analyze(1, (AngleEquation((3,), 2.0),), need_witness=True)
         self.assertTrue(result.feasible)
         self.assertAlmostEqual(result.angles_pi[0], 1.0 / 3.0)
-
 
 if __name__ == "__main__":
     unittest.main()

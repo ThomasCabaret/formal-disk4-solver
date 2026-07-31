@@ -101,7 +101,7 @@ class DoubleCycleMapTests(unittest.TestCase):
         search = json.loads((case_root / "search.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["map"], "double-cycle-6")
         self.assertEqual(search["maps"], ["double-cycle-6"])
-        self.assertEqual(search["enumeration"]["symmetry_mode"], "off")
+        self.assertEqual(search["enumeration"]["symmetry_mode"], "incremental")
         self.assertTrue(search["enumeration"]["track_exact_domain_size"])
         self.assertEqual(
             search["enumeration"]["cyclic_equivariance"],

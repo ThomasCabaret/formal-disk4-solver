@@ -5,6 +5,7 @@ import sys
 from copy import deepcopy
 from dataclasses import dataclass
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence, Tuple
 
@@ -40,14 +41,11 @@ from .stats import RunStats
 class MapContext:
     planar_map: PlanarMap
     assignment_enumerator: AssignmentEnumerator
-    assignments: Tuple[ContourAssignment, ...] | None
     assignment_count: int
     mass_per_assignment: int
 
-    def assignment_at(self, assignment_id: int) -> ContourAssignment:
-        if self.assignments is not None:
-            return self.assignments[assignment_id]
-        return self.assignment_enumerator.assignment_at(assignment_id)
+    def assignment_at(self, assignment_id: int) -> ContourAssignment | None:
+        return self.assignment_enumerator.canonical_assignment_at(assignment_id)
 
 
 class SolverRunner:
@@ -313,6 +311,9 @@ class SolverRunner:
         symmetry_mode = str(enumeration_config["symmetry_mode"])
         equivariance_config = enumeration_config.get("cyclic_equivariance", {})
         equivariance_enabled = bool(equivariance_config.get("enabled", False))
+        enforce_equivariant_weak_orders = bool(
+            equivariance_config.get("enforce_weak_orders", True)
+        )
         required_equivariance = (
             str(equivariance_config.get("automorphism", "rotation_1"))
             if equivariance_enabled
@@ -324,23 +325,33 @@ class SolverRunner:
                 allow_reflections=bool(enumeration_config["allow_reflections"]),
                 symmetry_mode=symmetry_mode,
                 required_equivariance=required_equivariance,
+                required_equivariance_on_weak_orders=(
+                    enforce_equivariant_weak_orders
+                ),
             )
-
-            # Symmetry-off domains are Cartesian products.  Keep them lazy so a
-            # large validation map can start at assignment zero immediately and
-            # resume by mixed-radix assignment index.
-            if symmetry_mode == "off":
-                assignments = None
-                assignment_count = assignment_enumerator.raw_assignment_count()
-                first_assignment = (
-                    assignment_enumerator.assignment_at(0)
-                    if assignment_count
-                    else None
+            if symmetry_mode != "off":
+                self.stats.increment(
+                    "intrinsic_symmetry_group_elements",
+                    len(assignment_enumerator.mapping_symmetry.group),
                 )
-            else:
-                assignments = tuple(assignment_enumerator.enumerate())
-                assignment_count = len(assignments)
-                first_assignment = assignments[0] if assignments else None
+                self.stats.increment(
+                    "admissible_symmetry_group_elements",
+                    len(assignment_enumerator.mapping_symmetry.quotient_group),
+                )
+                self.stats.increment(
+                    "effective_mapping_symmetry_actions",
+                    len(assignment_enumerator.mapping_symmetry.mapping_actions),
+                )
+
+            # Always keep the assignment domain lazy. Checkpoints store the raw
+            # mixed-radix slot; non-canonical slots are rejected by inexpensive
+            # integer permutations without materializing the canonical domain.
+            assignment_count = assignment_enumerator.raw_assignment_count()
+            first_assignment = (
+                assignment_enumerator.assignment_at(0)
+                if assignment_count
+                else None
+            )
 
             if first_assignment is not None and track_exact_domain_size:
                 if (
@@ -375,7 +386,6 @@ class SolverRunner:
                 MapContext(
                     planar_map=planar_map,
                     assignment_enumerator=assignment_enumerator,
-                    assignments=assignments,
                     assignment_count=assignment_count,
                     mass_per_assignment=mass_per_assignment,
                 )
@@ -401,6 +411,55 @@ class SolverRunner:
             flush_every,
             append=append,
             max_records=max_records,
+        )
+
+    def _record_unexpected_error(
+        self,
+        writer: JsonlWriter | NullJsonlWriter,
+        *,
+        stage: str,
+        error: Exception,
+        context: Mapping[str, Any],
+    ) -> None:
+        """Record a non-blocking implementation error and taint the campaign."""
+        self.stats.increment("unexpected_errors")
+        self.stats.increment(f"unexpected_error_{stage}")
+        writer.write(
+            {
+                "stage": stage,
+                **dict(context),
+                "error_type": type(error).__name__,
+                "error": repr(error),
+                "traceback": traceback.format_exc(),
+            }
+        )
+
+    def _unexpected_errors_by_stage(self) -> Dict[str, int]:
+        prefix = "unexpected_error_"
+        return {
+            name[len(prefix) :]: int(value)
+            for name, value in sorted(self.stats.counters.items())
+            if name.startswith(prefix) and name != "unexpected_errors" and int(value) > 0
+        }
+
+    def _report_tainted_campaign(self, error_path: Path) -> None:
+        count = self.stats.get("unexpected_errors")
+        if count <= 0:
+            return
+        stages = ", ".join(
+            f"{stage}={amount}"
+            for stage, amount in self._unexpected_errors_by_stage().items()
+        )
+        destination = (
+            str(error_path)
+            if bool(self.config["output"].get("write_errors", True))
+            else "error logging disabled; see run_summary.json"
+        )
+        print(
+            f"[TAINTED] Campaign continued after {count} unexpected "
+            f"implementation error(s) ({stages}). Details: {destination}",
+            file=sys.stderr,
+            flush=True,
         )
 
     def run(self) -> Dict[str, object]:
@@ -434,7 +493,8 @@ class SolverRunner:
                     "cyclic_equivariance_assignment_reduction",
                     unrestricted - self.stats.get("raw_assignments_in_domain"),
                 )
-        self.stats.counters["canonical_assignments_in_domain"] = self._total_assignment_count
+        self.stats.counters["assignment_slots_in_domain"] = self._total_assignment_count
+        self.stats.counters.pop("canonical_assignments_in_domain", None)
         if bool(self.config["enumeration"].get("track_exact_domain_size", True)):
             self.stats.counters["estimated_raw_weak_orders_in_domain"] = self._total_leaf_mass
         else:
@@ -456,6 +516,7 @@ class SolverRunner:
                 word_case_audit_path, placement_path, error_path
             )
             atomic_write_json(self.output_directory / "run_summary.json", summary)
+            self._report_tainted_campaign(error_path)
             self.checkpoint_store.close()
             return summary
 
@@ -592,11 +653,22 @@ class SolverRunner:
                 for assignment_id in range(
                     start_assignment_id, context.assignment_count
                 ):
-                    assignment = context.assignment_at(assignment_id)
                     self._search_state["assignment_id"] = assignment_id
                     if self._should_stop():
                         exhausted = False
                         break
+                    assignment = context.assignment_at(assignment_id)
+                    if assignment is None:
+                        self.stats.increment("symmetry_pruned_assignments")
+                        self._search_state["completed_leaf_mass"] = int(
+                            self._search_state.get("completed_leaf_mass", 0)
+                        ) + mass_per_assignment
+                        self._search_state["assignment_id"] = assignment_id + 1
+                        self._search_state["assignment_started"] = False
+                        self._search_state["weak_order"] = {}
+                        self._mark_top_level_safe()
+                        self._save_checkpoint(force=False, completed=False)
+                        continue
                     max_assignments = self.config["limits"].get("max_assignments")
                     if (
                         max_assignments is not None
@@ -609,6 +681,7 @@ class SolverRunner:
                         break
                     if not bool(self._search_state.get("assignment_started", False)):
                         self.stats.increment("assignments_processed")
+                        self.stats.increment("canonical_assignments_processed")
                         self._search_state["assignment_started"] = True
                         self._search_state["weak_order"] = {}
 
@@ -660,6 +733,11 @@ class SolverRunner:
                             )
                             else ()
                         ),
+                        mapping_symmetry=(
+                            assignment_enumerator.mapping_symmetry
+                            if str(self.config["enumeration"]["symmetry_mode"]) != "off"
+                            else None
+                        ),
                     )
                     self._current_weak_orders = weak_orders
                     placement_started = time.perf_counter()
@@ -688,14 +766,15 @@ class SolverRunner:
                             self.stats.increment("word_cases_compiled")
                         except Exception as error:
                             self.stats.increment("compile_errors")
-                            error_writer.write(
-                                {
-                                    "stage": "compile_word_case",
+                            self._record_unexpected_error(
+                                error_writer,
+                                stage="compile_word_case",
+                                error=error,
+                                context={
                                     "map": planar_map.name,
                                     "assignment_id": assignment.assignment_id,
                                     "placement_id": placement.placement_id,
-                                    "error": repr(error),
-                                }
+                                },
                             )
                             placement_started = time.perf_counter()
                             continue
@@ -721,15 +800,16 @@ class SolverRunner:
                                 # Pre-word pruning is an optimization. Unexpected
                                 # construction errors must never remove a formal case.
                                 self.stats.increment("preword_errors")
-                                error_writer.write(
-                                    {
-                                        "stage": "preword_pruning",
+                                self._record_unexpected_error(
+                                    error_writer,
+                                    stage="preword_pruning",
+                                    error=error,
+                                    context={
                                         "map": planar_map.name,
                                         "assignment_id": assignment.assignment_id,
                                         "placement_id": placement.placement_id,
-                                        "error": repr(error),
                                         "word_case": compiled.to_dict(),
-                                    }
+                                    },
                                 )
                             finally:
                                 self.stats.add_time(
@@ -867,16 +947,17 @@ class SolverRunner:
                                         continue
                                     except Exception as error:
                                         self.stats.increment("profile_build_errors")
-                                        error_writer.write(
-                                            {
-                                                "stage": "profile_build",
+                                        self._record_unexpected_error(
+                                            error_writer,
+                                            stage="profile_build",
+                                            error=error,
+                                            context={
                                                 "map": planar_map.name,
                                                 "assignment_id": assignment.assignment_id,
                                                 "placement_id": placement.placement_id,
                                                 "family": family.to_dict(),
                                                 "specialization": specialization.to_dict(),
-                                                "error": repr(error),
-                                            }
+                                            },
                                         )
                                         continue
                                     finally:
@@ -967,15 +1048,16 @@ class SolverRunner:
                                     break
                         except Exception as error:
                             self.stats.increment("solver_errors")
-                            error_writer.write(
-                                {
-                                    "stage": "exact_partial_word_solver",
+                            self._record_unexpected_error(
+                                error_writer,
+                                stage="exact_partial_word_solver",
+                                error=error,
+                                context={
                                     "map": planar_map.name,
                                     "assignment_id": assignment.assignment_id,
                                     "placement_id": placement.placement_id,
-                                    "error": repr(error),
                                     "word_case": compiled.to_dict(),
-                                }
+                                },
                             )
 
                         summary = solver.last_summary
@@ -1113,6 +1195,7 @@ class SolverRunner:
             error_path,
         )
         atomic_write_json(self.output_directory / "run_summary.json", summary)
+        self._report_tainted_campaign(error_path)
         return summary
 
     def _placement_limit_reached(self) -> bool:
@@ -1149,7 +1232,11 @@ class SolverRunner:
         error_path: Path,
     ) -> Dict[str, object]:
         assignment_mass, assignment_total, assignment_percent = self._current_assignment_progress()
+        unexpected_error_count = self.stats.get("unexpected_errors")
         return {
+            "tainted": unexpected_error_count > 0,
+            "unexpected_error_count": unexpected_error_count,
+            "unexpected_errors_by_stage": self._unexpected_errors_by_stage(),
             "configuration": self.config,
             "statistics": self.stats.to_dict(),
             "progress": {

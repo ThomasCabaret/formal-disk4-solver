@@ -3,23 +3,23 @@
   "cases": [
     {
       "family": "parallel",
-      "size": 3
+      "size": 6
     },
     {
       "family": "offset",
-      "size": 3
+      "size": 6
     },
     {
       "family": "wide",
-      "size": 3
+      "size": 6
     },
     {
       "family": "boundary-points",
-      "size": 3
+      "size": 6
     },
     {
       "family": "center-points",
-      "size": 3
+      "size": 6
     },
     {
       "family": "parallel",

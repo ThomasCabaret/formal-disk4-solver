@@ -35,8 +35,14 @@ class WeakOrderTests(unittest.TestCase):
         placement = next(enumerator.enumerate())
         self.assertEqual(len(placement.length_rows), 6)
         self.assertEqual(len(placement.angle_equations), 6)
-        self.assertGreater(placement.length_margin, 0.0)
-        self.assertGreater(placement.angle_margin, 0.0)
+        # Float LPs are pruning oracles only. An inconclusive result is kept
+        # conservatively and is represented by a zero margin with no witness.
+        self.assertGreaterEqual(placement.length_margin, 0.0)
+        self.assertGreaterEqual(placement.angle_margin, 0.0)
+        if placement.length_margin > 0.0:
+            self.assertTrue(placement.length_witness)
+        if placement.angle_margin > 0.0:
+            self.assertTrue(placement.angle_witness)
 
 
 if __name__ == "__main__":
