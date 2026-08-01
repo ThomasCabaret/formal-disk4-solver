@@ -7,6 +7,12 @@ from typing import Callable, Dict, Iterator, Sequence
 from .base import PlanarMap
 from .c3 import build_c3_map
 from .c4 import build_c4_map
+from .centered_two_ring import (
+    build_centered_double_cycle_map,
+    build_centered_double_cycle_offset_map,
+    build_centered_inner_cycle_boundary_points_map,
+    build_centered_outer_cycle_center_points_map,
+)
 from .double_cycle import build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
@@ -74,6 +80,26 @@ _REGISTRATIONS = (
 
 _DYNAMIC_MAP_PATTERNS = (
     ("wheel", re.compile(r"^wheel-(\d+)$"), build_wheel_map),
+    (
+        "centered-double-cycle",
+        re.compile(r"^centered-double-cycle-(\d+)$"),
+        build_centered_double_cycle_map,
+    ),
+    (
+        "centered-double-cycle-offset",
+        re.compile(r"^centered-double-cycle-offset-(\d+)$"),
+        build_centered_double_cycle_offset_map,
+    ),
+    (
+        "centered-inner-cycle-boundary-points",
+        re.compile(r"^centered-inner-cycle-boundary-points-(\d+)$"),
+        build_centered_inner_cycle_boundary_points_map,
+    ),
+    (
+        "centered-outer-cycle-center-points",
+        re.compile(r"^centered-outer-cycle-center-points-(\d+)$"),
+        build_centered_outer_cycle_center_points_map,
+    ),
     ("double-cycle", re.compile(r"^double-cycle-(\d+)$"), build_double_cycle_map),
     (
         "double-cycle-offset",

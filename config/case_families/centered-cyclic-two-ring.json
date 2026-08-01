@@ -1,0 +1,70 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "centered-cyclic-two-ring",
+  "label": "Cyclic two-ring families with central tile",
+  "description": "Two cyclic tile orbits surrounding one fully internal central tile, with imposed rotation_1 equivariance.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "cyclic",
+    "two-ring",
+    "central-tile",
+    "rotation-1"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "track_exact_domain_size": false,
+        "cyclic_equivariance": {
+          "enabled": false
+        },
+        "cyclic_shift_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_1"
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "parallel",
+      "label_template": "Centered double cycle {size}",
+      "description": "Parallel exterior and interior cycles with matching radial contacts, surrounding a central tile.",
+      "map_template": "centered-double-cycle-{size}",
+      "parameter_values": {
+        "size": [3, 4, 5, 6]
+      }
+    },
+    {
+      "id": "offset",
+      "label_template": "Centered double cycle offset {size}",
+      "description": "Two cyclic layers with offset cross-layer contacts, surrounding a central tile.",
+      "map_template": "centered-double-cycle-offset-{size}",
+      "parameter_values": {
+        "size": [3, 4, 5, 6]
+      }
+    },
+    {
+      "id": "boundary-points",
+      "label_template": "Centered inner cycle boundary points {size}",
+      "description": "Interior tiles reach the disk boundary at points and surround a central tile.",
+      "map_template": "centered-inner-cycle-boundary-points-{size}",
+      "parameter_values": {
+        "size": [3, 4, 5, 6]
+      }
+    },
+    {
+      "id": "center-points",
+      "label_template": "Centered outer cycle center points {size}",
+      "description": "The former central point contacts are truncated against a central tile.",
+      "map_template": "centered-outer-cycle-center-points-{size}",
+      "parameter_values": {
+        "size": [3, 4, 5, 6]
+      }
+    }
+  ]
+}
