@@ -322,6 +322,8 @@ class SolverRunner:
                     f"edges={word.get('graph_edges')}",
                     f"word_depth={word.get('depth')}",
                     f"residual={word.get('equation_count')}eq/{word.get('literal_count')}lit",
+                    f"terminal_min={word.get('terminal_min')}/{word.get('terminal_limit')}",
+                    f"terminal_pruned={word.get('terminal_pruned')}",
                 ]
             )
         stack = snapshot.get("stack")
@@ -812,6 +814,11 @@ class SolverRunner:
                 if solver_config.get("max_expression_nodes") is None
                 else int(solver_config["max_expression_nodes"])
             ),
+            max_terminal_contour_segments=(
+                None
+                if solver_config.get("max_terminal_contour_segments", 100) is None
+                else int(solver_config.get("max_terminal_contour_segments", 100))
+            ),
             validation_exponent=int(solver_config.get("validation_exponent", 2)),
         )
         tolerance = float(self.config["enumeration"]["lp_tolerance"])
@@ -1118,7 +1125,9 @@ class SolverRunner:
 
                         self._set_stage("word_solver_initialization", **placement_context)
                         solver = ExactPartialWordSolver(
-                            compiled.effective_solver_equations, compiled.solver_variables
+                            compiled.effective_solver_equations,
+                            compiled.solver_variables,
+                            contour_variables=compiled.atomic_variables,
                         )
                         self._current_word_solver = solver
                         self._set_stage("word_solver", **placement_context)
@@ -1333,6 +1342,13 @@ class SolverRunner:
                             self.stats.increment("graph_limited_word_cases")
                         if summary.status == "unresolved_family_limit":
                             self.stats.increment("family_limited_word_cases")
+                        if summary.terminal_contour_pruned:
+                            self.stats.increment(
+                                "terminal_contour_pruned_branches",
+                                summary.terminal_contour_pruned,
+                            )
+                        if summary.status == "restricted_terminal_contour_limit":
+                            self.stats.increment("terminal_contour_limited_word_cases")
                         if summary.status == "interrupted_external_stop":
                             self.stats.increment("externally_stopped_word_cases")
                         if self.stats.get("word_families") == families_before:

@@ -12,6 +12,7 @@ from .algebra import (
     substitute_equations,
     substitute_word,
 )
+from . import compact as cw
 from .families import (
     AtomExpr,
     ExactFormalFamily,
@@ -34,6 +35,7 @@ class SolverLimits:
     max_graph_edges: int | None = 12_000
     max_families: int | None = 16
     max_expression_nodes: int | None = 2_000
+    max_terminal_contour_segments: int | None = None
     validation_exponent: int = 2
 
 
@@ -66,6 +68,7 @@ class SolverRunSummary:
     unsupported_complex_components: int
     graph_limit_reached: bool
     expression_limit_reached: bool
+    terminal_contour_pruned: int
     family_limit_reached: bool
     external_stop_reached: bool
     exact_unsat: bool
@@ -82,6 +85,7 @@ class SolverRunSummary:
             "unsupported_complex_components": self.unsupported_complex_components,
             "graph_limit_reached": self.graph_limit_reached,
             "expression_limit_reached": self.expression_limit_reached,
+            "terminal_contour_pruned": self.terminal_contour_pruned,
             "family_limit_reached": self.family_limit_reached,
             "external_stop_reached": self.external_stop_reached,
             "exact_unsat": self.exact_unsat,
@@ -120,6 +124,7 @@ class _MutableCounters:
     unsupported_complex_components: int = 0
     graph_limit_reached: bool = False
     expression_limit_reached: bool = False
+    terminal_contour_pruned: int = 0
     family_limit_reached: bool = False
     external_stop_reached: bool = False
 
@@ -489,6 +494,7 @@ def _environment_size(environment: Mapping[str, WordExpr]) -> int:
 class _EnvironmentState:
     expression_ids: Tuple[int, ...]
     node_count: int
+    terminal_min: int
 
 
 class _ExpressionArena:
@@ -503,15 +509,16 @@ class _ExpressionArena:
         self._nodes: list[tuple[object, ...]] = []
         self._sizes: list[int] = []
         self._depths: list[int] = []
+        self._minimum_lengths: list[int] = []
         self._exponents: list[frozenset[str]] = []
-        self._atoms: dict[tuple[str, bool], int] = {}
+        self._atoms: dict[tuple[int, bool], int] = {}
         self._concats: dict[tuple[int, ...], int] = {}
         self._powers: dict[tuple[int, str], int] = {}
         self._inverse: dict[int, int] = {}
         self._materialized: dict[int, WordExpr] = {}
         self.empty = self.concat(())
 
-    def atom(self, variable: str, inverse: bool = False) -> int:
+    def atom(self, variable: int, inverse: bool = False) -> int:
         key = (variable, inverse)
         existing = self._atoms.get(key)
         if existing is not None:
@@ -521,6 +528,7 @@ class _ExpressionArena:
         self._nodes.append(("atom", variable, inverse))
         self._sizes.append(1)
         self._depths.append(0)
+        self._minimum_lengths.append(1)
         self._exponents.append(frozenset())
         return expression_id
 
@@ -546,6 +554,7 @@ class _ExpressionArena:
         self._nodes.append(("concat", key))
         self._sizes.append(1 + sum(self._sizes[item] for item in key))
         self._depths.append(max((self._depths[item] for item in key), default=0))
+        self._minimum_lengths.append(sum(self._minimum_lengths[item] for item in key))
         exponent_names: set[str] = set()
         for item in key:
             exponent_names.update(self._exponents[item])
@@ -562,11 +571,14 @@ class _ExpressionArena:
         self._nodes.append(("power", base, exponent))
         self._sizes.append(1 + self._sizes[base])
         self._depths.append(1 + self._depths[base])
+        self._minimum_lengths.append(self._minimum_lengths[base])
         self._exponents.append(self._exponents[base] | {exponent})
         return expression_id
 
-    def from_word(self, word: Sequence[Literal]) -> int:
-        return self.concat(tuple(self.atom(item.variable, item.inverse) for item in word))
+    def from_word(self, word: Sequence[int]) -> int:
+        return self.concat(
+            tuple(self.atom(item >> 1, bool(item & 1)) for item in word)
+        )
 
     def inverse(self, expression_id: int) -> int:
         existing = self._inverse.get(expression_id)
@@ -575,7 +587,7 @@ class _ExpressionArena:
         node = self._nodes[expression_id]
         kind = node[0]
         if kind == "atom":
-            result = self.atom(str(node[1]), not bool(node[2]))
+            result = self.atom(int(node[1]), not bool(node[2]))
         elif kind == "concat":
             result = self.concat(
                 tuple(self.inverse(item) for item in reversed(node[1]))
@@ -591,7 +603,7 @@ class _ExpressionArena:
     def substitute(
         self,
         expression_id: int,
-        replacements: Mapping[str, int],
+        replacements: Mapping[int, int],
         memo: dict[int, int],
     ) -> int:
         existing = memo.get(expression_id)
@@ -600,7 +612,7 @@ class _ExpressionArena:
         node = self._nodes[expression_id]
         kind = node[0]
         if kind == "atom":
-            replacement = replacements.get(str(node[1]))
+            replacement = replacements.get(int(node[1]))
             if replacement is None:
                 result = expression_id
             elif bool(node[2]):
@@ -623,16 +635,27 @@ class _ExpressionArena:
     def apply_environment(
         self,
         environment: _EnvironmentState,
-        replacements: Mapping[str, int],
+        replacements: Mapping[int, int],
+        contour_indices: Sequence[int],
     ) -> _EnvironmentState:
         memo: dict[int, int] = {}
         expression_ids = tuple(
             self.substitute(expression_id, replacements, memo)
             for expression_id in environment.expression_ids
         )
+        return self.make_environment(expression_ids, contour_indices)
+
+    def make_environment(
+        self, expression_ids: Sequence[int], contour_indices: Sequence[int]
+    ) -> _EnvironmentState:
+        expression_tuple = tuple(expression_ids)
         return _EnvironmentState(
-            expression_ids=expression_ids,
-            node_count=sum(self._sizes[item] for item in expression_ids),
+            expression_ids=expression_tuple,
+            node_count=sum(self._sizes[item] for item in expression_tuple),
+            terminal_min=sum(
+                self._minimum_lengths[expression_tuple[index]]
+                for index in contour_indices
+            ),
         )
 
     def materialize(self, expression_id: int) -> WordExpr:
@@ -642,7 +665,7 @@ class _ExpressionArena:
         node = self._nodes[expression_id]
         kind = node[0]
         if kind == "atom":
-            result: WordExpr = AtomExpr(str(node[1]), bool(node[2]))
+            result: WordExpr = AtomExpr(f"V{int(node[1])}", bool(node[2]))
         elif kind == "concat":
             result = concat(*(self.materialize(item) for item in node[1]))
         elif kind == "power":
@@ -706,9 +729,30 @@ class ExactPartialWordSolver:
     recorded as an unsupported complex iterative component and is not unfolded.
     """
 
-    def __init__(self, equations: Sequence[Equation], initial_variables: Sequence[str]) -> None:
+    def __init__(
+        self,
+        equations: Sequence[Equation],
+        initial_variables: Sequence[str],
+        contour_variables: Sequence[str] | None = None,
+    ) -> None:
         self.original_equations = tuple(equations)
         self.initial_variables = tuple(initial_variables)
+        self.contour_variables = tuple(
+            self.initial_variables if contour_variables is None else contour_variables
+        )
+        unknown_contour = set(self.contour_variables) - set(self.initial_variables)
+        if unknown_contour:
+            raise ValueError(
+                "contour_variables must be a subset of initial_variables: "
+                + ", ".join(sorted(unknown_contour))
+            )
+        self._contour_indices = tuple(
+            self.initial_variables.index(variable) for variable in self.contour_variables
+        )
+        compact_equations, initial_raw_ids, ordered_names = cw.encode_problem(
+            self.original_equations, self.initial_variables
+        )
+        self._initial_raw_ids = initial_raw_ids
         self._progress: Dict[str, object] = {
             "phase": "initial_canonicalization",
             "visited_states": 0,
@@ -719,11 +763,18 @@ class ExactPartialWordSolver:
                 len(equation.left) + len(equation.right)
                 for equation in self.original_equations
             ),
-            "variable_count": len(self.initial_variables),
+            "variable_count": len(ordered_names),
             "environment_nodes": 0,
+            "terminal_min": len(self.contour_variables),
+            "terminal_limit": None,
+            "terminal_pruned": 0,
             "trace_tail": [],
         }
-        initial = canonicalize_residual(self.original_equations, self.initial_variables)
+        initial = cw.canonicalize_residual(
+            compact_equations,
+            tuple(range(len(ordered_names))),
+            len(ordered_names),
+        )
         self.initial_residual = initial
         self.unsupported_components: list[UnsupportedComponent] = []
         self._progress["phase"] = "ready" if initial is not None else "exact_unsat"
@@ -737,6 +788,7 @@ class ExactPartialWordSolver:
             unsupported_complex_components=0,
             graph_limit_reached=False,
             expression_limit_reached=False,
+            terminal_contour_pruned=0,
             family_limit_reached=False,
             external_stop_reached=False,
             exact_unsat=False,
@@ -763,6 +815,7 @@ class ExactPartialWordSolver:
                 unsupported_complex_components=0,
                 graph_limit_reached=False,
                 expression_limit_reached=False,
+                terminal_contour_pruned=0,
                 family_limit_reached=False,
                 external_stop_reached=False,
                 exact_unsat=True,
@@ -771,13 +824,12 @@ class ExactPartialWordSolver:
             return
 
         arena = _ExpressionArena()
-        initial_rename = self.initial_residual.rename_map()
+        initial_rename = self.initial_residual.rename
         initial_expression_ids = tuple(
-            arena.atom(initial_rename[variable]) for variable in self.initial_variables
+            arena.atom(initial_rename[raw_id]) for raw_id in self._initial_raw_ids
         )
-        initial_environment = _EnvironmentState(
-            expression_ids=initial_expression_ids,
-            node_count=len(initial_expression_ids),
+        initial_environment = arena.make_environment(
+            initial_expression_ids, self._contour_indices
         )
         counters = _MutableCounters()
         should_stop = stop_predicate or (lambda: False)
@@ -789,18 +841,17 @@ class ExactPartialWordSolver:
         def update_progress(
             phase: str,
             *,
-            residual: _CanonicalResidual | None = None,
+            residual: cw.CanonicalResidual | None = None,
             environment: _EnvironmentState | None = None,
             trace: Sequence[str] = (),
             branch: str | None = None,
-            raw_equations: Sequence[Equation] | None = None,
+            raw_equations: Sequence[cw.CompactEquation] | None = None,
         ) -> None:
             equations = (
                 tuple(raw_equations)
                 if raw_equations is not None
                 else (residual.equations if residual is not None else ())
             )
-            variables = residual.variables if residual is not None else ()
             self._progress = {
                 "phase": phase,
                 "visited_states": counters.visited_states,
@@ -809,13 +860,17 @@ class ExactPartialWordSolver:
                 "depth": len(trace),
                 "equation_count": len(equations),
                 "literal_count": sum(
-                    len(equation.left) + len(equation.right)
-                    for equation in equations
+                    len(equation[0]) + len(equation[1]) for equation in equations
                 ),
-                "variable_count": len(variables),
+                "variable_count": residual.variable_count if residual is not None else 0,
                 "environment_nodes": (
                     environment.node_count if environment is not None else 0
                 ),
+                "terminal_min": (
+                    environment.terminal_min if environment is not None else 0
+                ),
+                "terminal_limit": limits.max_terminal_contour_segments,
+                "terminal_pruned": counters.terminal_contour_pruned,
                 "branch": branch,
                 "trace_tail": list(trace[-12:]),
             }
@@ -834,10 +889,10 @@ class ExactPartialWordSolver:
             return f"n{index}"
 
         def loop_replacement_ids(
-            variables: Sequence[str], plan: _LoopPlan, exponent: str
-        ) -> Dict[str, int]:
-            replacements: Dict[str, int] = {
-                variable: arena.atom(variable) for variable in variables
+            variable_count: int, plan: cw.LoopPlan, exponent: str
+        ) -> Dict[int, int]:
+            replacements: Dict[int, int] = {
+                variable: arena.atom(variable) for variable in range(variable_count)
             }
             for variable, prefix, suffix in plan.pivots:
                 parts: list[int] = []
@@ -898,14 +953,14 @@ class ExactPartialWordSolver:
                 stop = True
 
         def search(
-            residual: _CanonicalResidual,
+            residual: cw.CanonicalResidual,
             environment: _EnvironmentState,
             minimums: Mapping[str, int],
             trace: list[str],
             used_cycles: frozenset[object],
-            path_residuals: list[_CanonicalResidual],
+            path_residuals: list[cw.CanonicalResidual],
             path_environments: list[_EnvironmentState],
-            path_edges: list[Mapping[str, Word]],
+            path_edges: list[cw.CompactTransition],
             path_index: dict[Tuple[object, ...], int],
         ) -> Iterator[ExactFormalFamily]:
             nonlocal stop
@@ -920,6 +975,18 @@ class ExactPartialWordSolver:
             if should_stop():
                 counters.external_stop_reached = True
                 stop = True
+                return
+            if (
+                limits.max_terminal_contour_segments is not None
+                and environment.terminal_min > limits.max_terminal_contour_segments
+            ):
+                counters.terminal_contour_pruned += 1
+                update_progress(
+                    "terminal_contour_cutoff",
+                    residual=residual,
+                    environment=environment,
+                    trace=trace,
+                )
                 return
             if limits.max_graph_nodes is not None and counters.visited_states >= limits.max_graph_nodes:
                 counters.graph_limit_reached = True
@@ -954,8 +1021,8 @@ class ExactPartialWordSolver:
                 environment=environment,
                 trace=trace,
             )
-            for branch_name, substitution in branch_substitutions(
-                residual.equations, residual.variables
+            for branch_name, substitution in cw.branch_substitutions(
+                residual.equations, residual.variable_count
             ):
                 if stop:
                     return
@@ -976,17 +1043,19 @@ class ExactPartialWordSolver:
                     branch=branch_name,
                 )
 
-                raw_equations = _substitute_equations_fast(
+                raw_equations = cw.substitute_equations(
                     residual.equations, substitution
                 )
-                raw_transition_words = tuple(
-                    substitution.get(variable, (Literal(variable),))
-                    for variable in residual.variables
+                raw_transition_words = cw.transition_words(
+                    residual.variable_count, substitution
                 )
-                raw_variables = _variables_in_words(
-                    tuple(equation.left for equation in raw_equations)
-                    + tuple(equation.right for equation in raw_equations)
+                raw_variables = cw.variables_in_words(
+                    tuple(equation[0] for equation in raw_equations)
+                    + tuple(equation[1] for equation in raw_equations)
                     + raw_transition_words
+                )
+                ordered_raw_variables = cw.ordered_raw_variables(
+                    raw_variables, residual.variable_count
                 )
                 update_progress(
                     "canonicalize_residual",
@@ -996,17 +1065,20 @@ class ExactPartialWordSolver:
                     branch=branch_name,
                     raw_equations=raw_equations,
                 )
-                child = canonicalize_residual(raw_equations, raw_variables)
+                child = cw.canonicalize_residual(
+                    raw_equations,
+                    ordered_raw_variables,
+                    residual.variable_count + 1,
+                )
                 if child is None:
                     continue
 
-                renaming = child.rename_map()
-                transition = _edge_transition(
-                    residual.variables, substitution, renaming
+                transition = cw.edge_transition(
+                    residual.variable_count, substitution, child.rename
                 )
                 replacement_ids = {
                     variable: arena.from_word(word)
-                    for variable, word in transition.items()
+                    for variable, word in enumerate(transition)
                 }
                 update_progress(
                     "update_environment",
@@ -1016,7 +1088,7 @@ class ExactPartialWordSolver:
                     branch=branch_name,
                 )
                 child_environment = arena.apply_environment(
-                    environment, replacement_ids
+                    environment, replacement_ids, self._contour_indices
                 )
 
                 trace.append(branch_name)
@@ -1025,21 +1097,21 @@ class ExactPartialWordSolver:
                     if ancestor_index is not None:
                         ancestor = path_residuals[ancestor_index]
                         cycle_edges = tuple(path_edges[ancestor_index:]) + (transition,)
-                        loop_transition = _compose_transitions(
-                            ancestor.variables, cycle_edges
+                        loop_transition = cw.compose_transitions(
+                            ancestor.variable_count, cycle_edges
                         )
                         cycle_signature = (
                             ancestor.signature,
-                            tuple(sorted(loop_transition.items())),
+                            cw.transition_signature(loop_transition),
                         )
                         if cycle_signature in used_cycles:
                             continue
-                        if child.variables != ancestor.variables:
+                        if child.variable_count != ancestor.variable_count:
                             plan = None
                             reason = "residual variable set changes around the cycle"
                         else:
-                            plan, reason = _classify_fixed_context_loop(
-                                ancestor.variables, loop_transition
+                            plan, reason = cw.classify_fixed_context_loop(
+                                ancestor.variable_count, loop_transition
                             )
                         if plan is None:
                             counters.unsupported_complex_components += 1
@@ -1049,10 +1121,10 @@ class ExactPartialWordSolver:
                                     trace=tuple(trace),
                                     cycle_length=len(cycle_edges),
                                     residual_equations=tuple(
-                                        equation.to_text()
+                                        cw.equation_to_text(equation)
                                         for equation in ancestor.equations
                                     ),
-                                    transformation=_transition_text(loop_transition),
+                                    transformation=cw.transition_text(loop_transition),
                                 )
                             )
                             continue
@@ -1061,10 +1133,12 @@ class ExactPartialWordSolver:
                             path_environments[ancestor_index]
                         )
                         loop_replacements = loop_replacement_ids(
-                            ancestor.variables, plan, exponent
+                            ancestor.variable_count, plan, exponent
                         )
                         generalized_environment = arena.apply_environment(
-                            path_environments[ancestor_index], loop_replacements
+                            path_environments[ancestor_index],
+                            loop_replacements,
+                            self._contour_indices,
                         )
                         generalized_minimums = dict(minimums)
                         generalized_minimums[exponent] = 1
@@ -1133,6 +1207,7 @@ class ExactPartialWordSolver:
             and counters.unsupported_complex_components == 0
             and not counters.graph_limit_reached
             and not counters.expression_limit_reached
+            and counters.terminal_contour_pruned == 0
             and not counters.family_limit_reached
             and not counters.external_stop_reached
         )
@@ -1142,6 +1217,8 @@ class ExactPartialWordSolver:
             status = "unresolved_family_limit"
         elif counters.graph_limit_reached or counters.expression_limit_reached:
             status = "unresolved_graph_limit"
+        elif counters.terminal_contour_pruned:
+            status = "restricted_terminal_contour_limit"
         elif counters.unsupported_complex_components:
             status = "exact_unsupported_family_language"
         elif exact_unsat:
@@ -1158,6 +1235,7 @@ class ExactPartialWordSolver:
             unsupported_complex_components=counters.unsupported_complex_components,
             graph_limit_reached=counters.graph_limit_reached,
             expression_limit_reached=counters.expression_limit_reached,
+            terminal_contour_pruned=counters.terminal_contour_pruned,
             family_limit_reached=counters.family_limit_reached,
             external_stop_reached=counters.external_stop_reached,
             exact_unsat=exact_unsat,
@@ -1169,6 +1247,9 @@ class ExactPartialWordSolver:
             "visited_states": counters.visited_states,
             "graph_edges": counters.graph_edges,
             "emitted_families": emitted,
+            "terminal_min": initial_environment.terminal_min,
+            "terminal_limit": limits.max_terminal_contour_segments,
+            "terminal_pruned": counters.terminal_contour_pruned,
             "status": status,
         }
 

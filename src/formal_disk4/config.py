@@ -31,6 +31,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_graph_edges_per_placement": 12000,
         "max_families_per_placement": 8,
         "max_expression_nodes": 2000,
+        "max_terminal_contour_segments": 40,
         "validation_exponent": 2,
         "family_expansion": {
             "policy": "none",

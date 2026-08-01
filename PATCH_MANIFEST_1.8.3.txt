@@ -1,0 +1,10 @@
+PATCH_NOTES_1.8.3.md
+PATCH_MANIFEST_1.8.3.txt
+pyproject.toml
+src/formal_disk4/__init__.py
+src/formal_disk4/config.py
+src/formal_disk4/pipeline/checkpoint.py
+src/formal_disk4/pipeline/runner.py
+src/formal_disk4/words/compact.py
+src/formal_disk4/words/exact_partial.py
+tests/test_exact_partial.py

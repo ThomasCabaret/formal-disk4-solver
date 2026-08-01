@@ -126,6 +126,54 @@ class ExactPartialSolverTests(unittest.TestCase):
         self.assertEqual(progress["graph_edges"], 352)
 
 
+    def test_terminal_contour_cutoff_tracks_only_physical_variables(self) -> None:
+        equations = (Equation(word("X"), word("M_X")),)
+
+        allowed = ExactPartialWordSolver(
+            equations,
+            ("X", "M_X"),
+            contour_variables=("X",),
+        )
+        families = list(
+            allowed.solve(
+                SolverLimits(
+                    max_graph_nodes=50,
+                    max_graph_edges=100,
+                    max_terminal_contour_segments=1,
+                )
+            )
+        )
+        self.assertEqual([family.kind for family in families], ["finite"])
+        self.assertEqual(allowed.last_summary.terminal_contour_pruned, 0)
+
+        blocked = ExactPartialWordSolver(
+            equations,
+            ("X", "M_X"),
+            contour_variables=("X",),
+        )
+        self.assertEqual(
+            list(
+                blocked.solve(
+                    SolverLimits(
+                        max_graph_nodes=50,
+                        max_graph_edges=100,
+                        max_terminal_contour_segments=0,
+                    )
+                )
+            ),
+            [],
+        )
+        self.assertEqual(blocked.last_summary.terminal_contour_pruned, 1)
+        self.assertEqual(
+            blocked.last_summary.status,
+            "restricted_terminal_contour_limit",
+        )
+        progress = blocked.progress_snapshot()
+        self.assertEqual(progress["terminal_limit"], 0)
+        self.assertEqual(progress["terminal_pruned"], 1)
+
+
+
 
 
 if __name__ == "__main__":
