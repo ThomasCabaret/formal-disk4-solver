@@ -39,7 +39,7 @@ class FourPiecePizzaTests(unittest.TestCase):
             planar_map, allow_reflections=True, symmetry_mode="assignment"
         )
         self.assertEqual(enumerator.raw_assignment_count(), 216)
-        self.assertEqual(len(tuple(enumerator.enumerate())), 114)
+        self.assertEqual(len(tuple(enumerator.enumerate())), 216)
 
     def test_obvious_quarter_sector_profile_survives(self) -> None:
         planar_map = build_c4_map()

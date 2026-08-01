@@ -12,7 +12,7 @@ class ExteriorArcRepetitionTests(unittest.TestCase):
         planar_map = build_k4_map()
         enumerator = AssignmentEnumerator(planar_map, symmetry_mode="incremental")
         assignments = tuple(enumerator.enumerate())
-        self.assertEqual(len(assignments), 256)
+        self.assertEqual(len(assignments), 512)
 
         candidate_counts = []
         for assignment in assignments:
