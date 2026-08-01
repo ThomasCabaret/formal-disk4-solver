@@ -21,6 +21,7 @@ from formal_disk4.orchestration.pipeline import (
     materialize_task,
     task_checkpoint_completed,
 )
+from formal_disk4.orchestration.status import PipelineStatusReader
 from formal_disk4.pipeline.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
     search_fingerprint,
@@ -87,6 +88,16 @@ class CaseCatalogTests(unittest.TestCase):
         self.assertIn("double-cycle-6", ids)
         self.assertFalse(any(case.structurally_impossible for case in self.catalog.cases))
         self.assertEqual(len(ids), len(self.catalog.cases))
+
+    def test_catalog_exposes_the_two_fertile_mapping_shards(self) -> None:
+        self.assertEqual(
+            self.catalog.get("wheel-4-half-turn-fertile-ab").map_name,
+            "wheel-4",
+        )
+        self.assertEqual(
+            self.catalog.get("wheel-6-half-turn-fertile-abc").map_name,
+            "wheel-6",
+        )
 
     def test_double_cycle_6_is_loaded_from_the_parameterized_family(self) -> None:
         case = self.catalog.get("double-cycle-6")
@@ -247,6 +258,29 @@ class PipelineModelTests(unittest.TestCase):
             0.472,
         )
         self.assertIsNone(tracker.feed("ordinary line"))
+
+    def test_status_reports_deferred_word_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output" / "case"
+            output.mkdir(parents=True)
+            (output / "deferred_word_cases.jsonl").write_text(
+                '{"reason":"wall_time_budget"}\n', encoding="utf-8"
+            )
+            case = CaseDefinition(
+                case_id="case",
+                label="Case",
+                description="",
+                map_name="c3",
+                group="Tests",
+                config_paths={},
+                output_directory=Path("output") / "case",
+            )
+            status = PipelineStatusReader(root).read(case)
+        self.assertEqual(
+            status.search_state,
+            "not started; 1 word case deferred",
+        )
 
 
     def test_fresh_materialization_restarts_search_and_geometry_checkpoints(self) -> None:

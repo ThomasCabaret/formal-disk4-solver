@@ -621,7 +621,12 @@ class PipelineApp:
             while True:
                 event, payload = self.events.get_nowait()
                 if event == "log":
-                    self._append_console(str(payload))
+                    line = str(payload)
+                    self._append_console(line)
+                    if line.startswith("[WORD CASE DEFERRED]"):
+                        self.status_var.set(
+                            "Pathological word case deferred; search continues"
+                        )
                 elif event == "task_start":
                     index, task, case = payload  # type: ignore[misc]
                     self.status_var.set(

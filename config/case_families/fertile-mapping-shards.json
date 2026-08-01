@@ -1,0 +1,160 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "fertile-mapping-shards",
+  "label": "Fertile mapping shards",
+  "description": "Deterministic braided-hub mapping shards selected as imposed search hypotheses, with no intrinsic mapping quotient inside the shard.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "wheel",
+    "central-tile",
+    "fertile-domain",
+    "mapping-shard",
+    "half-turn"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "symmetry_mode": "off",
+        "track_exact_domain_size": true,
+        "cyclic_equivariance": {
+          "enabled": false
+        }
+      },
+      "solver": {
+        "max_seconds_per_word_case": 60.0,
+        "max_residual_literals_per_word_case": 8000
+      },
+      "output": {
+        "write_deferred_word_cases": true,
+        "deferred_word_cases_file": "deferred_word_cases.jsonl"
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "wheel-4-half-turn-ab",
+      "case_id_template": "wheel-4-half-turn-fertile-ab",
+      "label": "Cycle 4 + center - fertile A/B shard",
+      "description": "One deterministic fertile shard for four outer tiles with roles A/B/A/B and imposed half-turn cyclic shift. The landmark order encodes two crossing, non-nested dual central arcs.",
+      "map_template": "wheel-4",
+      "stage_overrides": {
+        "search": {
+          "enumeration": {
+            "cyclic_shift_equivariance": {
+              "enabled": true,
+              "automorphism": "rotation_2"
+            },
+            "mapping_subdomain": {
+              "enabled": true,
+              "id": "wheel-4-half-turn-braided-hub-ab-01",
+              "map": "wheel-4",
+              "assignment_sequences": {
+                "C": ["C:I0", "C:I1", "C:I2", "C:I3"],
+                "P0": ["P0:I0", "P0:I1", "P0:O1", "P0:O0"],
+                "P1": ["P1:I1", "P1:I2", "P1:O2", "P1:O1"],
+                "P2": ["P2:I3", "P2:O3", "P2:O2", "P2:I2"],
+                "P3": ["P3:I3", "P3:I0", "P3:O0", "P3:O3"]
+              },
+              "cyclic_shift_split": {
+                "C": 2,
+                "P0": 1,
+                "P1": 0,
+                "P2": 3,
+                "P3": 4
+              },
+              "fundamental_strict_order": [
+                "C:I0",
+                "P3:I3",
+                "P2:I3",
+                "P3:I0",
+                "C:I1",
+                "P0:I0"
+              ],
+              "fundamental_blocks": [
+                ["C:I0"],
+                ["P3:I3"],
+                ["P2:I3"],
+                ["P2:O3"],
+                ["P3:I0"],
+                ["C:I1"],
+                ["P2:O2"],
+                ["P0:I0"],
+                ["P3:O0"],
+                ["P3:O3"]
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "wheel-6-half-turn-abc",
+      "case_id_template": "wheel-6-half-turn-fertile-abc",
+      "label": "Cycle 6 + center - fertile A/B/C shard",
+      "description": "One deterministic fertile shard for six outer tiles with roles A/B/C/A/B/C and imposed half-turn cyclic shift. The landmark order encodes the long three-role braided monodromy.",
+      "map_template": "wheel-6",
+      "stage_overrides": {
+        "search": {
+          "enumeration": {
+            "cyclic_shift_equivariance": {
+              "enabled": true,
+              "automorphism": "rotation_3"
+            },
+            "mapping_subdomain": {
+              "enabled": true,
+              "id": "wheel-6-half-turn-braided-hub-abc-01",
+              "map": "wheel-6",
+              "assignment_sequences": {
+                "C": ["C:I0", "C:I1", "C:I2", "C:I3", "C:I4", "C:I5"],
+                "P0": ["P0:I0", "P0:I1", "P0:O1", "P0:O0"],
+                "P1": ["P1:I1", "P1:I2", "P1:O2", "P1:O1"],
+                "P2": ["P2:I2", "P2:I3", "P2:O3", "P2:O2"],
+                "P3": ["P3:O4", "P3:O3", "P3:I3", "P3:I4"],
+                "P4": ["P4:I5", "P4:O5", "P4:O4", "P4:I4"],
+                "P5": ["P5:I5", "P5:I0", "P5:O0", "P5:O5"]
+              },
+              "cyclic_shift_split": {
+                "C": 3,
+                "P0": 2,
+                "P1": 1,
+                "P2": 0,
+                "P3": 2,
+                "P4": 3,
+                "P5": 4
+              },
+              "fundamental_strict_order": [
+                "C:I0",
+                "P5:I5",
+                "P4:I5",
+                "C:I1",
+                "P5:I0",
+                "P0:I0",
+                "C:I2",
+                "P1:I1",
+                "P0:I1"
+              ],
+              "fundamental_blocks": [
+                ["C:I0", "P3:O4"],
+                ["P3:O3", "P5:I5"],
+                ["P4:I5"],
+                ["C:I1", "P4:O5"],
+                ["P4:O4", "P5:I0"],
+                ["P0:I0"],
+                ["C:I2"],
+                ["P1:I1"],
+                ["P0:I1"],
+                ["P5:O0"],
+                ["P5:O5"]
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

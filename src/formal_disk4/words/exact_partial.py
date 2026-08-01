@@ -36,6 +36,7 @@ class SolverLimits:
     max_families: int | None = 16
     max_expression_nodes: int | None = 2_000
     max_terminal_contour_segments: int | None = None
+    max_residual_literals: int | None = None
     validation_exponent: int = 2
 
 
@@ -68,6 +69,7 @@ class SolverRunSummary:
     unsupported_complex_components: int
     graph_limit_reached: bool
     expression_limit_reached: bool
+    residual_literal_limit_reached: bool
     terminal_contour_pruned: int
     family_limit_reached: bool
     external_stop_reached: bool
@@ -85,6 +87,7 @@ class SolverRunSummary:
             "unsupported_complex_components": self.unsupported_complex_components,
             "graph_limit_reached": self.graph_limit_reached,
             "expression_limit_reached": self.expression_limit_reached,
+            "residual_literal_limit_reached": self.residual_literal_limit_reached,
             "terminal_contour_pruned": self.terminal_contour_pruned,
             "family_limit_reached": self.family_limit_reached,
             "external_stop_reached": self.external_stop_reached,
@@ -124,6 +127,7 @@ class _MutableCounters:
     unsupported_complex_components: int = 0
     graph_limit_reached: bool = False
     expression_limit_reached: bool = False
+    residual_literal_limit_reached: bool = False
     terminal_contour_pruned: int = 0
     family_limit_reached: bool = False
     external_stop_reached: bool = False
@@ -788,6 +792,7 @@ class ExactPartialWordSolver:
             unsupported_complex_components=0,
             graph_limit_reached=False,
             expression_limit_reached=False,
+            residual_literal_limit_reached=False,
             terminal_contour_pruned=0,
             family_limit_reached=False,
             external_stop_reached=False,
@@ -815,6 +820,7 @@ class ExactPartialWordSolver:
                 unsupported_complex_components=0,
                 graph_limit_reached=False,
                 expression_limit_reached=False,
+                residual_literal_limit_reached=False,
                 terminal_contour_pruned=0,
                 family_limit_reached=False,
                 external_stop_reached=False,
@@ -1065,6 +1071,24 @@ class ExactPartialWordSolver:
                     branch=branch_name,
                     raw_equations=raw_equations,
                 )
+                raw_literal_count = sum(
+                    len(left) + len(right) for left, right in raw_equations
+                )
+                if (
+                    limits.max_residual_literals is not None
+                    and raw_literal_count > limits.max_residual_literals
+                ):
+                    counters.residual_literal_limit_reached = True
+                    stop = True
+                    update_progress(
+                        "residual_literal_cutoff",
+                        residual=residual,
+                        environment=environment,
+                        trace=trace,
+                        branch=branch_name,
+                        raw_equations=raw_equations,
+                    )
+                    return
                 child = cw.canonicalize_residual(
                     raw_equations,
                     ordered_raw_variables,
@@ -1207,12 +1231,15 @@ class ExactPartialWordSolver:
             and counters.unsupported_complex_components == 0
             and not counters.graph_limit_reached
             and not counters.expression_limit_reached
+            and not counters.residual_literal_limit_reached
             and counters.terminal_contour_pruned == 0
             and not counters.family_limit_reached
             and not counters.external_stop_reached
         )
         if counters.external_stop_reached:
             status = "interrupted_external_stop"
+        elif counters.residual_literal_limit_reached:
+            status = "unresolved_residual_literal_limit"
         elif counters.family_limit_reached:
             status = "unresolved_family_limit"
         elif counters.graph_limit_reached or counters.expression_limit_reached:
@@ -1235,6 +1262,7 @@ class ExactPartialWordSolver:
             unsupported_complex_components=counters.unsupported_complex_components,
             graph_limit_reached=counters.graph_limit_reached,
             expression_limit_reached=counters.expression_limit_reached,
+            residual_literal_limit_reached=counters.residual_literal_limit_reached,
             terminal_contour_pruned=counters.terminal_contour_pruned,
             family_limit_reached=counters.family_limit_reached,
             external_stop_reached=counters.external_stop_reached,
@@ -1252,4 +1280,3 @@ class ExactPartialWordSolver:
             "terminal_pruned": counters.terminal_contour_pruned,
             "status": status,
         }
-

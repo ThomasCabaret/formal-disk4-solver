@@ -89,6 +89,33 @@ class ExactPartialSolverTests(unittest.TestCase):
         self.assertEqual(solver.last_summary.status, "interrupted_external_stop")
         self.assertTrue(solver.last_summary.external_stop_reached)
 
+    def test_residual_literal_budget_defers_growth_before_canonicalization(self) -> None:
+        solver = ExactPartialWordSolver(
+            (Equation(word("A", "B"), word("B", "A")),),
+            ("A", "B"),
+        )
+        self.assertEqual(
+            list(
+                solver.solve(
+                    SolverLimits(
+                        max_graph_nodes=100,
+                        max_graph_edges=400,
+                        max_residual_literals=0,
+                    )
+                )
+            ),
+            [],
+        )
+        self.assertEqual(
+            solver.last_summary.status,
+            "unresolved_residual_literal_limit",
+        )
+        self.assertTrue(solver.last_summary.residual_literal_limit_reached)
+        self.assertEqual(
+            solver.progress_snapshot()["phase"],
+            "done",
+        )
+
     def test_fast_simplifier_matches_reference_on_long_cancellation(self) -> None:
         prefix = tuple(Literal("P") for _ in range(200))
         suffix = tuple(Literal("S") for _ in range(200))

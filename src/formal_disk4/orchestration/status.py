@@ -48,6 +48,14 @@ class PipelineStatusReader:
         )
 
     def _read_search(self, output: Path) -> tuple[str, int]:
+        deferred = self._count_jsonl(output / "deferred_word_cases.jsonl")
+
+        def with_deferred(state: str) -> str:
+            if not deferred:
+                return state
+            suffix = "case" if deferred == 1 else "cases"
+            return f"{state}; {deferred} word {suffix} deferred"
+
         active = _active_task(output / ".active-search-pipeline-task.json")
         checkpoint = output / "checkpoint.sqlite3"
         if checkpoint.exists():
@@ -71,20 +79,22 @@ class PipelineStatusReader:
             else:
                 formal = self._count_jsonl(output / "candidates.jsonl")
             if active:
-                return "running", formal
+                return with_deferred("running"), formal
             if row is None:
-                return "checkpoint error", formal
+                return with_deferred("checkpoint error"), formal
             schema_version, completed = row
             if int(schema_version) != CHECKPOINT_SCHEMA_VERSION:
-                return "incompatible", formal
-            return ("complete" if bool(completed) else "paused"), formal
+                return with_deferred("incompatible"), formal
+            return with_deferred(
+                "complete" if bool(completed) else "paused"
+            ), formal
 
         formal = self._count_jsonl(output / "candidates.jsonl")
         if active:
-            return "running", formal
+            return with_deferred("running"), formal
         if formal:
-            return "results only", formal
-        return "not started", 0
+            return with_deferred("results only"), formal
+        return with_deferred("not started"), 0
 
     def _read_geometry(
         self,
@@ -128,7 +138,10 @@ class PipelineStatusReader:
             state = "complete"
         elif checkpoint or counts.considered:
             state = "paused"
-        elif formal == 0 and search_state not in {"complete", "results only"}:
+        elif formal == 0 and search_state.split(";", 1)[0] not in {
+            "complete",
+            "results only",
+        }:
             state = "waiting for search"
         elif formal == 0:
             state = "nothing to test"

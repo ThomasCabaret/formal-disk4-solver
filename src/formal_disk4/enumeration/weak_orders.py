@@ -11,6 +11,7 @@ from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
 from .assignments import AssignmentTransform, ContourAssignment, rotate
+from .mapping_subdomain import MappingSubdomain
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 from .symmetry import MappingSymmetryQuotient
 
@@ -85,6 +86,7 @@ class WeakOrderEnumerator:
         equivariance_piece_orbits: Sequence[Sequence[int]] = (),
         mapping_symmetry: MappingSymmetryQuotient | None = None,
         prefix_topology_filter: "PrefixRadiusArcTopologyFilter | None" = None,
+        mapping_subdomain: MappingSubdomain | None = None,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -109,6 +111,7 @@ class WeakOrderEnumerator:
                 "Pointwise and cyclic-shift equivariance cannot be enabled together"
             )
         self.prefix_topology_filter = prefix_topology_filter
+        self.mapping_subdomain = mapping_subdomain
         self.mapping_symmetry = (
             mapping_symmetry
             if mapping_symmetry is not None or symmetry_mode == "off"
@@ -212,6 +215,11 @@ class WeakOrderEnumerator:
         if not self.track_exact_leaf_mass:
             return 0
         if self.required_cyclic_shift_transform is not None:
+            if self.mapping_subdomain is not None:
+                return sum(
+                    self._count_mapping_subdomain_orders(split)
+                    for split in self._cyclic_shift_splits
+                )
             return sum(
                 count_weak_orders_for_lengths(split, self.reference_index)
                 for split in self._cyclic_shift_splits
@@ -225,6 +233,40 @@ class WeakOrderEnumerator:
         return count_weak_orders_for_lengths(
             target, self._equivariance_reference_orbit
         )
+
+    def _count_mapping_subdomain_orders(self, target: Tuple[int, ...]) -> int:
+        """Count the exact anchored weak orders inside one deterministic shard."""
+
+        if self.mapping_subdomain is None:
+            return count_weak_orders_for_lengths(target, self.reference_index)
+
+        @lru_cache(maxsize=None)
+        def visit(counters: Tuple[int, ...]) -> int:
+            if counters == target:
+                return 1
+            available_mask = 0
+            for piece_index, (counter, limit) in enumerate(zip(counters, target)):
+                if counter < limit:
+                    available_mask |= 1 << piece_index
+            require_reference = not any(counters)
+            total = 0
+            for mask in range(1, available_mask + 1):
+                if mask & ~available_mask:
+                    continue
+                if require_reference and not mask & (1 << self.reference_index):
+                    continue
+                if not self.mapping_subdomain.allows_next_block(
+                    counters, mask, self.assignment.sequences
+                ):
+                    continue
+                next_counters = tuple(
+                    counter + (1 if mask & (1 << piece_index) else 0)
+                    for piece_index, counter in enumerate(counters)
+                )
+                total += visit(next_counters)
+            return total
+
+        return visit(tuple(0 for _ in target))
 
     def _subtree_leaf_mass(self, counters: Tuple[int, ...]) -> int:
         if not self.track_exact_leaf_mass:
@@ -593,7 +635,14 @@ class WeakOrderEnumerator:
             if set().union(*domains) != set(range(len(self.occurrences))):
                 continue
             output.add(split_tuple)
-        return tuple(sorted(output))
+        splits = tuple(sorted(output))
+        if self.mapping_subdomain is not None:
+            splits = tuple(
+                split
+                for split in splits
+                if self.mapping_subdomain.allows_cyclic_shift_split(split)
+            )
+        return splits
 
     def _append_cyclic_half_block(
         self,
@@ -659,6 +708,14 @@ class WeakOrderEnumerator:
             block_count=block_count,
             positions=positions,
         )
+
+        if (
+            self.mapping_subdomain is not None
+            and not self.mapping_subdomain.allows_leaf(blocks)
+        ):
+            self.event_sink("mapping_subdomain_pruned_leaves", 1)
+            self._mark_subtree_complete(path, 1)
+            return
 
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
@@ -761,6 +818,14 @@ class WeakOrderEnumerator:
         for mask in range(1, available_mask + 1):
             if mask & ~available_mask:
                 continue
+            if (
+                self.mapping_subdomain is not None
+                and not self.mapping_subdomain.allows_next_block(
+                    counters, mask, self.assignment.sequences
+                )
+            ):
+                self.event_sink("mapping_subdomain_pruned_nodes", 1)
+                continue
             appended = self._append_cyclic_half_block(
                 prefixes, half_blocks, counters, mask
             )
@@ -828,6 +893,14 @@ class WeakOrderEnumerator:
                     return
                 if not self._resume_child_allowed(root_path, mask):
                     continue
+                if (
+                    self.mapping_subdomain is not None
+                    and not self.mapping_subdomain.allows_next_block(
+                        counters, mask, self.assignment.sequences
+                    )
+                ):
+                    self.event_sink("mapping_subdomain_pruned_nodes", 1)
+                    continue
                 appended = self._append_cyclic_half_block(
                     prefixes, (), counters, mask
                 )
@@ -869,6 +942,14 @@ class WeakOrderEnumerator:
             if self.stop_predicate():
                 return
             if self._resuming and mask != self._resume_path[0]:
+                continue
+            if (
+                self.mapping_subdomain is not None
+                and not self.mapping_subdomain.allows_next_block(
+                    counters, mask, self.assignment.sequences
+                )
+            ):
+                self.event_sink("mapping_subdomain_pruned_nodes", 1)
                 continue
             result = self._append_block((), counters, positions, mask)
             if result is None:
@@ -1034,6 +1115,14 @@ class WeakOrderEnumerator:
             self.event_sink("symmetry_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
             return
+        if (
+            complete
+            and self.mapping_subdomain is not None
+            and not self.mapping_subdomain.allows_leaf(blocks)
+        ):
+            self.event_sink("mapping_subdomain_pruned_leaves", 1)
+            self._mark_subtree_complete(path, 1)
+            return
 
         block_count = len(blocks)
         length_rows = self._resolved_length_rows(positions, block_count)
@@ -1113,6 +1202,14 @@ class WeakOrderEnumerator:
         )
         candidates = []
         for mask in self._candidate_masks(available_mask):
+            if (
+                self.mapping_subdomain is not None
+                and not self.mapping_subdomain.allows_next_block(
+                    counters, mask, self.assignment.sequences
+                )
+            ):
+                self.event_sink("mapping_subdomain_pruned_nodes", 1)
+                continue
             appended = self._append_block(blocks, counters, positions, mask)
             if appended is None:
                 continue

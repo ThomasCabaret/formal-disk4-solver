@@ -51,6 +51,39 @@ class IntegrationTests(unittest.TestCase):
             self.assertTrue((Path(temporary) / "unsupported_word_components.jsonl").exists())
             self.assertIn("exact_partial_word_solver", loaded["statistics"]["timings_seconds"])
 
+    def test_word_case_timeout_is_reported_and_search_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = load_config(None)
+            config["maps"] = ["c3"]
+            config["limits"].update(
+                {
+                    "max_assignments": 1,
+                    "max_nodes": 5000,
+                    "max_placements": 2,
+                    "max_profiles": 2,
+                    "time_limit_seconds": 10,
+                }
+            )
+            config["solver"]["max_seconds_per_word_case"] = 0
+            config["checkpoint"]["enabled"] = False
+            config["progress"]["enabled"] = False
+            config["output"]["directory"] = temporary
+
+            summary = SolverRunner(config).run()
+            deferred = Path(temporary) / "deferred_word_cases.jsonl"
+
+            self.assertEqual(
+                summary["statistics"]["counters"].get("deferred_word_cases"),
+                1,
+            )
+            self.assertTrue(deferred.exists())
+            record = json.loads(deferred.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(record["reason"], "wall_time_budget")
+            self.assertEqual(
+                record["solver_summary"]["status"],
+                "interrupted_external_stop",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

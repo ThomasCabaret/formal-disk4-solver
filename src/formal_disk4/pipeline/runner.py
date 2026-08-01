@@ -15,6 +15,7 @@ from formal_disk4.config import save_config
 from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator, ContourAssignment
+from formal_disk4.enumeration.mapping_subdomain import MappingSubdomain
 from formal_disk4.enumeration.weak_orders import (
     WeakOrderEnumerator,
     count_weak_orders_for_lengths,
@@ -48,9 +49,16 @@ class MapContext:
     assignment_count: int
     mass_per_assignment: int
     assignment_masses: Tuple[int, ...] = ()
+    raw_assignment_ids: Tuple[int, ...] = ()
+    mapping_subdomain: MappingSubdomain | None = None
 
     def assignment_at(self, assignment_id: int) -> ContourAssignment | None:
-        return self.assignment_enumerator.canonical_assignment_at(assignment_id)
+        raw_id = (
+            self.raw_assignment_ids[assignment_id]
+            if self.raw_assignment_ids
+            else assignment_id
+        )
+        return self.assignment_enumerator.canonical_assignment_at(raw_id)
 
     def mass_at(self, assignment_id: int) -> int:
         if self.assignment_masses:
@@ -78,6 +86,7 @@ class SolverRunner:
         self._current_placement: object | None = None
         self._current_compiled: object | None = None
         self._current_map_name = "pending"
+        self._current_mapping_subdomain = "full"
         self._stage_lock = threading.Lock()
         self._current_stage = "initializing"
         self._stage_started_at = time.perf_counter()
@@ -226,6 +235,7 @@ class SolverRunner:
         )
         return (
             f"[{elapsed:9.2f}s] map={self._current_map_name} "
+            f"domain={self._current_mapping_subdomain} "
             f"overall~{overall_text} "
             f"assignment={assignment_position}/{max(1, self._total_assignment_count)} "
             f"current~{assignment_text} "
@@ -236,6 +246,7 @@ class SolverRunner:
             f"placements={self.stats.get('surviving_placements')} "
             f"preword_pruned={self.stats.get('preword_rejections')} "
             f"word_systems={self.stats.get('solver_cases')} "
+            f"deferred={self.stats.get('deferred_word_cases')} "
             f"families={self.stats.get('word_families')}"
             f"[finite={self.stats.get('word_family_finite')},"
             f"power={self.stats.get('word_family_power')},"
@@ -524,6 +535,11 @@ class SolverRunner:
                     enforce_equivariant_weak_orders
                 ),
             )
+            mapping_subdomain = MappingSubdomain.from_config(
+                planar_map,
+                assignment_enumerator.occurrence_names,
+                enumeration_config.get("mapping_subdomain"),
+            )
             cyclic_shift_config = enumeration_config.get(
                 "cyclic_shift_equivariance", {}
             )
@@ -531,6 +547,15 @@ class SolverRunner:
             if cyclic_shift_enabled and equivariance_enabled:
                 raise ValueError(
                     "cyclic_equivariance and cyclic_shift_equivariance are mutually exclusive"
+                )
+            if mapping_subdomain is not None and not cyclic_shift_enabled:
+                raise ValueError(
+                    "A mapping_subdomain currently requires cyclic_shift_equivariance"
+                )
+            if mapping_subdomain is not None and symmetry_mode != "off":
+                raise ValueError(
+                    "A mapping_subdomain must use symmetry_mode=off so its imposed "
+                    "hypothesis is not altered by an intrinsic quotient"
                 )
             if cyclic_shift_enabled:
                 cyclic_shift_transform = assignment_enumerator.transform_for_automorphism(
@@ -555,9 +580,20 @@ class SolverRunner:
             # Always keep the assignment domain lazy. Checkpoints store the raw
             # mixed-radix slot; non-canonical slots are rejected by inexpensive
             # integer permutations without materializing the canonical domain.
-            assignment_count = assignment_enumerator.raw_assignment_count()
+            raw_assignment_ids = (
+                mapping_subdomain.assignment_ids(assignment_enumerator)
+                if mapping_subdomain is not None
+                else ()
+            )
+            assignment_count = (
+                len(raw_assignment_ids)
+                if mapping_subdomain is not None
+                else assignment_enumerator.raw_assignment_count()
+            )
             first_assignment = (
-                assignment_enumerator.assignment_at(0)
+                assignment_enumerator.assignment_at(
+                    raw_assignment_ids[0] if raw_assignment_ids else 0
+                )
                 if assignment_count
                 else None
             )
@@ -574,7 +610,11 @@ class SolverRunner:
                 assignment_masses = tuple(
                     WeakOrderEnumerator(
                         planar_map=planar_map,
-                        assignment=assignment_enumerator.assignment_at(assignment_id),
+                        assignment=assignment_enumerator.assignment_at(
+                            raw_assignment_ids[assignment_id]
+                            if raw_assignment_ids
+                            else assignment_id
+                        ),
                         occurrence_names=assignment_enumerator.occurrence_names,
                         length_oracle=self.length_oracle,
                         angle_oracle=self.angle_oracle,
@@ -584,6 +624,7 @@ class SolverRunner:
                         enable_exterior_arc_repetition_filter=False,
                         track_exact_leaf_mass=True,
                         required_cyclic_shift_transform=cyclic_shift_transform,
+                        mapping_subdomain=mapping_subdomain,
                     ).total_leaf_mass
                     for assignment_id in range(assignment_count)
                 )
@@ -624,8 +665,12 @@ class SolverRunner:
                     assignment_count=assignment_count,
                     mass_per_assignment=mass_per_assignment,
                     assignment_masses=assignment_masses,
+                    raw_assignment_ids=raw_assignment_ids,
+                    mapping_subdomain=mapping_subdomain,
                 )
             )
+            if mapping_subdomain is not None:
+                self.stats.increment("mapping_subdomains_selected")
             total_mass += contexts[-1].total_leaf_mass
             total_assignments += assignment_count
         self._total_leaf_mass = total_mass
@@ -704,6 +749,9 @@ class SolverRunner:
         family_path = self.output_directory / output_config["families_file"]
         unsupported_path = self.output_directory / output_config["unsupported_file"]
         word_case_audit_path = self.output_directory / output_config["word_cases_file"]
+        deferred_word_case_path = self.output_directory / output_config.get(
+            "deferred_word_cases_file", "deferred_word_cases.jsonl"
+        )
         placement_path = self.output_directory / output_config["placements_file"]
         error_path = self.output_directory / "errors.jsonl"
         flush_every = int(output_config.get("flush_every", 1))
@@ -713,7 +761,7 @@ class SolverRunner:
             self.stats.increment(
                 "raw_assignments_in_domain",
                 sum(
-                    context.assignment_enumerator.raw_assignment_count()
+                    context.assignment_count
                     for context in contexts
                 ),
             )
@@ -721,13 +769,22 @@ class SolverRunner:
                 context.assignment_enumerator.unrestricted_raw_assignment_count()
                 for context in contexts
             )
+            enumerator_raw = sum(
+                context.assignment_enumerator.raw_assignment_count()
+                for context in contexts
+            )
             self.stats.increment(
                 "unrestricted_raw_assignments_in_domain", unrestricted
             )
-            if unrestricted != self.stats.get("raw_assignments_in_domain"):
+            if unrestricted != enumerator_raw:
                 self.stats.increment(
                     "cyclic_equivariance_assignment_reduction",
-                    unrestricted - self.stats.get("raw_assignments_in_domain"),
+                    unrestricted - enumerator_raw,
+                )
+            if enumerator_raw != self.stats.get("raw_assignments_in_domain"):
+                self.stats.increment(
+                    "mapping_subdomain_assignment_reduction",
+                    enumerator_raw - self.stats.get("raw_assignments_in_domain"),
                 )
         self.stats.counters["assignment_slots_in_domain"] = self._total_assignment_count
         self.stats.counters.pop("canonical_assignments_in_domain", None)
@@ -749,7 +806,7 @@ class SolverRunner:
             )
             summary = self._final_summary(
                 candidate_path, family_path, unsupported_path,
-                word_case_audit_path, placement_path, error_path
+                word_case_audit_path, deferred_word_case_path, placement_path, error_path
             )
             atomic_write_json(self.output_directory / "run_summary.json", summary)
             self._report_tainted_campaign(error_path)
@@ -764,6 +821,7 @@ class SolverRunner:
                 ("write_families", family_path),
                 ("write_unsupported", unsupported_path),
                 ("write_word_cases", word_case_audit_path),
+                ("write_deferred_word_cases", deferred_word_case_path),
                 ("write_placements", placement_path),
                 ("write_errors", error_path),
             ):
@@ -816,6 +874,13 @@ class SolverRunner:
             word_case_audit_path,
             flush_every,
             output_config.get("max_word_case_records"),
+            append=self._resumed,
+        )
+        deferred_word_case_writer = self._make_writer(
+            bool(output_config.get("write_deferred_word_cases", True)),
+            deferred_word_case_path,
+            1,
+            output_config.get("max_deferred_word_case_records", 10000),
             append=self._resumed,
         )
         placement_writer = self._make_writer(
@@ -872,6 +937,11 @@ class SolverRunner:
                 if solver_config.get("max_terminal_contour_segments", 100) is None
                 else int(solver_config.get("max_terminal_contour_segments", 100))
             ),
+            max_residual_literals=(
+                None
+                if solver_config.get("max_residual_literals_per_word_case") is None
+                else int(solver_config["max_residual_literals_per_word_case"])
+            ),
             validation_exponent=int(solver_config.get("validation_exponent", 2)),
         )
         tolerance = float(self.config["enumeration"]["lp_tolerance"])
@@ -886,6 +956,11 @@ class SolverRunner:
                 planar_map = context.planar_map
                 assignment_enumerator = context.assignment_enumerator
                 self._current_map_name = planar_map.name
+                self._current_mapping_subdomain = (
+                    context.mapping_subdomain.shard_id
+                    if context.mapping_subdomain is not None
+                    else "full"
+                )
                 self._set_stage("map_setup", map_index=map_index)
                 self._search_state["map_index"] = map_index
                 if not bool(self._search_state.get("map_started", False)):
@@ -962,7 +1037,11 @@ class SolverRunner:
                         occurrence_names=assignment_enumerator.occurrence_names,
                         length_oracle=self.length_oracle,
                         angle_oracle=self.angle_oracle,
-                        symmetry_mode=str(self.config["enumeration"]["symmetry_mode"]),
+                        symmetry_mode=(
+                            "off"
+                            if context.mapping_subdomain is not None
+                            else str(self.config["enumeration"]["symmetry_mode"])
+                        ),
                         enable_length_filter=bool(
                             self.config["enumeration"]["enable_length_filter"]
                         ),
@@ -1020,10 +1099,12 @@ class SolverRunner:
                         ),
                         mapping_symmetry=(
                             assignment_enumerator.mapping_symmetry
-                            if str(self.config["enumeration"]["symmetry_mode"]) != "off"
+                            if context.mapping_subdomain is None
+                            and str(self.config["enumeration"]["symmetry_mode"]) != "off"
                             else None
                         ),
                         prefix_topology_filter=prefix_topology_filter,
+                        mapping_subdomain=context.mapping_subdomain,
                     )
                     self._current_weak_orders = weak_orders
                     self._current_placement = None
@@ -1191,6 +1272,33 @@ class SolverRunner:
                                 break
                             continue
 
+                        word_case_started = time.perf_counter()
+                        word_budget_raw = solver_config.get("max_seconds_per_word_case")
+                        word_budget_seconds = (
+                            None
+                            if word_budget_raw is None
+                            else max(0.0, float(word_budget_raw))
+                        )
+                        word_deadline = (
+                            None
+                            if word_budget_seconds is None
+                            else word_case_started + word_budget_seconds
+                        )
+                        word_budget_reached = False
+
+                        def should_stop_word_case() -> bool:
+                            nonlocal word_budget_reached
+                            if self._should_stop():
+                                return True
+                            if (
+                                word_deadline is not None
+                                and time.perf_counter() >= word_deadline
+                            ):
+                                word_budget_reached = True
+                                return True
+                            return False
+
+                        placement_context["word_budget_seconds"] = word_budget_seconds
                         self._set_stage("word_solver_initialization", **placement_context)
                         solver = ExactPartialWordSolver(
                             compiled.effective_solver_equations,
@@ -1205,7 +1313,7 @@ class SolverRunner:
                             family_iterator = iter(
                                 solver.solve(
                                     solver_limits,
-                                    stop_predicate=self._should_stop,
+                                    stop_predicate=should_stop_word_case,
                                 )
                             )
                             while True:
@@ -1408,6 +1516,8 @@ class SolverRunner:
                             self.stats.increment("unsupported_language_word_cases")
                         if summary.status == "unresolved_graph_limit":
                             self.stats.increment("graph_limited_word_cases")
+                        if summary.status == "unresolved_residual_literal_limit":
+                            self.stats.increment("residual_literal_limited_word_cases")
                         if summary.status == "unresolved_family_limit":
                             self.stats.increment("family_limited_word_cases")
                         if summary.terminal_contour_pruned:
@@ -1419,6 +1529,51 @@ class SolverRunner:
                             self.stats.increment("terminal_contour_limited_word_cases")
                         if summary.status == "interrupted_external_stop":
                             self.stats.increment("externally_stopped_word_cases")
+                        deferred_reason = None
+                        if word_budget_reached:
+                            deferred_reason = "wall_time_budget"
+                        elif summary.residual_literal_limit_reached:
+                            deferred_reason = "residual_literal_budget"
+                        elif summary.graph_limit_reached:
+                            deferred_reason = "residual_graph_budget"
+                        elif summary.expression_limit_reached:
+                            deferred_reason = "residual_expression_budget"
+                        elif summary.family_limit_reached:
+                            deferred_reason = "family_budget"
+                        elif summary.terminal_contour_pruned:
+                            deferred_reason = "terminal_contour_budget"
+                        if deferred_reason is not None:
+                            elapsed_word_seconds = time.perf_counter() - word_case_started
+                            self.stats.increment("deferred_word_cases")
+                            self.stats.increment(
+                                f"deferred_word_cases_{deferred_reason}"
+                            )
+                            deferred_record = {
+                                "schema_version": "formal-contour-deferred-word-case-v1",
+                                "reason": deferred_reason,
+                                "map_name": planar_map.name,
+                                "mapping_subdomain": self._current_mapping_subdomain,
+                                "assignment_id": assignment.assignment_id,
+                                "placement_id": placement.placement_id,
+                                "work_id": placement_context.get("work_id"),
+                                "elapsed_seconds": elapsed_word_seconds,
+                                "word_budget_seconds": word_budget_seconds,
+                                "max_residual_literals": solver_limits.max_residual_literals,
+                                "solver_summary": summary.to_dict(),
+                                "word_case": compiled.to_dict(),
+                            }
+                            deferred_word_case_writer.write(deferred_record)
+                            print(
+                                "[WORD CASE DEFERRED] "
+                                f"reason={deferred_reason} map={planar_map.name} "
+                                f"assignment={assignment.assignment_id} "
+                                f"placement={placement.placement_id} "
+                                f"work_id={placement_context.get('work_id')} "
+                                f"elapsed={elapsed_word_seconds:.2f}s "
+                                f"file={deferred_word_case_path}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
                         if self.stats.get("word_families") == families_before:
                             self.stats.increment("word_cases_without_supported_family")
 
@@ -1521,6 +1676,7 @@ class SolverRunner:
             family_writer.close()
             unsupported_writer.close()
             word_case_audit_writer.close()
+            deferred_word_case_writer.close()
             placement_writer.close()
             error_writer.close()
             if bool(output_config.get("write_candidates", True)):
@@ -1534,6 +1690,7 @@ class SolverRunner:
             family_writer,
             unsupported_writer,
             word_case_audit_writer,
+            deferred_word_case_writer,
             placement_writer,
             error_writer,
         )
@@ -1542,6 +1699,7 @@ class SolverRunner:
             family_path,
             unsupported_path,
             word_case_audit_path,
+            deferred_word_case_path,
             placement_path,
             error_path,
         )
@@ -1565,6 +1723,7 @@ class SolverRunner:
             "families",
             "unsupported_components",
             "word_cases",
+            "deferred_word_cases",
             "placements",
             "errors",
         )
@@ -1579,6 +1738,7 @@ class SolverRunner:
         family_path: Path,
         unsupported_path: Path,
         word_case_audit_path: Path,
+        deferred_word_case_path: Path,
         placement_path: Path,
         error_path: Path,
     ) -> Dict[str, object]:
@@ -1681,6 +1841,15 @@ class SolverRunner:
                 "word_case_audit": (
                     str(word_case_audit_path)
                     if bool(self.config["output"].get("write_word_cases", False))
+                    else None
+                ),
+                "deferred_word_cases": (
+                    str(deferred_word_case_path)
+                    if bool(
+                        self.config["output"].get(
+                            "write_deferred_word_cases", True
+                        )
+                    )
                     else None
                 ),
                 "placements": (

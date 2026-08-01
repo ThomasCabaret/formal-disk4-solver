@@ -377,6 +377,50 @@ class AssignmentEnumerator:
             return None
         return assignment
 
+    def assignment_id_for_sequences(
+        self, sequences: Sequence[Sequence[int]]
+    ) -> int | None:
+        """Return the mixed-radix slot for an exact assignment, if admissible."""
+
+        requested = tuple(tuple(int(item) for item in sequence) for sequence in sequences)
+        if len(requested) != len(self.piece_names):
+            return None
+        options = self._piece_options()
+        if self._required_automorphism is None:
+            option_indices = []
+            for piece_options, sequence in zip(options, requested):
+                try:
+                    option_indices.append(piece_options.index(sequence))
+                except ValueError:
+                    return None
+            assignment_id = 0
+            for option_index, piece_options in zip(option_indices, options):
+                assignment_id = assignment_id * len(piece_options) + option_index
+            return assignment_id
+
+        representative_options = tuple(
+            options[orbit[0]] for orbit in self._equivariance_piece_orbits
+        )
+        choices = []
+        for orbit, piece_options in zip(
+            self._equivariance_piece_orbits, representative_options
+        ):
+            sequence = requested[orbit[0]]
+            try:
+                choices.append(piece_options.index(sequence))
+            except ValueError:
+                return None
+        selected = tuple(
+            piece_options[index]
+            for piece_options, index in zip(representative_options, choices)
+        )
+        if self._equivariant_sequences_from_choices(selected) != requested:
+            return None
+        assignment_id = 0
+        for option_index, piece_options in zip(choices, representative_options):
+            assignment_id = assignment_id * len(piece_options) + option_index
+        return assignment_id
+
     def enumerate(self) -> Iterator[ContourAssignment]:
         for assignment_id in range(self.raw_assignment_count()):
             assignment = self.canonical_assignment_at(assignment_id)
