@@ -18,7 +18,7 @@ from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimit
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 
 
-class PizzaMapTests(unittest.TestCase):
+class CycleThreeMapTests(unittest.TestCase):
     def test_map_invariants(self) -> None:
         planar_map = build_c3_map()
         planar_map.validate()
@@ -154,7 +154,7 @@ class PizzaMapTests(unittest.TestCase):
             any(relation == "equal_interior_angles" for relation, _terms, _rhs in relation_keys)
         )
 
-    def test_streaming_run_finds_pizza_survivor(self) -> None:
+    def test_streaming_run_finds_cycle_survivor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = load_config(None)
             config["maps"] = ["c3"]
@@ -199,7 +199,19 @@ class PizzaMapTests(unittest.TestCase):
             self.assertEqual(records[0]["map"]["name"], "c3")
             self.assertEqual(len(records[0]["profile"]["contact_mappings"]), 3)
             decorated = records[0]["profile"]["decorated_terminal_contour"]
-            self.assertEqual(decorated["word"], "T0^-1 T1 T0")
+            segments = [
+                item["segment_after_point"] for item in decorated["cycle"]
+            ]
+            self.assertEqual(len(segments), 3)
+            self.assertEqual(segments[0]["variable"], segments[-1]["variable"])
+            self.assertNotEqual(
+                segments[0]["template_orientation"],
+                segments[-1]["template_orientation"],
+            )
+            self.assertEqual(
+                records[0]["profile"]["canonical_contour_signature"],
+                [[0, False], [0, True], [1, False]],
+            )
             self.assertIn("1/3*C_disk", decorated["text"])
             self.assertIn("2/3*pi", decorated["text"])
 

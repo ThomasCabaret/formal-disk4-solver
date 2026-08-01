@@ -412,6 +412,12 @@ class AssignmentEnumerator:
             count *= len(options[orbit[0]])
         return count
 
+    def transform_for_automorphism(self, name: str) -> AssignmentTransform:
+        """Return a certified occurrence/piece transform by declared map name."""
+
+        action = self.mapping_symmetry.action_by_name(str(name))
+        return self._assignment_transform(action)
+
     def required_transform(
         self, assignment: ContourAssignment
     ) -> AssignmentTransform | None:

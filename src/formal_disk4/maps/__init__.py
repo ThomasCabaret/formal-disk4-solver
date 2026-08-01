@@ -5,6 +5,7 @@ from .double_cycle import build_double_cycle_6_map, build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
+from .wheel import build_wheel_4_map
 from .two_ring_families import (
     build_double_cycle_offset_map,
     build_inner_cycle_boundary_points_map,
@@ -42,6 +43,7 @@ __all__ = [
     "build_k4_map",
     "build_k4_minus_point_map",
     "build_k4_minus_arc_map",
+    "build_wheel_4_map",
 ]
 
 # Source-level compatibility for notebooks and scripts written before 1.0.0.

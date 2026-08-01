@@ -11,6 +11,7 @@ from .double_cycle import build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
+from .wheel import build_wheel_4_map
 from .two_ring_families import (
     build_double_cycle_offset_map,
     build_inner_cycle_boundary_points_map,
@@ -62,6 +63,12 @@ _REGISTRATIONS = (
         "k4-minus-arc",
         build_k4_minus_arc_map,
         "K4 minus T1-T3; the central tile owns one outer boundary arc",
+    ),
+    MapRegistration(
+        "wheel-4",
+        build_wheel_4_map,
+        "Four outer tiles forming a cycle around one central tile (wheel W5)",
+        aliases=("four-cycle-center",),
     ),
 )
 

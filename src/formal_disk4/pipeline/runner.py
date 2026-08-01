@@ -47,9 +47,21 @@ class MapContext:
     assignment_enumerator: AssignmentEnumerator
     assignment_count: int
     mass_per_assignment: int
+    assignment_masses: Tuple[int, ...] = ()
 
     def assignment_at(self, assignment_id: int) -> ContourAssignment | None:
         return self.assignment_enumerator.canonical_assignment_at(assignment_id)
+
+    def mass_at(self, assignment_id: int) -> int:
+        if self.assignment_masses:
+            return self.assignment_masses[assignment_id]
+        return self.mass_per_assignment
+
+    @property
+    def total_leaf_mass(self) -> int:
+        if self.assignment_masses:
+            return sum(self.assignment_masses)
+        return self.assignment_count * self.mass_per_assignment
 
 
 class SolverRunner:
@@ -512,6 +524,20 @@ class SolverRunner:
                     enforce_equivariant_weak_orders
                 ),
             )
+            cyclic_shift_config = enumeration_config.get(
+                "cyclic_shift_equivariance", {}
+            )
+            cyclic_shift_enabled = bool(cyclic_shift_config.get("enabled", False))
+            if cyclic_shift_enabled and equivariance_enabled:
+                raise ValueError(
+                    "cyclic_equivariance and cyclic_shift_equivariance are mutually exclusive"
+                )
+            if cyclic_shift_enabled:
+                cyclic_shift_transform = assignment_enumerator.transform_for_automorphism(
+                    str(cyclic_shift_config.get("automorphism", "rotation_2"))
+                )
+            else:
+                cyclic_shift_transform = None
             if symmetry_mode != "off":
                 self.stats.increment(
                     "intrinsic_symmetry_group_elements",
@@ -536,7 +562,33 @@ class SolverRunner:
                 else None
             )
 
-            if first_assignment is not None and track_exact_domain_size:
+            assignment_masses: Tuple[int, ...] = ()
+            if (
+                first_assignment is not None
+                and track_exact_domain_size
+                and cyclic_shift_transform is not None
+            ):
+                # A cyclic-shift search enumerates only one fundamental domain.
+                # Its exact mass depends on the phase/orientation assignment, so
+                # the unrestricted full-contour count is not a valid denominator.
+                assignment_masses = tuple(
+                    WeakOrderEnumerator(
+                        planar_map=planar_map,
+                        assignment=assignment_enumerator.assignment_at(assignment_id),
+                        occurrence_names=assignment_enumerator.occurrence_names,
+                        length_oracle=self.length_oracle,
+                        angle_oracle=self.angle_oracle,
+                        symmetry_mode="off",
+                        enable_length_filter=False,
+                        enable_angle_filter=False,
+                        enable_exterior_arc_repetition_filter=False,
+                        track_exact_leaf_mass=True,
+                        required_cyclic_shift_transform=cyclic_shift_transform,
+                    ).total_leaf_mass
+                    for assignment_id in range(assignment_count)
+                )
+                mass_per_assignment = 0
+            elif first_assignment is not None and track_exact_domain_size:
                 if (
                     required_equivariance is not None
                     and bool(equivariance_config.get("enforce_weak_orders", True))
@@ -571,9 +623,10 @@ class SolverRunner:
                     assignment_enumerator=assignment_enumerator,
                     assignment_count=assignment_count,
                     mass_per_assignment=mass_per_assignment,
+                    assignment_masses=assignment_masses,
                 )
             )
-            total_mass += assignment_count * mass_per_assignment
+            total_mass += contexts[-1].total_leaf_mass
             total_assignments += assignment_count
         self._total_leaf_mass = total_mass
         self._total_assignment_count = total_assignments
@@ -832,7 +885,6 @@ class SolverRunner:
                 context = contexts[map_index]
                 planar_map = context.planar_map
                 assignment_enumerator = context.assignment_enumerator
-                mass_per_assignment = context.mass_per_assignment
                 self._current_map_name = planar_map.name
                 self._set_stage("map_setup", map_index=map_index)
                 self._search_state["map_index"] = map_index
@@ -844,6 +896,7 @@ class SolverRunner:
                 for assignment_id in range(
                     start_assignment_id, context.assignment_count
                 ):
+                    assignment_mass = context.mass_at(assignment_id)
                     self._search_state["assignment_id"] = assignment_id
                     if self._should_stop():
                         exhausted = False
@@ -859,7 +912,7 @@ class SolverRunner:
                         self.stats.increment("symmetry_pruned_assignments")
                         self._search_state["completed_leaf_mass"] = int(
                             self._search_state.get("completed_leaf_mass", 0)
-                        ) + mass_per_assignment
+                        ) + assignment_mass
                         self._search_state["assignment_id"] = assignment_id + 1
                         self._search_state["assignment_started"] = False
                         self._search_state["weak_order"] = {}
@@ -937,6 +990,21 @@ class SolverRunner:
                                 self.config["enumeration"]
                                 .get("cyclic_equivariance", {})
                                 .get("enforce_weak_orders", True)
+                            )
+                            else None
+                        ),
+                        required_cyclic_shift_transform=(
+                            assignment_enumerator.transform_for_automorphism(
+                                str(
+                                    self.config["enumeration"]
+                                    .get("cyclic_shift_equivariance", {})
+                                    .get("automorphism", "rotation_2")
+                                )
+                            )
+                            if bool(
+                                self.config["enumeration"]
+                                .get("cyclic_shift_equivariance", {})
+                                .get("enabled", False)
                             )
                             else None
                         ),
@@ -1416,7 +1484,7 @@ class SolverRunner:
                     # as whole subtrees.
                     self._search_state["completed_leaf_mass"] = int(
                         self._search_state.get("completed_leaf_mass", 0)
-                    ) + mass_per_assignment
+                    ) + assignment_mass
                     self._search_state["assignment_id"] = assignment_id + 1
                     self._search_state["assignment_started"] = False
                     self._search_state["weak_order"] = {}

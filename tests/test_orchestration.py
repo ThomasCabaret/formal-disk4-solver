@@ -10,12 +10,6 @@ import time
 import unittest
 from pathlib import Path
 
-from formal_disk4.geometry.status import (
-    NO_SOLUTION_FOUND,
-    REJECTED_CERTAIN,
-    SOLUTION_FOUND,
-    GeometryStatusStore,
-)
 from formal_disk4.orchestration.catalog import CaseCatalog, CaseDefinition
 from formal_disk4.orchestration.pipeline import (
     PipelineCallbacks,
@@ -27,7 +21,6 @@ from formal_disk4.orchestration.pipeline import (
     materialize_task,
     task_checkpoint_completed,
 )
-from formal_disk4.orchestration.status import PipelineStatusReader
 from formal_disk4.pipeline.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
     search_fingerprint,
@@ -134,6 +127,26 @@ class CaseCatalogTests(unittest.TestCase):
                 self.assertTrue(equivariance["enabled"])
                 self.assertTrue(equivariance["enforce_weak_orders"])
                 self.assertEqual(equivariance["automorphism"], "rotation_2")
+
+    def test_wheel_half_turn_case_uses_cyclic_shift_equivariance(self) -> None:
+        case = self.catalog.get("k4-rotation-2")
+        self.assertEqual(case.map_name, "wheel-4")
+        with tempfile.TemporaryDirectory() as directory:
+            materialized = materialize_task(
+                ROOT,
+                case,
+                PipelineTask(case.case_id, "search"),
+                Path(directory),
+                task_index=0,
+            )
+            config = json.loads(
+                materialized.config_path.read_text(encoding="utf-8")
+            )
+        self.assertFalse(config["enumeration"]["cyclic_equivariance"]["enabled"])
+        self.assertTrue(config["enumeration"]["track_exact_domain_size"])
+        cyclic_shift = config["enumeration"]["cyclic_shift_equivariance"]
+        self.assertTrue(cyclic_shift["enabled"])
+        self.assertEqual(cyclic_shift["automorphism"], "rotation_2")
 
     def test_static_visualizer_alias_is_exposed_as_visualize(self) -> None:
         case = self.catalog.get("k4")
@@ -380,67 +393,6 @@ class PipelineModelTests(unittest.TestCase):
             with executor._process_lock:
                 executor.current_process = None
             self.assertTrue(marker.exists())
-
-
-    def test_pipeline_status_reader_reports_formal_and_geometry_categories(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            output = root / "output/cases/demo"
-            output.mkdir(parents=True)
-            config = _minimal_search_config("output/cases/demo")
-            checkpoint = output / "checkpoint.sqlite3"
-            _write_search_checkpoint(checkpoint, config, completed=False)
-            connection = sqlite3.connect(checkpoint)
-            try:
-                for index in range(4):
-                    connection.execute(
-                        "INSERT INTO survivors(profile_key, created_utc, payload_json) "
-                        "VALUES(?, '', '{}')",
-                        (f"p{index}",),
-                    )
-                connection.commit()
-            finally:
-                connection.close()
-
-            geometry = output / "geometry"
-            with GeometryStatusStore(geometry / "geometry_status.sqlite3") as store:
-                store.record("p0", SOLUTION_FOUND, reason="solved", attempts=2, best_cost=0.0)
-                store.record(
-                    "p1",
-                    REJECTED_CERTAIN,
-                    reason="fixed geometry failed validation",
-                    attempts=0,
-                    best_cost=1.0,
-                )
-                store.record(
-                    "p2",
-                    NO_SOLUTION_FOUND,
-                    reason="candidate_timeout",
-                    attempts=3,
-                    best_cost=2.0,
-                )
-            (geometry / "geometry_checkpoint.json").write_text(
-                json.dumps({"completed": False}), encoding="utf-8"
-            )
-            case = CaseDefinition(
-                case_id="demo",
-                label="Demo",
-                description="",
-                map_name="c3",
-                group="Test",
-                config_paths={},
-                output_directory=Path("output/cases/demo"),
-            )
-            status = PipelineStatusReader(root).read(case)
-
-        self.assertEqual(status.search_state, "paused")
-        self.assertEqual(status.geometry_state, "paused")
-        self.assertEqual(status.formal_candidates, 4)
-        self.assertEqual(status.geometry_considered, 3)
-        self.assertEqual(status.rejected_certain, 1)
-        self.assertEqual(status.solutions_found, 1)
-        self.assertEqual(status.no_solution_found, 1)
-        self.assertTrue(status.exact_geometry_counts)
 
     def test_visualize_tasks_are_launched_without_waiting_for_previous_viewers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

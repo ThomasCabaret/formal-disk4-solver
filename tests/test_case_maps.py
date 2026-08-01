@@ -25,11 +25,13 @@ class CaseMapTests(unittest.TestCase):
                 "k4",
                 "k4-minus-point",
                 "k4-minus-arc",
+                "wheel-4",
             ),
         )
         self.assertEqual(canonical_map_name("k3-pizza"), "c3")
         self.assertEqual(canonical_map_name("k4-pizza"), "c4")
         self.assertEqual(canonical_map_name("k4-central"), "k4")
+        self.assertEqual(canonical_map_name("four-cycle-center"), "wheel-4")
 
     def test_point_contact_case_topology(self) -> None:
         planar_map = build_map("k4-minus-point")

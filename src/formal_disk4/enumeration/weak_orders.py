@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from itertools import combinations
+from itertools import combinations, product
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
 
 from formal_disk4.constraints.angle_lp import AngleEquation, AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
-from .assignments import AssignmentTransform, ContourAssignment
+from .assignments import AssignmentTransform, ContourAssignment, rotate
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 from .symmetry import MappingSymmetryQuotient
 
@@ -80,6 +80,7 @@ class WeakOrderEnumerator:
         checkpoint_sink: CheckpointSink | None = None,
         track_exact_leaf_mass: bool = True,
         required_equivariance_transform: AssignmentTransform | None = None,
+        required_cyclic_shift_transform: AssignmentTransform | None = None,
         equivariance_piece_orbits: Sequence[Sequence[int]] = (),
         mapping_symmetry: MappingSymmetryQuotient | None = None,
         prefix_topology_filter: "PrefixRadiusArcTopologyFilter | None" = None,
@@ -98,6 +99,14 @@ class WeakOrderEnumerator:
         self.checkpoint_sink = checkpoint_sink or (lambda _state: None)
         self.track_exact_leaf_mass = track_exact_leaf_mass
         self.required_equivariance_transform = required_equivariance_transform
+        self.required_cyclic_shift_transform = required_cyclic_shift_transform
+        if (
+            self.required_equivariance_transform is not None
+            and self.required_cyclic_shift_transform is not None
+        ):
+            raise ValueError(
+                "Pointwise and cyclic-shift equivariance cannot be enabled together"
+            )
         self.prefix_topology_filter = prefix_topology_filter
         self.mapping_symmetry = (
             mapping_symmetry
@@ -142,6 +151,11 @@ class WeakOrderEnumerator:
                 if self.reference_index in orbit
             ),
             None,
+        )
+        self._cyclic_shift_splits = (
+            self._build_cyclic_shift_splits()
+            if self.required_cyclic_shift_transform is not None
+            else ()
         )
         if self.required_equivariance_transform is not None:
             if not self.equivariance_piece_orbits:
@@ -189,6 +203,11 @@ class WeakOrderEnumerator:
     def total_leaf_mass(self) -> int:
         if not self.track_exact_leaf_mass:
             return 0
+        if self.required_cyclic_shift_transform is not None:
+            return sum(
+                count_weak_orders_for_lengths(split, self.reference_index)
+                for split in self._cyclic_shift_splits
+            )
         if self.required_equivariance_transform is None:
             return count_weak_orders_for_lengths(
                 self.target_counters, self.reference_index
@@ -428,7 +447,332 @@ class WeakOrderEnumerator:
             )
         return tuple(masks)
 
+    def _build_cyclic_shift_splits(self) -> Tuple[Tuple[int, ...], ...]:
+        """Return all first-fundamental-domain prefix lengths for an order-2 action.
+
+        A cyclic half-turn sends the first half of the prototype contour to the
+        second half.  For each piece, the occurrences before the half-turn cut
+        must therefore form a prefix of its assignment sequence.  The mapped
+        prefix is exactly the target-piece suffix.
+        """
+
+        transform = self.required_cyclic_shift_transform
+        if transform is None:
+            return ()
+        if transform.reverse_cycle:
+            raise ValueError("Cyclic-shift equivariance must preserve orientation")
+        occurrence_map = transform.occurrence_map
+        if any(occurrence_map[occurrence_map[index]] != index for index in range(len(occurrence_map))):
+            raise ValueError("Cyclic-shift equivariance currently supports order two only")
+        if any(occurrence_map[index] == index for index in range(len(occurrence_map))):
+            raise ValueError("Cyclic half-turn cannot fix a contour occurrence")
+        piece_map = transform.piece_map
+        if any(piece_map[piece_map[index]] != index for index in range(len(piece_map))):
+            raise ValueError("Cyclic-shift piece action currently supports order two only")
+
+        unseen = set(range(len(self.piece_names)))
+        orbit_options: List[Tuple[Tuple[Tuple[int, int], ...], ...]] = []
+        while unseen:
+            source = min(unseen)
+            target = piece_map[source]
+            unseen.discard(source)
+            unseen.discard(target)
+            source_length = len(self.assignment.sequences[source])
+            target_length = len(self.assignment.sequences[target])
+            if source_length != target_length:
+                raise ValueError("Half-turn piece orbits need equal contour lengths")
+            if source == target:
+                if source_length % 2:
+                    return ()
+                orbit_options.append((((source, source_length // 2),),))
+            else:
+                orbit_options.append(
+                    tuple(
+                        ((source, prefix), (target, source_length - prefix))
+                        for prefix in range(source_length + 1)
+                    )
+                )
+
+        output = set()
+        for selected in product(*orbit_options):
+            split = [0] * len(self.piece_names)
+            for orbit_choice in selected:
+                for piece_index, prefix_length in orbit_choice:
+                    split[piece_index] = prefix_length
+            split_tuple = tuple(split)
+            valid = True
+            for source, sequence in enumerate(self.assignment.sequences):
+                target = piece_map[source]
+                mapped = tuple(
+                    transform.map_occurrence_id(occurrence_id)
+                    for occurrence_id in sequence
+                )
+                if mapped != rotate(
+                    self.assignment.sequences[target], split_tuple[target]
+                ):
+                    valid = False
+                    break
+            if not valid:
+                continue
+
+            first_half = {
+                occurrence_id
+                for piece_index, sequence in enumerate(self.assignment.sequences)
+                for occurrence_id in sequence[: split_tuple[piece_index]]
+            }
+            second_half = {
+                transform.map_occurrence_id(occurrence_id)
+                for occurrence_id in first_half
+            }
+            if first_half & second_half:
+                continue
+            if first_half | second_half != set(range(len(self.occurrences))):
+                continue
+            output.add(split_tuple)
+        return tuple(sorted(output))
+
+    def _append_cyclic_half_block(
+        self,
+        prefixes: Tuple[Tuple[int, ...], ...],
+        blocks: Tuple[Tuple[int, ...], ...],
+        counters: Tuple[int, ...],
+        mask: int,
+    ) -> Tuple[Tuple[Tuple[int, ...], ...], Tuple[int, ...]] | None:
+        next_counters = list(counters)
+        block: List[int] = []
+        for piece_index, sequence in enumerate(prefixes):
+            if not mask & (1 << piece_index):
+                continue
+            counter = counters[piece_index]
+            if counter >= len(sequence):
+                return None
+            block.append(sequence[counter])
+            next_counters[piece_index] += 1
+        if not block:
+            return None
+        return blocks + (tuple(sorted(block)),), tuple(next_counters)
+
+    def _cyclic_full_blocks(
+        self, half_blocks: Tuple[Tuple[int, ...], ...]
+    ) -> Tuple[Tuple[int, ...], ...]:
+        transform = self.required_cyclic_shift_transform
+        assert transform is not None
+        mapped = tuple(
+            tuple(
+                sorted(transform.map_occurrence_id(occurrence_id) for occurrence_id in block)
+            )
+            for block in half_blocks
+        )
+        return half_blocks + mapped
+
+    def _evaluate_cyclic_leaf(
+        self,
+        blocks: Tuple[Tuple[int, ...], ...],
+        *,
+        path: Tuple[int, ...],
+        counters: Tuple[int, ...],
+    ) -> Iterator[Placement]:
+        flattened = tuple(item for block in blocks for item in block)
+        if len(flattened) != len(self.occurrences) or len(set(flattened)) != len(flattened):
+            raise RuntimeError("Cyclic-shift construction did not cover occurrences exactly once")
+        positions_list = [-1] * len(self.occurrences)
+        for block_index, block in enumerate(blocks):
+            for occurrence_id in block:
+                positions_list[occurrence_id] = block_index
+        positions = tuple(positions_list)
+        block_count = len(blocks)
+        self._set_progress(
+            "cyclic_shift_leaf",
+            path=path,
+            counters=counters,
+            block_count=block_count,
+            positions=positions,
+        )
+
+        if not self.exterior_arc_repetition.prefix_is_feasible(positions):
+            self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+        if not self._leaf_is_canonical(blocks):
+            self.event_sink("symmetry_pruned_leaves", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+        if self.prefix_topology_filter is not None:
+            try:
+                prefix_topology = self.prefix_topology_filter.analyze(
+                    positions, block_count
+                )
+            except Exception:
+                self.event_sink("prefix_topology_errors", 1)
+            else:
+                if prefix_topology.applicable:
+                    self.event_sink("prefix_topology_checks", 1)
+                if not prefix_topology.feasible:
+                    self.event_sink("prefix_topology_pruned_nodes", 1)
+                    self._mark_subtree_complete(path, 1)
+                    return
+
+        length_rows = self._resolved_length_rows(positions, block_count)
+        length_result = (
+            self.length_oracle.analyze(block_count, length_rows, need_witness=True)
+            if self.enable_length_filter
+            else None
+        )
+        if length_result is not None and not length_result.feasible:
+            self.event_sink("length_pruned_nodes", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+        angle_equations = self._resolved_angle_equations(positions, block_count)
+        angle_result = (
+            self.angle_oracle.analyze(block_count, angle_equations, need_witness=True)
+            if self.enable_angle_filter
+            else None
+        )
+        if angle_result is not None and not angle_result.feasible:
+            self.event_sink("angle_pruned_nodes", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+
+        self.event_sink("surviving_placements", 1)
+        yield Placement(
+            placement_id=self._placement_id,
+            assignment=self.assignment,
+            blocks=blocks,
+            positions=positions,
+            length_rows=length_rows,
+            length_margin=length_result.margin if length_result else 0.0,
+            length_witness=length_result.lengths if length_result else (),
+            angle_equations=angle_equations,
+            angle_margin=angle_result.margin if angle_result else 0.0,
+            angle_witness=angle_result.turns_pi if angle_result else (),
+        )
+        self._placement_id += 1
+        self._mark_subtree_complete(path, 1)
+
+    def _search_cyclic_shift_half(
+        self,
+        prefixes: Tuple[Tuple[int, ...], ...],
+        target: Tuple[int, ...],
+        half_blocks: Tuple[Tuple[int, ...], ...],
+        counters: Tuple[int, ...],
+        path: Tuple[int, ...],
+    ) -> Iterator[Placement]:
+        if self.stop_predicate():
+            return
+        if self._resuming:
+            if path == self._resume_path:
+                self._resuming = False
+                return
+            if self._resume_path[: len(path)] != path:
+                return
+        self._set_progress(
+            "cyclic_shift_half",
+            path=path,
+            counters=counters,
+            block_count=len(half_blocks),
+            positions=tuple(-1 for _ in self.occurrences),
+        )
+        self.event_sink("placement_nodes", 1)
+
+        if counters == target:
+            yield from self._evaluate_cyclic_leaf(
+                self._cyclic_full_blocks(half_blocks),
+                path=path,
+                counters=counters,
+            )
+            return
+
+        available_mask = 0
+        for piece_index, (counter, sequence) in enumerate(zip(counters, prefixes)):
+            if counter < len(sequence):
+                available_mask |= 1 << piece_index
+        candidates = []
+        for mask in range(1, available_mask + 1):
+            if mask & ~available_mask:
+                continue
+            appended = self._append_cyclic_half_block(
+                prefixes, half_blocks, counters, mask
+            )
+            if appended is None:
+                continue
+            next_blocks, next_counters = appended
+            candidates.append((mask.bit_count(), -mask, mask, next_blocks, next_counters))
+        candidates.sort(reverse=True)
+        for _width, _negative_mask, mask, next_blocks, next_counters in candidates:
+            if self.stop_predicate():
+                return
+            if not self._resume_child_allowed(path, mask):
+                continue
+            yield from self._search_cyclic_shift_half(
+                prefixes,
+                target,
+                next_blocks,
+                next_counters,
+                path + (mask,),
+            )
+        if not self.stop_predicate():
+            self._mark_subtree_complete(path, 0)
+
+    def _enumerate_cyclic_shift(self) -> Iterator[Placement]:
+        if not self._cyclic_shift_splits:
+            self.event_sink("cyclic_shift_pruned_assignments", 1)
+            self._mark_subtree_complete((), 0)
+            return
+        for split_index, split in enumerate(self._cyclic_shift_splits):
+            if self.stop_predicate():
+                return
+            marker = -(split_index + 1)
+            root_path = (marker,)
+            if self._resuming and (
+                not self._resume_path or self._resume_path[0] != marker
+            ):
+                continue
+            prefixes = tuple(
+                tuple(sequence[: split[piece_index]])
+                for piece_index, sequence in enumerate(self.assignment.sequences)
+            )
+            available_mask = sum(
+                1 << piece_index
+                for piece_index, sequence in enumerate(prefixes)
+                if sequence
+            )
+            first_masks = tuple(
+                sorted(
+                    (
+                        mask
+                        for mask in range(1, available_mask + 1)
+                        if not (mask & ~available_mask)
+                        and mask & (1 << self.reference_index)
+                    ),
+                    key=lambda item: (-item.bit_count(), item),
+                )
+            )
+            counters = tuple(0 for _ in prefixes)
+            for mask in first_masks:
+                if self.stop_predicate():
+                    return
+                if not self._resume_child_allowed(root_path, mask):
+                    continue
+                appended = self._append_cyclic_half_block(
+                    prefixes, (), counters, mask
+                )
+                if appended is None:
+                    continue
+                blocks, next_counters = appended
+                yield from self._search_cyclic_shift_half(
+                    prefixes,
+                    split,
+                    blocks,
+                    next_counters,
+                    root_path + (mask,),
+                )
+            if not self.stop_predicate():
+                self._mark_subtree_complete(root_path, 0)
+
     def enumerate(self) -> Iterator[Placement]:
+        if self.required_cyclic_shift_transform is not None:
+            yield from self._enumerate_cyclic_shift()
+            return
         if (
             self.exterior_arc_repetition.applicable
             and not self.exterior_arc_repetition.candidate_pairs
