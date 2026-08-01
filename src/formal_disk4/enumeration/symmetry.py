@@ -128,9 +128,11 @@ class MappingSymmetryQuotient:
             ),
         )
 
-        # These actions preserve the assignment-level anchor.  They can be used
-        # before a complete weak order is known.  The complete quotient below is
-        # larger and safely handles actions that move the reference piece/cut.
+        # These actions preserve both the assignment-level anchor and its cyclic
+        # orientation.  An orientation-reversing action cannot be applied safely
+        # to the independently cut contour sequences: the complete weak order is
+        # needed to recover the common cut after reflection.  Such actions remain
+        # available to the complete-mapping quotient below.
         self.assignment_group = tuple(
             action
             for action in self.quotient_group
@@ -138,6 +140,7 @@ class MappingSymmetryQuotient:
             == self.reference_piece_index
             and action.occurrence_permutation[self.reference_anchor]
             == self.reference_anchor
+            and action.orientation_sign == 1
         )
         if not self.assignment_group:
             raise RuntimeError("The assignment quotient group lost its identity")

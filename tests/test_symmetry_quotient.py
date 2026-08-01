@@ -52,6 +52,42 @@ class MappingSymmetryQuotientTests(unittest.TestCase):
             blocks.extend(placement.blocks for placement in weak_orders.enumerate())
         return assignments, tuple(blocks)
 
+    @staticmethod
+    def _cyclic_shift_placements(
+        map_name: str,
+        *,
+        symmetry_mode: str,
+        automorphism: str,
+    ) -> tuple[AssignmentEnumerator, tuple[tuple[tuple[int, ...], ...], ...]]:
+        planar_map = build_map(map_name)
+        assignments = AssignmentEnumerator(
+            planar_map,
+            symmetry_mode=symmetry_mode,
+        )
+        transform = assignments.transform_for_automorphism(automorphism)
+        blocks = []
+        for assignment in assignments.enumerate():
+            weak_orders = WeakOrderEnumerator(
+                planar_map,
+                assignment,
+                assignments.occurrence_names,
+                LengthFeasibilityOracle(),
+                AngleFeasibilityOracle(),
+                symmetry_mode=symmetry_mode,
+                enable_length_filter=False,
+                enable_angle_filter=False,
+                enable_exterior_arc_repetition_filter=False,
+                track_exact_leaf_mass=False,
+                required_cyclic_shift_transform=transform,
+                mapping_symmetry=(
+                    assignments.mapping_symmetry
+                    if symmetry_mode != "off"
+                    else None
+                ),
+            )
+            blocks.extend(placement.blocks for placement in weak_orders.enumerate())
+        return assignments, tuple(blocks)
+
     def test_exhaustive_orbit_partition_keeps_exactly_one_mapping(self) -> None:
         map_name = "inner-cycle-boundary-points-3"
         raw_assignments, raw_mappings = self._placements(
@@ -78,6 +114,32 @@ class MappingSymmetryQuotientTests(unittest.TestCase):
         self.assertEqual(len(raw_orbits), 528)
         self.assertEqual(len(quotient_mappings), 528)
         self.assertEqual(len(set(quotient_mappings)), 528)
+        self.assertEqual(quotient_orbits, raw_orbits)
+
+    def test_reflection_quotient_waits_for_the_complete_cyclic_mapping(self) -> None:
+        raw_assignments, raw_mappings = self._cyclic_shift_placements(
+            "wheel-3",
+            symmetry_mode="off",
+            automorphism="rotation_1",
+        )
+        quotient_assignments, quotient_mappings = self._cyclic_shift_placements(
+            "wheel-3",
+            symmetry_mode="incremental",
+            automorphism="rotation_1",
+        )
+        symmetry = quotient_assignments.mapping_symmetry
+        raw_orbits = {
+            symmetry.canonical_mapping_key(blocks) for blocks in raw_mappings
+        }
+        quotient_orbits = {
+            symmetry.canonical_mapping_key(blocks) for blocks in quotient_mappings
+        }
+
+        self.assertEqual(raw_assignments.raw_assignment_count(), 1536)
+        self.assertEqual(len(raw_mappings), 8496)
+        self.assertEqual(len(raw_orbits), 1454)
+        self.assertEqual(len(quotient_mappings), 1454)
+        self.assertEqual(len(set(quotient_mappings)), 1454)
         self.assertEqual(quotient_orbits, raw_orbits)
 
     def test_orbit_members_compile_to_the_same_canonical_word_system(self) -> None:
