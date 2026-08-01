@@ -37,12 +37,14 @@ class PositiveTerminalLengthFilter:
     name = "positive_terminal_curve_lengths"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
-        values = [item.search_witness_normalized_length for item in profile.curve_components]
-        if not values or any(value is None or value <= 0.0 for value in values):
-            return False, "missing or nonpositive terminal component length"
-        if profile.terminal_length_margin <= 0.0:
-            return False, "terminal length LP has no strict positive margin"
-        return True, "pass"
+        analysis = profile.joint_angular_feasibility
+        witness = analysis.witness_map()
+        names = analysis.length_variables
+        if not profile.curve_components or len(names) != len(profile.curve_components):
+            return False, "missing terminal component length"
+        if any(name not in witness or witness[name] <= 0 for name in names):
+            return False, "missing or nonpositive exact terminal component length"
+        return True, "pass:exact"
 
 
 class SignedAngleClassFilter:
@@ -51,14 +53,16 @@ class SignedAngleClassFilter:
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
         if not profile.point_decorations:
             return False, "missing point decorations"
-        if profile.decorated_angle_margin <= 0.0:
-            return False, "decorated angle system has no strict margin"
-        for point in profile.point_decorations:
-            if point.prototype_angle_pi is None or not (0.0 < point.prototype_angle_pi < 2.0):
-                return False, f"invalid prototype angle at boundary {point.boundary_index}"
-            if any(not (0.0 < value < 2.0) for _name, value in point.occurrence_angles_pi):
-                return False, f"invalid copy angle at boundary {point.boundary_index}"
-        return True, "pass"
+        analysis = profile.joint_angular_feasibility
+        witness = analysis.witness_map()
+        names = analysis.point_angle_variables
+        if len(names) != len(profile.point_decorations):
+            return False, "missing exact point angle"
+        for name in names:
+            value = witness.get(name)
+            if value is None or not (0 < value < 2):
+                return False, f"invalid exact prototype angle {name}"
+        return True, "pass:exact"
 
 
 class JointAngularFeasibilityFilter:

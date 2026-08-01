@@ -311,6 +311,75 @@ def _terminal_boundary_sources(
     return tuple(sources)
 
 
+def _exact_strict_witness(
+    solution: ExactLinearSolution,
+    bounds: Mapping[str, Tuple[Fraction | None, Fraction | None]],
+) -> Tuple[str, Fraction | None, Tuple[Fraction, ...]]:
+    """Maximize a common strict margin in an exact affine solution.
+
+    This is intentionally used only as a fallback when the floating-point LP
+    cannot provide a comfortably interior witness.  Equalities have already
+    been eliminated, so the exact simplex sees only free parameters plus one
+    bounded margin variable.
+    """
+
+    exact_map = solution.expression_map()
+    free_names = tuple(solution.free_parameters)
+    delta_name = "strict_margin"
+    lp_names = free_names + (delta_name,)
+    index = {name: position for position, name in enumerate(lp_names)}
+    inequalities: list[Tuple[list[Fraction], Fraction]] = []
+
+    def expression_row(
+        expression: LinearExpression,
+        *,
+        scale: int = 1,
+        delta: int = 0,
+    ) -> Tuple[list[Fraction], Fraction]:
+        scaled = expression.scale(scale).normalized()
+        row = [Fraction(0) for _ in lp_names]
+        for name, coefficient in scaled.terms:
+            row[index[name]] += coefficient
+        row[index[delta_name]] += Fraction(delta)
+        return row, scaled.constant
+
+    for name in solution.variable_order:
+        lower, upper = bounds[name]
+        if upper is not None:
+            row, constant = expression_row(exact_map[name], delta=1)
+            inequalities.append((row, upper - constant))
+        if lower is not None:
+            row, constant = expression_row(exact_map[name], scale=-1, delta=1)
+            inequalities.append((row, -lower - constant))
+
+    delta_lower = [Fraction(0) for _ in lp_names]
+    delta_lower[index[delta_name]] = Fraction(-1)
+    inequalities.append((delta_lower, Fraction(0)))
+    delta_upper = [Fraction(0) for _ in lp_names]
+    delta_upper[index[delta_name]] = Fraction(1)
+    inequalities.append((delta_upper, Fraction(1)))
+    objective = [Fraction(0) for _ in lp_names]
+    objective[index[delta_name]] = Fraction(1)
+
+    result = maximize_free_variables(inequalities, objective)
+    if result.status != "optimal" or result.optimum is None:
+        return result.status, result.optimum, ()
+
+    free_witness = {
+        name: result.solution[index[name]] for name in free_names
+    }
+
+    def evaluate(expression: LinearExpression) -> Fraction:
+        normalized = expression.normalized()
+        return normalized.constant + sum(
+            coefficient * free_witness[name]
+            for name, coefficient in normalized.terms
+        )
+
+    values = tuple(evaluate(exact_map[name]) for name in solution.variable_order)
+    return result.status, result.optimum, values
+
+
 def _build_angle_decorations(
     planar_map: PlanarMap,
     occurrence_names: Sequence[str],
@@ -511,23 +580,48 @@ def _build_angle_decorations(
         lower[epsilon_index] = 1.0
         a_ub.append(lower)
         b_ub.append(0.0)
-    result = linprog(
-        objective,
-        A_ub=np.asarray(a_ub),
-        b_ub=np.asarray(b_ub),
-        A_eq=np.asarray(a_eq) if a_eq else None,
-        b_eq=np.asarray(b_eq) if b_eq else None,
-        bounds=[(None, None)] * segment_count + [(0.0, None)],
-        method="highs",
+    try:
+        result = linprog(
+            objective,
+            A_ub=np.asarray(a_ub),
+            b_ub=np.asarray(b_ub),
+            A_eq=np.asarray(a_eq) if a_eq else None,
+            b_eq=np.asarray(b_eq) if b_eq else None,
+            bounds=[(None, None)] * segment_count + [(0.0, None)],
+            method="highs",
+        )
+    except Exception:
+        result = None
+
+    float_margin = (
+        float(result.x[epsilon_index])
+        if result is not None and result.success and result.x is not None
+        else float("nan")
     )
-    if not result.success or result.x is None:
-        raise DecorationInfeasible("angle_classes", f"infeasible terminal angle system ({result.status})")
-    margin = float(result.x[epsilon_index])
-    if margin <= tolerance:
-        raise DecorationInfeasible("angle_classes", "terminal angle system has zero strict margin")
+    if np.isfinite(float_margin) and float_margin > tolerance:
+        alpha_values = tuple(float(result.x[index]) for index in range(segment_count))
+        margin = float_margin
+    else:
+        status, exact_margin, exact_values = _exact_strict_witness(
+            exact_solution,
+            {name: (Fraction(0), Fraction(2)) for name in angle_names},
+        )
+        if status == "infeasible":
+            raise DecorationInfeasible(
+                "angle_classes", "infeasible terminal angle system"
+            )
+        if status != "optimal" or exact_margin is None:
+            raise DecorationInfeasible(
+                "angle_classes", f"unexpected exact terminal angle LP status {status}"
+            )
+        if exact_margin <= 0:
+            raise DecorationInfeasible(
+                "angle_classes", "terminal angle system has zero strict margin"
+            )
+        alpha_values = tuple(float(value) for value in exact_values)
+        margin = float(exact_margin)
 
     exact_map = exact_solution.expression_map()
-    alpha_values = tuple(float(result.x[index]) for index in range(segment_count))
     roots = sorted({union.find(index)[0] for index in range(segment_count)})
     class_ids = {root: f"A{index}" for index, root in enumerate(roots)}
     members: Dict[int, list[Tuple[int, int]]] = defaultdict(list)
@@ -732,25 +826,49 @@ def _terminal_lengths(
         row[epsilon_index] = 1.0
         a_ub.append(row)
         b_ub.append(0.0)
-    result = linprog(
-        objective,
-        A_ub=np.asarray(a_ub),
-        b_ub=np.asarray(b_ub),
-        A_eq=np.asarray(a_eq),
-        b_eq=np.asarray(b_eq),
-        bounds=[(0.0, None)] * count + [(0.0, None)],
-        method="highs",
+    try:
+        result = linprog(
+            objective,
+            A_ub=np.asarray(a_ub),
+            b_ub=np.asarray(b_ub),
+            A_eq=np.asarray(a_eq),
+            b_eq=np.asarray(b_eq),
+            bounds=[(0.0, None)] * count + [(0.0, None)],
+            method="highs",
+        )
+    except Exception:
+        result = None
+
+    float_margin = (
+        float(result.x[epsilon_index])
+        if result is not None and result.success and result.x is not None
+        else float("nan")
     )
-    if not result.success or result.x is None:
-        raise DecorationInfeasible(
-            "terminal_lengths", f"infeasible disk-normalized terminal length system ({result.status})"
+    if np.isfinite(float_margin) and float_margin > tolerance:
+        lengths = tuple(float(item) for item in result.x[:count])
+        margin = float_margin
+    else:
+        status, exact_margin, exact_values = _exact_strict_witness(
+            exact_solution,
+            {name: (Fraction(0), None) for name in parameter_names},
         )
-    margin = float(result.x[epsilon_index])
-    if margin <= tolerance:
-        raise DecorationInfeasible(
-            "terminal_lengths", "disk-normalized terminal curve lengths have zero strict margin"
-        )
-    return tuple(float(item) for item in result.x[:count]), margin, exact_solution
+        if status == "infeasible":
+            raise DecorationInfeasible(
+                "terminal_lengths", "infeasible disk-normalized terminal length system"
+            )
+        if status != "optimal" or exact_margin is None:
+            raise DecorationInfeasible(
+                "terminal_lengths",
+                f"unexpected exact terminal length LP status {status}",
+            )
+        if exact_margin <= 0:
+            raise DecorationInfeasible(
+                "terminal_lengths",
+                "disk-normalized terminal curve lengths have zero strict margin",
+            )
+        lengths = tuple(float(value) for value in exact_values)
+        margin = float(exact_margin)
+    return lengths, margin, exact_solution
 
 
 
@@ -1077,7 +1195,7 @@ def build_decorations(
         terminal_contour, mappings, additional_template_relations
     )
     components, component_by_variable = _curve_components(terminal_contour, raw_relations)
-    component_lengths, terminal_length_margin, exact_length_solution = _terminal_lengths(
+    _component_lengths, terminal_length_margin, exact_length_solution = _terminal_lengths(
         compiled,
         environment,
         placement,
@@ -1190,7 +1308,9 @@ def build_decorations(
                 circular=circular,
                 circle_class="disk_boundary" if circular else None,
                 length_parameter=length_parameter,
-                search_witness_normalized_length=component_lengths[index],
+                search_witness_normalized_length=float(
+                    joint_witness_map[length_parameter]
+                ),
                 disk_normalized_length=length_expression,
                 turn_parameter=turn_parameter,
                 curve_turn_pi=turn_expression,

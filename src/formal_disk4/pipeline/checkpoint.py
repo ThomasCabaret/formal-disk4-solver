@@ -11,7 +11,7 @@ from typing import Any, Dict, Mapping
 
 
 CHECKPOINT_SCHEMA_VERSION = 1
-SEARCH_SEMANTICS_VERSION = "formal-contour-search-v15"
+SEARCH_SEMANTICS_VERSION = "formal-contour-search-v16"
 
 
 def _utc_now_text() -> str:

@@ -2,6 +2,7 @@ import json
 from fractions import Fraction
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from formal_disk4.config import load_config
@@ -33,7 +34,7 @@ class CycleThreeMapTests(unittest.TestCase):
             2,
         )
 
-    def test_assignment_symmetry_works_when_reference_piece_moves(self) -> None:
+    def test_assignment_quotient_defers_unsafe_reference_actions(self) -> None:
         planar_map = build_c3_map()
         direct = AssignmentEnumerator(
             planar_map, allow_reflections=False, symmetry_mode="assignment"
@@ -42,9 +43,9 @@ class CycleThreeMapTests(unittest.TestCase):
             planar_map, allow_reflections=True, symmetry_mode="assignment"
         )
         self.assertEqual(direct.raw_assignment_count(), 9)
-        self.assertEqual(len(tuple(direct.enumerate())), 6)
+        self.assertEqual(len(tuple(direct.enumerate())), 9)
         self.assertEqual(reflected.raw_assignment_count(), 36)
-        self.assertEqual(len(tuple(reflected.enumerate())), 21)
+        self.assertEqual(len(tuple(reflected.enumerate())), 36)
 
     def test_obvious_sector_profile_survives_current_filters(self) -> None:
         planar_map = build_c3_map()
@@ -153,6 +154,13 @@ class CycleThreeMapTests(unittest.TestCase):
         self.assertFalse(
             any(relation == "equal_interior_angles" for relation, _terms, _rhs in relation_keys)
         )
+
+    def test_exact_profile_fallback_survives_floating_lp_failure(self) -> None:
+        with patch(
+            "formal_disk4.profiles.decorations.linprog",
+            side_effect=RuntimeError("synthetic floating-point solver failure"),
+        ):
+            self.test_obvious_sector_profile_survives_current_filters()
 
     def test_streaming_run_finds_cycle_survivor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
