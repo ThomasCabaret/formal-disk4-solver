@@ -1,0 +1,270 @@
+Oui. Résumé du point précédent : si « la même relation » signifie le même appariement orienté entre les mêmes morceaux intrinsèques, avec une position relative déterminée sans ambiguïté, alors la même isométrie relative se répète de tuile en tuile. Dans un cycle de quatre, elle devient une véritable rotation géométrique d’un quart de tour. Une simple ressemblance combinatoire ne suffirait pas, mais votre notion forte de mapping suffit.
+
+Pour la recherche de Stein, je pense que la meilleure stratégie est de ne pas chercher une symétrie très élevée. Une rotation d’ordre trois, quatre ou cinq réduit l’espace, mais impose aussi une forme très symétrique au prototile. La demi-tour est un compromis bien meilleur : elle réduit fortement la recherche, tout en n’imposant qu’une symétrie centrale.
+
+Le premier domaine que je testerais contient cinq tuiles.
+
+On a une tuile centrale, appelée T. Autour d’elle, quatre tuiles forment le cycle suivant :
+
+A zéro, B zéro, A un, B un, puis retour à A zéro.
+
+La demi-tour échange A zéro avec A un, et B zéro avec B un. Toutes les quatre touchent la tuile centrale. Les contacts périphériques sont A zéro avec B zéro, B zéro avec A un, A un avec B un, et B un avec A zéro.
+
+Le graphe est donc la roue à cinq sommets, mais avec deux orbites périphériques sous la demi-tour. C’est très important : ce n’est pas le cas impossible où les quatre périphériques constituent une seule orbite sous un quart de tour.
+
+Le quotient ne contient que trois types de tuiles : T, A et B. Il ne contient que quatre types de contacts : T avec A, T avec B, le premier contact entre A et B, et le second contact entre A et B. C’est un espace très petit.
+
+Voici le domaine de mapping que je recommande.
+
+Le contour de la tuile centrale est formé de deux demi-périodes identiques. Dans chaque demi-période, il y a d’abord un mot U, correspondant au contact avec une tuile A, puis un mot V, correspondant au contact avec une tuile B. Le contour central est donc U, V, U, V.
+
+L’obstruction du moyeu réapparaîtrait si le partenaire dual de U et le partenaire dual de V se plaçaient côte à côte et reconstruisaient exactement une demi-période U, V. Il faut donc imposer le contraire.
+
+Le partenaire dual de U, sur une copie de type A, doit commencer strictement à l’intérieur de la zone V du prototype et continuer dans la demi-période suivante.
+
+Le partenaire dual de V, sur une copie de type B, doit commencer strictement à l’intérieur de la zone U de cette demi-période suivante.
+
+Les deux partenaires doivent se chevaucher sur le contour abstrait du prototype, mais aucun ne doit contenir complètement l’autre. Leur union ne doit pas être une demi-période complète.
+
+Cette superposition est autorisée parce que les deux morceaux sont utilisés sur des copies différentes. Elle empêche précisément le raisonnement qui faisait disparaître les roues à une seule orbite.
+
+On peut même normaliser les offsets. On donne à une demi-période la longueur un. Le mot U occupe la première proportion, appelée a, et V occupe le reste. Je recommande de commencer avec a légèrement supérieur à un demi, par exemple zéro virgule six.
+
+Le partenaire de U peut alors commencer vers zéro virgule soixante-quinze et se terminer vers un virgule trente-cinq. Le partenaire de V peut commencer vers un virgule quinze et se terminer vers un virgule cinquante-cinq. Les deux morceaux se chevauchent, traversent la frontière entre deux demi-périodes, et ne reconstruisent pas une période.
+
+Ces valeurs numériques ne représentent pas des longueurs géométriques imposées. Elles représentent uniquement un type d’ordre cyclique des extrémités. Le programme doit ensuite remplacer ces positions par ses blocs faibles et ses variables de longueur.
+
+Sur une tuile A, l’ordre physique des rôles doit être le suivant : contact avec la tuile centrale, premier contact périphérique, bloc extérieur, second contact périphérique.
+
+Sur une tuile B, l’ordre est le même, mais les deux contacts périphériques sont appariés de manière croisée. Le premier contact de A est apparié au second contact de B, et le second de A au premier de B. C’est ce croisement qui ferme le cycle A zéro, B zéro, A un, B un.
+
+Les longueurs et les mots des deux contacts périphériques restent à résoudre, mais leur ordre, leur appariement et les domaines d’offsets centraux sont déjà fixés. Cela forme un domaine beaucoup plus précis qu’une simple demande de symétrie par demi-tour.
+
+Ce candidat possède plusieurs avantages.
+
+C’est le plus petit nombre de tuiles permettant deux orbites différentes autour d’une tuile centrale.
+
+La tuile centrale n’a besoin que d’une demi-tour, et non d’une rotation d’ordre trois ou quatre.
+
+Le graphe quotient est minuscule.
+
+Chaque tuile possède naturellement quatre relations physiques : un contact central ou extérieur et deux contacts périphériques. Il n’y a pas de différence énorme de valence entre les copies.
+
+Le mapping est construit expressément pour éviter l’obstruction du moyeu.
+
+Le principal contre-indicateur est la conservation signée extrêmement forte pour cinq tuiles. Il est donc possible que ce domaine soit encore vide. Mais s’il est vide, il devrait être possible d’obtenir un petit certificat formel expliquant pourquoi. C’est donc une excellente première cible.
+
+Le candidat suivant serait une structure à sept tuiles, toujours avec une demi-tour.
+
+On prend une tuile centrale et six périphériques, disposés selon le cycle :
+
+A zéro, B zéro, C zéro, A un, B un, C un.
+
+La demi-tour échange les indices zéro et un. Les trois types A, B et C touchent directement la tuile centrale.
+
+Le contour central devient U, V, W, puis à nouveau U, V, W.
+
+Les partenaires duaux de U, V et W doivent être placés en chevauchement cyclique : le partenaire de U commence dans V, celui de V commence dans W, et celui de W traverse la frontière de demi-période pour commencer dans le U suivant. Là encore, ils ne doivent jamais se recoller pour reconstruire une demi-période complète.
+
+Ce domaine est plus grand que celui à cinq tuiles, mais beaucoup plus flexible. Il conserve seulement une demi-tour sur le prototile et fournit trois types de contacts centraux au lieu de deux. Je le placerais immédiatement après le cas à cinq tuiles.
+
+Je recommande également un petit programme préparatoire, indépendant du solveur géométrique. On peut l’appeler un explorateur de mappings quotients.
+
+Il prend comme entrée un graphe quotient et un groupe, par exemple la demi-tour. Il énumère uniquement les ordres relatifs des extrémités des contacts sur un contour abstrait. Il ne cherche ni coordonnées, ni courbures, ni formes.
+
+Pour chaque proposition, il effectue cinq tests.
+
+Premièrement, il rejette les mappings dans lesquels les duaux des contacts centraux reconstruisent une période complète.
+
+Deuxièmement, il rejette les mappings qui imposent qu’un mot non vide soit égal à son propre dual orienté.
+
+Troisièmement, il applique les équations de conservation signées par type d’atome.
+
+Quatrièmement, il vérifie que chaque bloc extérieur reste connecté et que l’ordre des voisins est compatible avec la carte plane.
+
+Cinquièmement, il calcule le nombre d’offsets encore libres après propagation sur un arbre couvrant du graphe quotient.
+
+Il classe ensuite les domaines selon trois critères : absence de contradiction abélienne, petit nombre d’offsets libres, et chevauchement suffisant des partenaires centraux pour éviter l’obstruction du moyeu sans provoquer trop d’identifications.
+
+Ma conclusion est donc la suivante.
+
+J’ai identifié un premier domaine précis à explorer : cinq tuiles, une demi-tour, une tuile centrale, deux types périphériques alternés, et des partenaires de contacts centraux entrelacés à travers la frontière des demi-périodes.
+
+J’ai aussi identifié le domaine de repli : sept tuiles, une demi-tour et trois types périphériques par demi-période, avec un entrelacement cyclique des trois contacts centraux.
+
+Je n’affirme pas encore qu’un système complet de mots existe dans le premier domaine. Mais il est suffisamment petit pour être exploré exhaustivement, suffisamment précis pour éviter la majorité des mappings inutiles, et il échappe explicitement à l’obstruction déjà démontrée. Le petit explorateur de mappings quotients permettrait ensuite de produire automatiquement les meilleures variantes de ce domaine avant de lancer votre solveur exact.
+
+
+########
+
+Oui. Ma réponse précédente était encore trop guidée par les obstructions. Le vrai objectif est de chercher une **liberté organisée** : assez de contraintes pour que le domaine soit petit, mais des contraintes disposées de façon à faire circuler l’information au lieu de la bloquer localement.
+
+Le critère positif principal que je proposerais est la **monodromie mélangeante des mappings**.
+
+En termes simples, on part d’un morceau du contour du prototype. On traverse une interface vers une autre tuile, on revient dans les coordonnées du prototype, puis on continue par une autre interface. Dans un domaine stérile, cette promenade revient très vite au même morceau, souvent après deux étapes, et force des égalités du type « ce mot est son propre dual » ou « ces morceaux reconstruisent exactement une période ». Dans un domaine potentiellement fertile, la promenade traverse beaucoup de positions différentes du contour avant de se refermer.
+
+Il faut donc rechercher des mappings qui produisent un seul grand cycle de positions, plutôt qu’une collection de petits cycles rigides.
+
+Le deuxième critère positif est l’**équilibre des rôles**. Idéalement, chaque tuile périphérique doit avoir la même structure physique simple : un contact central, un contact avec le voisin de gauche, un contact avec le voisin de droite et un bloc extérieur. On évite ainsi qu’un type de tuile ait trois rôles et un autre six, ce qui obligerait immédiatement beaucoup de subdivisions artificielles.
+
+Le troisième critère est le **tressage minimal**. Les mots partenaires des contacts centraux doivent traverser une frontière entre deux secteurs du contour, afin d’éviter l’obstruction du moyeu, mais ils ne doivent pas traverser cinq ou six secteurs, ce qui ferait exploser l’ordre faible. Le bon compromis consiste à faire traverser exactement une frontière à chaque mot central dual.
+
+Le quatrième critère est l’existence d’une **marge positive dans le système linéaire abélianisé**. Il ne suffit pas que les équations de longueur possèdent une solution où certains morceaux ont une longueur nulle. On veut une solution intérieure, où toutes les longueurs restent nettement positives et où il subsiste au moins deux ou trois paramètres libres. C’est une vraie indication de robustesse : un système qui ne survit que sur une égalité exceptionnelle est probablement géométriquement stérile.
+
+Le cinquième critère est que la transformation obtenue après un tour complet des types périphériques fasse avancer d’un secteur rotationnel. Et cet avancement doit être premier avec le nombre de secteurs. Ainsi, la dynamique visite toutes les copies avant de se refermer, au lieu de se décomposer en plusieurs sous-systèmes indépendants.
+
+Cela conduit à une famille générale que j’appellerais l’anneau tressé.
+
+On choisit un nombre de secteurs, par exemple deux ou trois, et un nombre de types de tuiles par secteur, par exemple trois ou quatre.
+
+Il existe une tuile centrale T. Autour d’elle, les tuiles sont ordonnées ainsi :
+
+A indice zéro, B indice zéro, C indice zéro, puis A indice un, B indice un, C indice un, et ainsi de suite.
+
+Chaque tuile périphérique touche T, sa voisine précédente et sa voisine suivante. Toutes les périphériques forment donc un unique grand cycle, mais la rotation globale ne permute que les secteurs. Elle envoie A zéro sur A un, B zéro sur B un, etc.
+
+La taille du domaine de recherche dépend surtout du nombre de types A, B, C, et beaucoup moins du nombre total de secteurs. C’est exactement ce que vous recherchez : beaucoup de tuiles physiques, mais un petit quotient formel.
+
+Le candidat que je considère maintenant comme le plus intéressant après votre recherche actuelle à cinq tuiles est le suivant.
+
+Il possède sept tuiles. Il y a une tuile centrale, puis six périphériques :
+
+A zéro, B zéro, C zéro, A un, B un, C un.
+
+La symétrie est une demi-tour. Elle échange les indices zéro et un.
+
+Les contacts périphériques sont :
+
+A zéro avec B zéro.
+
+B zéro avec C zéro.
+
+C zéro avec A un.
+
+Puis la même chose après la demi-tour.
+
+Toutes les six périphériques touchent également la tuile centrale.
+
+Le contour central est divisé, dans l’ordre, en six mots :
+
+U, V, W, U, V, W.
+
+Voici le domaine de mapping précis que je testerais.
+
+Le mot dual de U, utilisé sur les tuiles de type A, commence strictement à l’intérieur de la zone V et se termine strictement à l’intérieur de la zone W.
+
+Le mot dual de V, utilisé sur les tuiles de type B, commence à l’intérieur de W et se termine à l’intérieur du U suivant.
+
+Le mot dual de W, utilisé sur les tuiles de type C, commence à l’intérieur du U suivant et se termine à l’intérieur du V suivant.
+
+On obtient ainsi une tresse cyclique :
+
+U va vers V et W.
+
+V va vers W et le U suivant.
+
+W va vers le U suivant et le V suivant.
+
+Après avoir traversé les trois types A, B et C, on n’est pas revenu dans la même demi-période : on a avancé vers la demi-période opposée. Après deux tours seulement, on revient au point initial.
+
+La monodromie possède donc naturellement un grand cycle de longueur six, et non trois petits cycles de longueur deux.
+
+Sur chaque tuile périphérique, le complément du contact central est divisé en trois morceaux consécutifs :
+
+le contact avec le voisin de gauche,
+
+le bloc extérieur,
+
+le contact avec le voisin de droite.
+
+On apparie ensuite le contact droit de A avec le contact gauche de B, celui de B avec celui de C, et celui de C avec celui de A dans le secteur suivant.
+
+Ce mapping possède plusieurs propriétés positives.
+
+Les six périphériques ont exactement les mêmes quatre rôles physiques.
+
+Les trois contacts centraux sont réellement mélangés, mais chaque dual ne traverse qu’une seule frontière importante.
+
+Aucune paire de contacts centraux ne reconstitue une demi-période.
+
+Le déplacement total après le cycle A, B, C est non trivial.
+
+Le graphe quotient reste minuscule : seulement quatre types de tuiles, T, A, B et C.
+
+Le premier système de longueurs possède a priori beaucoup plus de variables que d’équations. Par exemple, on peut attribuer un budget positif au contact central, aux deux contacts latéraux et au bloc extérieur sans forcer immédiatement l’un de ces morceaux à zéro. Cela ne prouve pas l’existence, mais cela distingue ce domaine des systèmes qui meurent déjà dans l’abélianisation.
+
+Je considère ce domaine à sept tuiles comme le premier véritable candidat conçu avec une heuristique positive, et pas seulement comme un survivant d’une liste d’obstructions.
+
+Le deuxième candidat serait le même mécanisme avec neuf tuiles et toujours une demi-tour.
+
+Il y aurait quatre types par demi-période :
+
+A, B, C et D.
+
+L’ordre autour de la tuile centrale serait :
+
+A zéro, B zéro, C zéro, D zéro, puis A un, B un, C un, D un.
+
+Le contour central serait :
+
+U, V, W, X, puis U, V, W, X.
+
+Les duaux seraient placés selon le cycle suivant :
+
+le dual de U traverse V vers W ;
+
+le dual de V traverse W vers X ;
+
+le dual de W traverse X vers le U suivant ;
+
+le dual de X traverse le U suivant vers le V suivant.
+
+Ce cas possède davantage de marge que le cas à sept tuiles, tout en n’imposant toujours qu’une demi-tour au prototile. Le quotient ne possède que cinq types de tuiles. C’est probablement une meilleure structure si le cas à sept tuiles s’avère encore trop rigide.
+
+Le troisième candidat serait une version à dix tuiles avec une rotation d’ordre trois.
+
+On garde seulement trois types A, B et C, mais avec trois secteurs. Le quotient est presque identique à celui du cas à sept tuiles. Le cycle complet contient alors neuf périphériques.
+
+On utilise la même tresse U vers V et W, V vers W et le U suivant, W vers le U suivant et le V suivant. Après le passage A, B, C, on avance d’un secteur sur trois. Comme un et trois sont premiers entre eux, la monodromie visite les neuf positions périphériques avant de se fermer.
+
+Ce cas a une symétrie géométrique plus exigeante, mais il possède un rapport intéressant entre le nombre total de tuiles et la petitesse du quotient.
+
+On peut systématiser cette recherche par un petit programme préparatoire.
+
+Ce programme ne chercherait pas des formes. Il ne résoudrait même pas encore les équations complètes de mots.
+
+Il prendrait deux nombres : le nombre de secteurs et le nombre de types par secteur.
+
+Il construirait le grand cycle périphérique, puis énumérerait uniquement les placements relatifs des mots centraux duaux. Chaque placement serait décrit par le type de zone où il commence, le type de zone où il termine, et le décalage éventuel de secteur.
+
+Il conserverait en priorité les systèmes où la permutation induite sur les positions du contour forme un grand cycle.
+
+Il rejetterait les systèmes possédant des cycles courts de longueur un ou deux.
+
+Il calculerait ensuite le système abélianisé des longueurs et rechercherait une solution strictement positive. Le score devrait favoriser non seulement la dimension de l’espace des solutions, mais aussi la distance de la solution au bord positif. Par exemple, après avoir normalisé le périmètre à un, on maximise la plus petite longueur de bloc.
+
+Il vérifierait également que les mots duaux centraux ne reconstruisent aucune période complète, même après regroupement.
+
+Enfin, il compterait les offsets encore indépendants après propagation. Un bon candidat possède une monodromie longue, mais seulement un ou deux offsets réellement libres.
+
+Le score de fertilité pourrait donc combiner quatre éléments :
+
+une grande orbite de monodromie ;
+
+une solution linéaire strictement positive et robuste ;
+
+un petit nombre d’offsets libres ;
+
+et une bonne égalité des rôles entre les différents types de tuiles.
+
+Le point important est qu’une grande monodromie ne signifie pas un grand espace de recherche. Elle peut au contraire être générée par un seul petit décalage répété sur un très grand nombre de copies.
+
+Ma conclusion est donc la suivante.
+
+Le premier domaine précis à explorer après votre calcul à cinq tuiles est, selon moi, le cas à sept tuiles avec demi-tour, trois types périphériques par demi-période et le mapping tressé U, V, W que je viens de décrire.
+
+Le deuxième est le cas à neuf tuiles avec demi-tour et quatre types périphériques.
+
+Le troisième est le cas à dix tuiles avec trois secteurs et trois types par secteur.
+
+Plus généralement, la bonne famille est celle des anneaux tressés avec un petit nombre de types par secteur, une monodromie transitive et un décalage total premier avec le nombre de secteurs. Ce sont des critères positifs : ils ne se contentent pas d’éviter les contradictions connues, ils cherchent activement à distribuer les contraintes sur tout le contour, à conserver une marge de longueurs positives et à empêcher la rigidification locale.
