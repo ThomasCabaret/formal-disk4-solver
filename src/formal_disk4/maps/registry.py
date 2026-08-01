@@ -11,7 +11,7 @@ from .double_cycle import build_double_cycle_map
 from .k4 import build_k4_map
 from .k4_minus_arc import build_k4_minus_arc_map
 from .k4_minus_point import build_k4_minus_point_map
-from .wheel import build_wheel_4_map
+from .wheel import build_wheel_4_map, build_wheel_map
 from .two_ring_families import (
     build_double_cycle_offset_map,
     build_inner_cycle_boundary_points_map,
@@ -73,6 +73,7 @@ _REGISTRATIONS = (
 )
 
 _DYNAMIC_MAP_PATTERNS = (
+    ("wheel", re.compile(r"^wheel-(\d+)$"), build_wheel_map),
     ("double-cycle", re.compile(r"^double-cycle-(\d+)$"), build_double_cycle_map),
     (
         "double-cycle-offset",

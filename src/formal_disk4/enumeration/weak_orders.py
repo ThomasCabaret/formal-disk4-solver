@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations, product
+from math import lcm
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
 
 from formal_disk4.constraints.angle_lp import AngleEquation, AngleFeasibilityOracle
@@ -151,6 +152,13 @@ class WeakOrderEnumerator:
                 if self.reference_index in orbit
             ),
             None,
+        )
+        self._cyclic_shift_order = (
+            self._permutation_order(
+                self.required_cyclic_shift_transform.occurrence_map
+            )
+            if self.required_cyclic_shift_transform is not None
+            else 0
         )
         self._cyclic_shift_splits = (
             self._build_cyclic_shift_splits()
@@ -447,13 +455,45 @@ class WeakOrderEnumerator:
             )
         return tuple(masks)
 
-    def _build_cyclic_shift_splits(self) -> Tuple[Tuple[int, ...], ...]:
-        """Return all first-fundamental-domain prefix lengths for an order-2 action.
+    @staticmethod
+    def _permutation_order(permutation: Sequence[int]) -> int:
+        """Return the order of a finite permutation."""
 
-        A cyclic half-turn sends the first half of the prototype contour to the
-        second half.  For each piece, the occurrences before the half-turn cut
-        must therefore form a prefix of its assignment sequence.  The mapped
-        prefix is exactly the target-piece suffix.
+        if set(permutation) != set(range(len(permutation))):
+            raise ValueError("Cyclic-shift action is not a permutation")
+        order = 1
+        unseen = set(range(len(permutation)))
+        while unseen:
+            seed = min(unseen)
+            current = seed
+            cycle_length = 0
+            while current in unseen:
+                unseen.remove(current)
+                cycle_length += 1
+                current = permutation[current]
+            if current != seed:
+                raise ValueError("Cyclic-shift action is not a permutation cycle")
+            order = lcm(order, cycle_length)
+        return order
+
+    @staticmethod
+    def _weak_compositions(total: int, parts: int) -> Iterator[Tuple[int, ...]]:
+        """Yield ordered nonnegative ``parts``-tuples summing to ``total``."""
+
+        for dividers in combinations(range(total + parts - 1), parts - 1):
+            positions = (-1,) + dividers + (total + parts - 1,)
+            yield tuple(
+                positions[index + 1] - positions[index] - 1
+                for index in range(parts)
+            )
+
+    def _build_cyclic_shift_splits(self) -> Tuple[Tuple[int, ...], ...]:
+        """Return all prefix lengths for one rotational fundamental domain.
+
+        Applying the required action repeatedly sends this domain around the
+        entire prototype contour.  A fixed piece contributes one equal-sized
+        prefix; a full piece orbit distributes one contour's worth of
+        occurrences among the pieces in that orbit.
         """
 
         transform = self.required_cyclic_shift_transform
@@ -462,34 +502,50 @@ class WeakOrderEnumerator:
         if transform.reverse_cycle:
             raise ValueError("Cyclic-shift equivariance must preserve orientation")
         occurrence_map = transform.occurrence_map
-        if any(occurrence_map[occurrence_map[index]] != index for index in range(len(occurrence_map))):
-            raise ValueError("Cyclic-shift equivariance currently supports order two only")
-        if any(occurrence_map[index] == index for index in range(len(occurrence_map))):
-            raise ValueError("Cyclic half-turn cannot fix a contour occurrence")
+        order = self._cyclic_shift_order
+        if order < 2:
+            raise ValueError("Cyclic-shift equivariance needs a nontrivial action")
+        for seed in range(len(occurrence_map)):
+            current = seed
+            orbit = set()
+            while current not in orbit:
+                orbit.add(current)
+                current = occurrence_map[current]
+            if current != seed or len(orbit) != order:
+                raise ValueError(
+                    "Cyclic-shift equivariance requires a free occurrence action"
+                )
         piece_map = transform.piece_map
-        if any(piece_map[piece_map[index]] != index for index in range(len(piece_map))):
-            raise ValueError("Cyclic-shift piece action currently supports order two only")
 
         unseen = set(range(len(self.piece_names)))
         orbit_options: List[Tuple[Tuple[Tuple[int, int], ...], ...]] = []
         while unseen:
             source = min(unseen)
-            target = piece_map[source]
-            unseen.discard(source)
-            unseen.discard(target)
-            source_length = len(self.assignment.sequences[source])
-            target_length = len(self.assignment.sequences[target])
-            if source_length != target_length:
-                raise ValueError("Half-turn piece orbits need equal contour lengths")
-            if source == target:
-                if source_length % 2:
+            orbit = []
+            current = source
+            while current not in orbit:
+                orbit.append(current)
+                unseen.discard(current)
+                current = piece_map[current]
+            if current != source or len(orbit) not in (1, order):
+                raise ValueError(
+                    "Cyclic-shift piece orbits must be fixed or have full action order"
+                )
+            lengths = {len(self.assignment.sequences[index]) for index in orbit}
+            if len(lengths) != 1:
+                raise ValueError("Cyclic-shift piece orbits need equal contour lengths")
+            contour_length = lengths.pop()
+            if len(orbit) == 1:
+                if contour_length % order:
                     return ()
-                orbit_options.append((((source, source_length // 2),),))
+                orbit_options.append((((source, contour_length // order),),))
             else:
                 orbit_options.append(
                     tuple(
-                        ((source, prefix), (target, source_length - prefix))
-                        for prefix in range(source_length + 1)
+                        tuple(zip(orbit, prefixes))
+                        for prefixes in self._weak_compositions(
+                            contour_length, order
+                        )
                     )
                 )
 
@@ -515,18 +571,26 @@ class WeakOrderEnumerator:
             if not valid:
                 continue
 
-            first_half = {
+            fundamental_domain = {
                 occurrence_id
                 for piece_index, sequence in enumerate(self.assignment.sequences)
                 for occurrence_id in sequence[: split_tuple[piece_index]]
             }
-            second_half = {
-                transform.map_occurrence_id(occurrence_id)
-                for occurrence_id in first_half
-            }
-            if first_half & second_half:
+            domains = []
+            current_domain = fundamental_domain
+            for _ in range(order):
+                domains.append(current_domain)
+                current_domain = {
+                    transform.map_occurrence_id(occurrence_id)
+                    for occurrence_id in current_domain
+                }
+            if any(
+                domains[left] & domains[right]
+                for left in range(order)
+                for right in range(left + 1, order)
+            ):
                 continue
-            if first_half | second_half != set(range(len(self.occurrences))):
+            if set().union(*domains) != set(range(len(self.occurrences))):
                 continue
             output.add(split_tuple)
         return tuple(sorted(output))
@@ -553,17 +617,24 @@ class WeakOrderEnumerator:
         return blocks + (tuple(sorted(block)),), tuple(next_counters)
 
     def _cyclic_full_blocks(
-        self, half_blocks: Tuple[Tuple[int, ...], ...]
+        self, fundamental_blocks: Tuple[Tuple[int, ...], ...]
     ) -> Tuple[Tuple[int, ...], ...]:
         transform = self.required_cyclic_shift_transform
         assert transform is not None
-        mapped = tuple(
-            tuple(
-                sorted(transform.map_occurrence_id(occurrence_id) for occurrence_id in block)
+        output = []
+        current = fundamental_blocks
+        for _ in range(self._cyclic_shift_order):
+            output.extend(current)
+            current = tuple(
+                tuple(
+                    sorted(
+                        transform.map_occurrence_id(occurrence_id)
+                        for occurrence_id in block
+                    )
+                )
+                for block in current
             )
-            for block in half_blocks
-        )
-        return half_blocks + mapped
+        return tuple(output)
 
     def _evaluate_cyclic_leaf(
         self,

@@ -148,6 +148,28 @@ class CaseCatalogTests(unittest.TestCase):
         self.assertTrue(cyclic_shift["enabled"])
         self.assertEqual(cyclic_shift["automorphism"], "rotation_2")
 
+    def test_wheel_rotation_one_catalog_covers_sizes_three_through_six(self) -> None:
+        for size in range(3, 7):
+            case = self.catalog.get(f"wheel-{size}-rotation-1")
+            self.assertEqual(case.map_name, f"wheel-{size}")
+            with tempfile.TemporaryDirectory() as directory:
+                materialized = materialize_task(
+                    ROOT,
+                    case,
+                    PipelineTask(case.case_id, "search"),
+                    Path(directory),
+                    task_index=0,
+                )
+                config = json.loads(
+                    materialized.config_path.read_text(encoding="utf-8")
+                )
+            self.assertFalse(
+                config["enumeration"]["cyclic_equivariance"]["enabled"]
+            )
+            cyclic_shift = config["enumeration"]["cyclic_shift_equivariance"]
+            self.assertTrue(cyclic_shift["enabled"])
+            self.assertEqual(cyclic_shift["automorphism"], "rotation_1")
+
     def test_static_visualizer_alias_is_exposed_as_visualize(self) -> None:
         case = self.catalog.get("k4")
         self.assertTrue(case.config_for("visualize").name.endswith("visualizer.json"))

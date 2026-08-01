@@ -11,140 +11,162 @@ from .base import (
 )
 
 
-_SIZE = 4
+def _inner(index: int, size: int) -> str:
+    return f"I{index % size}"
 
 
-def _index(value: int) -> int:
-    return value % _SIZE
+def _outer(index: int, size: int) -> str:
+    return f"O{index % size}"
 
 
-def _inner(index: int) -> str:
-    return f"I{_index(index)}"
+def _peripheral(index: int, size: int) -> str:
+    return f"P{index % size}"
 
 
-def _outer(index: int) -> str:
-    return f"O{_index(index)}"
-
-
-def _peripheral(index: int) -> str:
-    return f"P{_index(index)}"
-
-
-def _rotation(step: int) -> MapAutomorphism:
-    step = _index(step)
+def _rotation(step: int, size: int) -> MapAutomorphism:
+    step %= size
     return MapAutomorphism(
         name=f"rotation_{step}",
         piece_map=(("C", "C"),)
-        + tuple((_peripheral(i), _peripheral(i + step)) for i in range(_SIZE)),
-        vertex_map=tuple((_inner(i), _inner(i + step)) for i in range(_SIZE))
-        + tuple((_outer(i), _outer(i + step)) for i in range(_SIZE)),
+        + tuple(
+            (_peripheral(i, size), _peripheral(i + step, size))
+            for i in range(size)
+        ),
+        vertex_map=tuple(
+            (_inner(i, size), _inner(i + step, size)) for i in range(size)
+        )
+        + tuple((_outer(i, size), _outer(i + step, size)) for i in range(size)),
     )
 
 
-def _reflection(axis: int) -> MapAutomorphism:
+def _reflection(axis: int, size: int) -> MapAutomorphism:
     """Reflection i -> axis-i on vertices and i -> axis-i-1 on sectors."""
 
-    axis = _index(axis)
+    axis %= size
     return MapAutomorphism(
         name=f"reflection_{axis}",
         piece_map=(("C", "C"),)
         + tuple(
-            (_peripheral(i), _peripheral(axis - i - 1)) for i in range(_SIZE)
+            (_peripheral(i, size), _peripheral(axis - i - 1, size))
+            for i in range(size)
         ),
-        vertex_map=tuple((_inner(i), _inner(axis - i)) for i in range(_SIZE))
-        + tuple((_outer(i), _outer(axis - i)) for i in range(_SIZE)),
+        vertex_map=tuple(
+            (_inner(i, size), _inner(axis - i, size)) for i in range(size)
+        )
+        + tuple((_outer(i, size), _outer(axis - i, size)) for i in range(size)),
     )
 
 
-def build_wheel_4_map() -> PlanarMap:
-    """Four outer tiles in a cycle surrounding one central tile.
+def build_wheel_map(size: int) -> PlanarMap:
+    """``size`` outer tiles in a cycle surrounding one central tile.
 
-    The contact graph is the wheel W5: the outer pieces P0,...,P3 form a
-    4-cycle and the central piece C touches every Pi.  The map declares the
-    complete dihedral D4 action, including the required half-turn rotation_2.
+    The contact graph is the wheel W(size + 1).  The map declares its complete
+    dihedral action; ``rotation_1`` advances every outer tile and every contour
+    vertex by one sector while fixing the central tile as a set.
     """
+
+    if size < 3:
+        raise ValueError("A wheel map needs at least three outer tiles")
 
     central = PieceSpec(
         "C",
-        tuple(_inner(i) for i in range(_SIZE)),
+        tuple(_inner(i, size) for i in range(size)),
         False,
         "none",
     )
     peripheral = tuple(
         PieceSpec(
-            _peripheral(i),
+            _peripheral(i, size),
             (
-                _inner(i + 1),
-                _inner(i),
-                _outer(i),
-                _outer(i + 1),
+                _inner(i + 1, size),
+                _inner(i, size),
+                _outer(i, size),
+                _outer(i + 1, size),
             ),
             True,
             "arc",
         )
-        for i in range(_SIZE)
+        for i in range(size)
     )
 
     vertices = tuple(
         VertexSpec(
-            _inner(i),
+            _inner(i, size),
             "interior",
-            ("C", _peripheral(i - 1), _peripheral(i)),
+            ("C", _peripheral(i - 1, size), _peripheral(i, size)),
             2.0,
         )
-        for i in range(_SIZE)
+        for i in range(size)
     ) + tuple(
         VertexSpec(
-            _outer(i),
+            _outer(i, size),
             "outer",
-            (_peripheral(i - 1), _peripheral(i)),
+            (_peripheral(i - 1, size), _peripheral(i, size)),
             1.0,
         )
-        for i in range(_SIZE)
+        for i in range(size)
     )
 
     center_interfaces = tuple(
         InterfaceSpec(
-            f"C-{_peripheral(i)}",
+            f"C-{_peripheral(i, size)}",
             "C",
-            _peripheral(i),
+            _peripheral(i, size),
             (
-                InterfaceView("C", _inner(i), _inner(i + 1)),
-                InterfaceView(_peripheral(i), _inner(i + 1), _inner(i)),
+                InterfaceView("C", _inner(i, size), _inner(i + 1, size)),
+                InterfaceView(
+                    _peripheral(i, size),
+                    _inner(i + 1, size),
+                    _inner(i, size),
+                ),
             ),
         )
-        for i in range(_SIZE)
+        for i in range(size)
     )
     radial_interfaces = tuple(
         InterfaceSpec(
-            f"{_peripheral(i - 1)}-{_peripheral(i)}",
-            _peripheral(i - 1),
-            _peripheral(i),
+            f"{_peripheral(i - 1, size)}-{_peripheral(i, size)}",
+            _peripheral(i - 1, size),
+            _peripheral(i, size),
             (
-                InterfaceView(_peripheral(i - 1), _outer(i), _inner(i)),
-                InterfaceView(_peripheral(i), _inner(i), _outer(i)),
+                InterfaceView(
+                    _peripheral(i - 1, size),
+                    _outer(i, size),
+                    _inner(i, size),
+                ),
+                InterfaceView(
+                    _peripheral(i, size),
+                    _inner(i, size),
+                    _outer(i, size),
+                ),
             ),
         )
-        for i in range(_SIZE)
+        for i in range(size)
     )
     outer_interfaces = tuple(
         InterfaceSpec(
-            f"outer-{_peripheral(i)}",
-            _peripheral(i),
+            f"outer-{_peripheral(i, size)}",
+            _peripheral(i, size),
             None,
-            (InterfaceView(_peripheral(i), _outer(i), _outer(i + 1)),),
+            (
+                InterfaceView(
+                    _peripheral(i, size),
+                    _outer(i, size),
+                    _outer(i + 1, size),
+                ),
+            ),
             is_outer=True,
         )
-        for i in range(_SIZE)
+        for i in range(size)
     )
 
     result = PlanarMap(
-        name="wheel-4",
+        name=f"wheel-{size}",
         pieces=(central,) + peripheral,
         vertices=vertices,
         interfaces=center_interfaces + radial_interfaces + outer_interfaces,
-        automorphisms=tuple(_rotation(step) for step in range(_SIZE))
-        + tuple(_reflection(axis) for axis in range(_SIZE)),
+        automorphisms=tuple(_rotation(step, size) for step in range(size))
+        + tuple(_reflection(axis, size) for axis in range(size)),
         reference_piece="C",
         hypotheses=ProblemHypotheses(
             piecewise_c2_boundary=True,
@@ -153,3 +175,9 @@ def build_wheel_4_map() -> PlanarMap:
     )
     result.validate()
     return result
+
+
+def build_wheel_4_map() -> PlanarMap:
+    """Compatibility wrapper for the original four-sector wheel."""
+
+    return build_wheel_map(4)

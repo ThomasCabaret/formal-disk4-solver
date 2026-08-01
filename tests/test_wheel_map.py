@@ -17,6 +17,66 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WheelFourMapTests(unittest.TestCase):
+    def test_wheel_three_through_six_have_certified_one_step_rotation(self) -> None:
+        for size in range(3, 7):
+            with self.subTest(size=size):
+                planar_map = build_map(f"wheel-{size}")
+                planar_map.validate()
+                self.assertEqual(len(planar_map.pieces), size + 1)
+                self.assertEqual(len(planar_map.vertices), 2 * size)
+                self.assertEqual(len(planar_map.internal_interfaces()), 2 * size)
+                self.assertEqual(len(planar_map.outer_interfaces()), size)
+                self.assertEqual(len(planar_map.automorphisms), 2 * size)
+
+                assignments = AssignmentEnumerator(planar_map, symmetry_mode="off")
+                rotation = assignments.transform_for_automorphism("rotation_1")
+                piece_names = tuple(piece.name for piece in planar_map.pieces)
+                piece_map = {
+                    piece_names[index]: piece_names[target]
+                    for index, target in enumerate(rotation.piece_map)
+                }
+                self.assertEqual(piece_map["C"], "C")
+                for index in range(size):
+                    self.assertEqual(
+                        piece_map[f"P{index}"], f"P{(index + 1) % size}"
+                    )
+
+    def test_rotation_one_builds_full_cyclic_weak_orders(self) -> None:
+        for size in range(3, 7):
+            with self.subTest(size=size):
+                planar_map = build_map(f"wheel-{size}")
+                assignments = AssignmentEnumerator(planar_map, symmetry_mode="off")
+                assignment = assignments.assignment_at(0)
+                transform = assignments.transform_for_automorphism("rotation_1")
+                weak_orders = WeakOrderEnumerator(
+                    planar_map,
+                    assignment,
+                    assignments.occurrence_names,
+                    LengthFeasibilityOracle(),
+                    AngleFeasibilityOracle(),
+                    symmetry_mode="off",
+                    enable_length_filter=False,
+                    enable_angle_filter=False,
+                    enable_exterior_arc_repetition_filter=False,
+                    track_exact_leaf_mass=False,
+                    required_cyclic_shift_transform=transform,
+                )
+                placement = next(weak_orders.enumerate())
+                self.assertEqual(len(placement.blocks) % size, 0)
+                sector_length = len(placement.blocks) // size
+                for sector in range(1, size):
+                    for index in range(sector_length):
+                        expected = placement.blocks[(sector - 1) * sector_length + index]
+                        mapped = tuple(
+                            sorted(
+                                transform.map_occurrence_id(item) for item in expected
+                            )
+                        )
+                        self.assertEqual(
+                            mapped,
+                            placement.blocks[sector * sector_length + index],
+                        )
+
     def test_wheel_invariants_and_half_turn_are_certified(self) -> None:
         planar_map = build_map("wheel-4")
         planar_map.validate()

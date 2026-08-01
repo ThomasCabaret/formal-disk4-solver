@@ -1,0 +1,43 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "wheel-rotation1",
+  "label": "Cycles with central tile - rotation_1",
+  "description": "An exterior cycle surrounds one fully internal central tile, with imposed one-sector rotational equivariance.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "wheel",
+    "central-tile",
+    "rotation-1"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "track_exact_domain_size": true,
+        "cyclic_equivariance": {
+          "enabled": false
+        },
+        "cyclic_shift_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_1"
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "wheel",
+      "case_id_template": "wheel-{size}-rotation-1",
+      "label_template": "Cycle {size} + center - rotation_1",
+      "description": "{size} outer tiles form a cycle around a central tile; all outer tiles have the same structural role under a one-sector rotation.",
+      "map_template": "wheel-{size}",
+      "parameter_values": {
+        "size": [3, 4, 5, 6]
+      }
+    }
+  ]
+}
