@@ -794,10 +794,14 @@ class WeakOrderEnumerator:
                 return
             marker = -(split_index + 1)
             root_path = (marker,)
-            if self._resuming and (
-                not self._resume_path or self._resume_path[0] != marker
-            ):
-                continue
+            if self._resuming:
+                if not self._resume_path or self._resume_path[0] != marker:
+                    continue
+                if self._resume_path == root_path:
+                    # The checkpoint was taken after this entire split.  Skip it,
+                    # leave resume mode, and enumerate all subsequent splits.
+                    self._resuming = False
+                    continue
             prefixes = tuple(
                 tuple(sequence[: split[piece_index]])
                 for piece_index, sequence in enumerate(self.assignment.sequences)

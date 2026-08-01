@@ -11,6 +11,7 @@ from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
 from formal_disk4.maps.k4 import build_k4_map
+from formal_disk4.maps.registry import build_map
 from formal_disk4.pipeline.runner import SolverRunner
 from formal_disk4.words.algebra import Equation, Literal
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
@@ -64,6 +65,63 @@ class CheckpointTests(unittest.TestCase):
         resumed_first = next(resumed.enumerate())
         self.assertEqual(resumed_first.blocks, second_placement.blocks)
         self.assertNotEqual(resumed_first.blocks, first_placement.blocks)
+
+    def test_cyclic_shift_cursor_continues_after_a_completed_split(self) -> None:
+        planar_map = build_map("wheel-4")
+        assignments = AssignmentEnumerator(planar_map, symmetry_mode="off")
+        assignment = assignments.assignment_at(0)
+        transform = assignments.transform_for_automorphism("rotation_2")
+        captured_states = []
+        first_split_complete = [False]
+
+        def capture(state: dict[str, object]) -> None:
+            captured_states.append(dict(state))
+            if state["last_completed_path"] == [-1]:
+                first_split_complete[0] = True
+
+        first = WeakOrderEnumerator(
+            planar_map,
+            assignment,
+            assignments.occurrence_names,
+            LengthFeasibilityOracle(),
+            AngleFeasibilityOracle(),
+            symmetry_mode="off",
+            enable_length_filter=False,
+            enable_angle_filter=False,
+            enable_exterior_arc_repetition_filter=False,
+            track_exact_leaf_mass=True,
+            stop_predicate=lambda: first_split_complete[0],
+            checkpoint_sink=capture,
+            required_cyclic_shift_transform=transform,
+        )
+        first_split = tuple(first.enumerate())
+        split_state = next(
+            state
+            for state in reversed(captured_states)
+            if state["last_completed_path"] == [-1]
+        )
+
+        resumed = WeakOrderEnumerator(
+            planar_map,
+            assignment,
+            assignments.occurrence_names,
+            LengthFeasibilityOracle(),
+            AngleFeasibilityOracle(),
+            symmetry_mode="off",
+            enable_length_filter=False,
+            enable_angle_filter=False,
+            enable_exterior_arc_repetition_filter=False,
+            track_exact_leaf_mass=True,
+            resume_state=split_state,
+            required_cyclic_shift_transform=transform,
+        )
+        remaining = tuple(resumed.enumerate())
+
+        self.assertEqual(len(first._cyclic_shift_splits), 4)
+        self.assertEqual(len(first_split), 8_736)
+        self.assertEqual(len(remaining), 26_208)
+        self.assertEqual(len(first_split) + len(remaining), first.total_leaf_mass)
+        self.assertEqual(remaining[0].placement_id, len(first_split))
 
     def test_default_run_uses_compact_checkpoint_and_no_bulk_audits(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
