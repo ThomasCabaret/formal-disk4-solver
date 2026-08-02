@@ -1251,6 +1251,13 @@ class SolverRunner:
                                     .replace("-", "_")
                                 )
                                 self.stats.increment(f"preword_rejection_{reason_key}")
+                                witness_key = (
+                                    preword_result.topology.rejection_counter_suffix()
+                                )
+                                if witness_key:
+                                    self.stats.increment(
+                                        f"preword_rejection_witness_{witness_key}"
+                                    )
                                 self._set_stage(
                                     "weak_order_enumeration",
                                     assignment_id=assignment.assignment_id,

@@ -43,6 +43,21 @@ class RadiusArcTopologyResult:
     forced_overlap_checks: int
     propagation_truncated: bool
     forced_atomic_signs: Tuple[int, ...]
+    rejection_witness: Tuple[Tuple[str, str], ...] = ()
+
+    def rejection_counter_suffix(self) -> str:
+        witness = dict(self.rejection_witness)
+        selected = (
+            witness.get("source_arc_provenance", ""),
+            witness.get("interface", ""),
+            witness.get("mapping_direction", ""),
+            witness.get("hard_outer_endpoints", ""),
+        )
+        raw = "__".join(value for value in selected if value)
+        return "".join(
+            character.lower() if character.isalnum() else "_"
+            for character in raw
+        ).strip("_")
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -55,6 +70,7 @@ class RadiusArcTopologyResult:
             "forced_overlap_checks": self.forced_overlap_checks,
             "propagation_truncated": self.propagation_truncated,
             "forced_atomic_signs": list(self.forced_atomic_signs),
+            "rejection_witness": dict(self.rejection_witness),
         }
 
 
@@ -201,8 +217,11 @@ class RadiusArcTopologyFilter:
         variable_index = {name: index for index, name in enumerate(compiled.atomic_variables)}
         equality_rows = tuple(tuple(int(value) for value in row) for row in length_rows)
         equality_space = _EqualitySpace(size, equality_rows)
+        hard_outer_boundary_labels = self._hard_outer_boundary_labels(
+            planar_map, compiled, variable_index, size
+        )
         hard_outer_boundaries = frozenset(
-            set(self._hard_outer_boundaries(planar_map, compiled, variable_index, size))
+            set(hard_outer_boundary_labels)
             | {int(value) for value in additional_hard_outer_boundaries}
         )
         seeds = self._outer_seed_intervals(compiled, variable_index, size)
@@ -211,11 +230,15 @@ class RadiusArcTopologyFilter:
         overlap_checks = 0
         unresolved_images = 0
         known: set[CircularInterval] = set()
+        provenance: Dict[CircularInterval, Tuple[str, ...]] = {}
         signs: Dict[int, int] = {}
         queue: List[CircularInterval] = []
         propagation_truncated = False
 
-        def reject(reason: str) -> RadiusArcTopologyResult:
+        def reject(
+            reason: str,
+            witness: Mapping[str, object] | None = None,
+        ) -> RadiusArcTopologyResult:
             return RadiusArcTopologyResult(
                 False,
                 reason,
@@ -226,9 +249,18 @@ class RadiusArcTopologyFilter:
                 overlap_checks,
                 propagation_truncated,
                 tuple(signs.get(index, 0) for index in range(size)),
+                tuple(
+                    sorted(
+                        (str(key), str(value))
+                        for key, value in (witness or {}).items()
+                    )
+                ),
             )
 
-        def add_interval(interval: CircularInterval) -> str | None:
+        def add_interval(
+            interval: CircularInterval,
+            path: Tuple[str, ...] = (),
+        ) -> str | None:
             nonlocal propagation_truncated
             if interval.sign not in (-1, 1):
                 raise ValueError("Circular interval sign must be +/-1")
@@ -255,6 +287,7 @@ class RadiusArcTopologyFilter:
                 propagation_truncated = True
                 return None
             known.add(interval)
+            provenance[interval] = path
             queue.append(interval)
             for index in self._cyclic_indices(
                 interval.start_boundary, interval.end_boundary, size
@@ -262,8 +295,8 @@ class RadiusArcTopologyFilter:
                 signs[index] = interval.sign
             return None
 
-        for seed in seeds:
-            reason = add_interval(seed)
+        for outer, seed in zip(compiled.outer_arcs, seeds):
+            reason = add_interval(seed, (f"outer:{outer.name}",))
             if reason:
                 return reject(reason)
 
@@ -300,8 +333,33 @@ class RadiusArcTopologyFilter:
                                     source_end,
                                     equality_rows,
                                 ):
+                                    interface = compiled.interfaces[interface_index]
+                                    source_piece, target_piece = (
+                                        (interface.left_piece, interface.right_piece)
+                                        if direction == 0
+                                        else (interface.right_piece, interface.left_piece)
+                                    )
                                     return reject(
-                                        "mapped same-radius circular arc crosses a hard outer endpoint"
+                                        "mapped same-radius circular arc crosses a hard outer endpoint",
+                                        {
+                                            "interface": interface.name,
+                                            "mapping_direction": (
+                                                f"{source_piece}->{target_piece}"
+                                            ),
+                                            "hard_boundary": boundary,
+                                            "hard_outer_endpoints": ",".join(
+                                                hard_outer_boundary_labels.get(
+                                                    boundary, ()
+                                                )
+                                            ),
+                                            "source_arc_boundaries": (
+                                                f"{interval.start_boundary}->"
+                                                f"{interval.end_boundary}"
+                                            ),
+                                            "source_arc_provenance": " / ".join(
+                                                provenance.get(interval, ())
+                                            ),
+                                        },
                                     )
 
                         image_sign = -interval.sign
@@ -340,7 +398,19 @@ class RadiusArcTopologyFilter:
                         propagated = self._interval_from_word(
                             target_word, variable_index, size, image_sign
                         )
-                        reason = add_interval(propagated)
+                        interface = compiled.interfaces[interface_index]
+                        source_piece, target_piece = (
+                            (interface.left_piece, interface.right_piece)
+                            if direction == 0
+                            else (interface.right_piece, interface.left_piece)
+                        )
+                        reason = add_interval(
+                            propagated,
+                            provenance.get(interval, ())
+                            + (
+                                f"{interface.name}:{source_piece}->{target_piece}",
+                            ),
+                        )
                         if reason:
                             return reject(reason)
 
@@ -412,29 +482,36 @@ class RadiusArcTopologyFilter:
             for outer in compiled.outer_arcs
         )
 
-    def _hard_outer_boundaries(
+    def _hard_outer_boundary_labels(
         self,
         planar_map: PlanarMap,
         compiled: CompiledWordCase,
         variable_index: Mapping[str, int],
         size: int,
-    ) -> frozenset[int]:
+    ) -> Dict[int, Tuple[str, ...]]:
         hard_vertex_names = {
             vertex.name
             for vertex in planar_map.vertices
             if vertex.kind == "outer" and len(vertex.incident_pieces) >= 2
         }
         by_name = {interface.name: interface for interface in planar_map.outer_interfaces()}
-        boundaries: set[int] = set()
+        labels: Dict[int, set[str]] = {}
         for outer in compiled.outer_arcs:
             interface = by_name[outer.name]
             view = interface.views[0]
             layout = self._layout(outer.positive_word, variable_index, size)
             if view.start_vertex in hard_vertex_names:
-                boundaries.add(layout.boundaries[0])
+                labels.setdefault(layout.boundaries[0], set()).add(
+                    f"{outer.name}:{view.start_vertex}"
+                )
             if view.end_vertex in hard_vertex_names:
-                boundaries.add(layout.boundaries[-1])
-        return frozenset(boundaries)
+                labels.setdefault(layout.boundaries[-1], set()).add(
+                    f"{outer.name}:{view.end_vertex}"
+                )
+        return {
+            boundary: tuple(sorted(boundary_labels))
+            for boundary, boundary_labels in labels.items()
+        }
 
     @staticmethod
     def _cyclic_indices(start: int, end: int, size: int) -> Tuple[int, ...]:

@@ -756,6 +756,15 @@ class WeakOrderEnumerator:
                         .replace("-", "_")
                     )
                     self.event_sink(f"prefix_topology_rejection_{reason_key}", 1)
+                    if prefix_topology.topology is not None:
+                        witness_key = (
+                            prefix_topology.topology.rejection_counter_suffix()
+                        )
+                        if witness_key:
+                            self.event_sink(
+                                f"prefix_topology_rejection_witness_{witness_key}",
+                                1,
+                            )
                     self._mark_subtree_complete(path, 1)
                     return
 
@@ -783,6 +792,9 @@ class WeakOrderEnumerator:
             self.event_sink("angle_pruned_nodes", 1)
             self._mark_subtree_complete(path, 1)
             return
+        if not self._complete_topology_is_feasible(positions, block_count):
+            self._mark_subtree_complete(path, 1)
+            return
 
         self.event_sink("surviving_placements", 1)
         yield Placement(
@@ -799,6 +811,52 @@ class WeakOrderEnumerator:
         )
         self._placement_id += 1
         self._mark_subtree_complete(path, 1)
+
+    def _complete_topology_is_feasible(
+        self,
+        positions: Sequence[int],
+        block_count: int,
+    ) -> bool:
+        """Apply the exact mapping-fertility gate only at a complete leaf."""
+
+        if self.prefix_topology_filter is None:
+            return True
+        try:
+            result = self.prefix_topology_filter.analyze(
+                positions, block_count, complete=True
+            )
+        except Exception:
+            # Like prefix pruning, this is a sound optimization layer: an
+            # implementation failure must retain the candidate conservatively.
+            self.event_sink("complete_topology_errors", 1)
+            return True
+        if result.applicable:
+            self.event_sink(
+                "complete_topology_cache_hits"
+                if result.cache_hit
+                else "complete_topology_checks",
+                1,
+            )
+        if result.feasible:
+            return True
+        self.event_sink("complete_topology_pruned_placements", 1)
+        reason_key = (
+            result.reason.lower()
+            .replace("same-radius ", "")
+            .replace("mapped ", "mapped_")
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+        )
+        self.event_sink(f"complete_topology_rejection_{reason_key}", 1)
+        if result.topology is not None:
+            witness_key = result.topology.rejection_counter_suffix()
+            if witness_key:
+                self.event_sink(
+                    f"complete_topology_rejection_witness_{witness_key}",
+                    1,
+                )
+        return False
 
     def _search_cyclic_shift_half(
         self,
@@ -1085,6 +1143,10 @@ class WeakOrderEnumerator:
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
             return
 
+        complete = all(
+            counter == len(sequence)
+            for counter, sequence in zip(counters, self.assignment.sequences)
+        )
         if self.prefix_topology_filter is not None:
             self._set_progress(
                 "prefix_topology",
@@ -1120,15 +1182,20 @@ class WeakOrderEnumerator:
                         .replace("-", "_")
                     )
                     self.event_sink(f"prefix_topology_rejection_{reason_key}", 1)
+                    if prefix_topology.topology is not None:
+                        witness_key = (
+                            prefix_topology.topology.rejection_counter_suffix()
+                        )
+                        if witness_key:
+                            self.event_sink(
+                                f"prefix_topology_rejection_witness_{witness_key}",
+                                1,
+                            )
                     self._mark_subtree_complete(
                         path, self._subtree_leaf_mass(counters)
                     )
                     return
 
-        complete = all(
-            counter == len(sequence)
-            for counter, sequence in zip(counters, self.assignment.sequences)
-        )
         if complete:
             self._set_progress(
                 "symmetry_leaf",
@@ -1197,6 +1264,11 @@ class WeakOrderEnumerator:
                 self._mark_subtree_complete(path, 1)
                 return
             if angle_result is not None and not angle_result.feasible:
+                self._mark_subtree_complete(path, 1)
+                return
+            if not self._complete_topology_is_feasible(
+                positions, block_count
+            ):
                 self._mark_subtree_complete(path, 1)
                 return
             self.event_sink("surviving_placements", 1)

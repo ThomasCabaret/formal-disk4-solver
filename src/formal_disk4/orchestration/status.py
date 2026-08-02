@@ -471,6 +471,21 @@ def _make_search_diagnostics(
             prefixes=("prefix_topology_rejection_",),
         ),
     )
+    complete_topology_examined = (
+        total("complete_topology_checks", "complete_topology_cache_hits")
+        if "complete_topology_checks" in counters
+        or "complete_topology_cache_hits" in counters
+        else None
+    )
+    add(
+        "Fertility gate: complete arc topology",
+        complete_topology_examined,
+        value("complete_topology_pruned_placements"),
+        details(
+            names=("complete_topology_cache_hits", "complete_topology_errors"),
+            prefixes=("complete_topology_rejection_",),
+        ),
+    )
     add(
         "Weak-order DFS: length feasibility",
         known("length_checks"),

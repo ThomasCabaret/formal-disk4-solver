@@ -86,6 +86,8 @@ class PrefixRadiusArcTopologyFilter:
         view_index: int,
         positions: Sequence[int],
         contour: Word,
+        *,
+        complete: bool = False,
     ) -> Word | None:
         view = interface.views[view_index]
         start_id = self.occurrence_index[view.start_occurrence]
@@ -101,7 +103,7 @@ class PrefixRadiusArcTopologyFilter:
             (direction == 1 and start >= end)
             or (direction == -1 and start <= end)
         )
-        if crosses_open_frontier:
+        if crosses_open_frontier and not complete:
             return None
         word = cyclic_factor(contour, start, end, direction)
         return word or None
@@ -128,6 +130,8 @@ class PrefixRadiusArcTopologyFilter:
         self,
         positions: Sequence[int],
         block_count: int,
+        *,
+        complete: bool = False,
     ) -> PrefixTopologyResult:
         if block_count <= 1:
             return PrefixTopologyResult(False, True, "insufficient prefix", 0, 0)
@@ -137,8 +141,12 @@ class PrefixRadiusArcTopologyFilter:
         length_rows = []
         interface_key = []
         for interface in self.internal_interfaces:
-            left = self._stable_positive_word(interface, 0, positions, contour)
-            right = self._stable_positive_word(interface, 1, positions, contour)
+            left = self._stable_positive_word(
+                interface, 0, positions, contour, complete=complete
+            )
+            right = self._stable_positive_word(
+                interface, 1, positions, contour, complete=complete
+            )
             if left is None or right is None:
                 continue
             left_view, right_view = interface.views
@@ -167,7 +175,9 @@ class PrefixRadiusArcTopologyFilter:
         compiled_outer_arcs = []
         outer_key = []
         for interface in self.outer_interfaces:
-            word = self._stable_positive_word(interface, 0, positions, contour)
+            word = self._stable_positive_word(
+                interface, 0, positions, contour, complete=complete
+            )
             if word is None:
                 continue
             view = interface.views[0]

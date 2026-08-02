@@ -113,6 +113,10 @@ class PrewordCircularArcTests(unittest.TestCase):
         result = RadiusArcTopologyFilter().analyze(planar_map, placement, compiled)
         self.assertFalse(result.feasible)
         self.assertIn("crosses a hard outer endpoint", result.reason)
+        witness = dict(result.rejection_witness)
+        self.assertEqual(witness["interface"], "test-interface")
+        self.assertIn("outer-", witness["hard_outer_endpoints"])
+        self.assertTrue(result.rejection_counter_suffix())
 
     def test_convex_concave_sign_conflict_rejects(self) -> None:
         planar_map = build_c3_map()
