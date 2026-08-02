@@ -47,7 +47,13 @@ def _minimal_search_config(output_directory: str) -> dict[str, object]:
     }
 
 
-def _write_search_checkpoint(path: Path, config: dict[str, object], *, completed: bool) -> None:
+def _write_search_checkpoint(
+    path: Path,
+    config: dict[str, object],
+    *,
+    completed: bool,
+    statistics: dict[str, object] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     try:
@@ -62,11 +68,12 @@ def _write_search_checkpoint(path: Path, config: dict[str, object], *, completed
             "profile_key TEXT PRIMARY KEY, created_utc TEXT, payload_json TEXT)"
         )
         connection.execute(
-            "INSERT INTO search_checkpoint VALUES(1, ?, ?, '', ?, '{}', '{}')",
+            "INSERT INTO search_checkpoint VALUES(1, ?, ?, '', ?, '{}', ?)",
             (
                 CHECKPOINT_SCHEMA_VERSION,
                 search_fingerprint(config),
                 1 if completed else 0,
+                json.dumps(statistics or {}),
             ),
         )
         connection.commit()
@@ -281,6 +288,110 @@ class PipelineModelTests(unittest.TestCase):
             status.search_state,
             "not started; 1 word case deferred",
         )
+
+    def test_rejection_diagnostics_read_live_checkpoint_and_group_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output" / "case"
+            config = _minimal_search_config("output/case")
+            statistics = {
+                "elapsed_seconds": 125.0,
+                "counters": {
+                    "prefix_topology_checks": 100,
+                    "prefix_topology_pruned_nodes": 80,
+                    "prefix_topology_rejection_endpoint_crossing": 80,
+                    "surviving_placements": 20,
+                    "preword_checks": 20,
+                    "preword_rejections": 18,
+                    "preword_topology_rejections": 15,
+                    "preword_linear_rejections": 3,
+                    "preword_rejection_metric_infeasible": 3,
+                    "solver_cases": 2,
+                    "deferred_word_cases": 2,
+                    "deferred_word_cases_wall_time_budget": 2,
+                },
+                "timings": {"preword_pruning": 4.5},
+            }
+            _write_search_checkpoint(
+                output / "checkpoint.sqlite3",
+                config,
+                completed=False,
+                statistics=statistics,
+            )
+            # A stale final summary must not hide the active/paused checkpoint.
+            (output / "run_summary.json").write_text(
+                json.dumps({"statistics": {"counters": {"profiles_emitted": 99}}}),
+                encoding="utf-8",
+            )
+            case = CaseDefinition(
+                case_id="case",
+                label="Case",
+                description="",
+                map_name="c3",
+                group="Tests",
+                config_paths={},
+                output_directory=Path("output") / "case",
+            )
+            diagnostics = PipelineStatusReader(root).read_search_diagnostics(case)
+
+        self.assertIsNotNone(diagnostics)
+        assert diagnostics is not None
+        self.assertEqual(diagnostics.source, "checkpoint")
+        self.assertFalse(diagnostics.completed)
+        self.assertEqual(diagnostics.elapsed_seconds, 125.0)
+        by_stage = {stage.label: stage for stage in diagnostics.stages}
+        prefix = by_stage["Weak-order DFS: prefix topology"]
+        self.assertEqual(prefix.examined, 100)
+        self.assertEqual(prefix.rejected_or_result, 80)
+        self.assertEqual(prefix.rate_percent, 80.0)
+        self.assertIn(
+            ("prefix_topology_rejection_endpoint_crossing", 80),
+            prefix.details,
+        )
+        preword = by_stage["Pre-word pruning"]
+        self.assertEqual(preword.rejected_or_result, 18)
+        self.assertEqual(preword.rate_percent, 90.0)
+        deferred = by_stage["Exact word solver: deferred / limited"]
+        self.assertEqual(deferred.rate_percent, 100.0)
+        self.assertIn(
+            ("deferred_word_cases_wall_time_budget", 2), deferred.details
+        )
+        self.assertEqual(dict(diagnostics.timings)["preword_pruning"], 4.5)
+
+    def test_rejection_diagnostics_fall_back_to_final_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output" / "case"
+            output.mkdir(parents=True)
+            (output / "run_summary.json").write_text(
+                json.dumps(
+                    {
+                        "statistics": {
+                            "elapsed_seconds": 10.0,
+                            "counters": {"profiles_emitted": 4},
+                            "timings_seconds": {"profile_filters": 1.25},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            case = CaseDefinition(
+                case_id="case",
+                label="Case",
+                description="",
+                map_name="c3",
+                group="Tests",
+                config_paths={},
+                output_directory=Path("output") / "case",
+            )
+            diagnostics = PipelineStatusReader(root).read_search_diagnostics(case)
+
+        self.assertIsNotNone(diagnostics)
+        assert diagnostics is not None
+        self.assertEqual(diagnostics.source, "final run summary")
+        self.assertTrue(diagnostics.completed)
+        self.assertEqual(dict(diagnostics.counters)["profiles_emitted"], 4)
+        self.assertEqual(dict(diagnostics.timings)["profile_filters"], 1.25)
 
 
     def test_fresh_materialization_restarts_search_and_geometry_checkpoints(self) -> None:

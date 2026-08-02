@@ -206,12 +206,17 @@ class PipelineApp:
             state=tk.DISABLED,
         )
         self.stop_button.grid(row=0, column=7, padx=(4, 0), sticky="ew")
+        ttk.Button(
+            controls,
+            text="Rejection statistics...",
+            command=self._show_rejection_statistics,
+        ).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         self.resume_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             controls,
             text="Resume existing work/checkpoints",
             variable=self.resume_var,
-        ).grid(row=1, column=6, columnspan=2, sticky="e", pady=(6, 0))
+        ).grid(row=1, column=4, columnspan=4, sticky="e", pady=(6, 0))
 
         progress_box = ttk.LabelFrame(right, text="Progress", padding=8)
         progress_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -447,6 +452,167 @@ class PipelineApp:
 
     def _selected_pipeline_indices(self) -> list[int]:
         return sorted(int(item) for item in self.pipeline_tree.selection())
+
+    def _show_rejection_statistics(self) -> None:
+        selected = self._selected_pipeline_indices()
+        if not selected:
+            messagebox.showinfo(
+                "No pipeline task",
+                "Select a pipeline row whose search statistics should be shown.",
+                parent=self.root,
+            )
+            return
+        case = self.catalog.get(self.pipeline_tasks[selected[0]].case_id)
+
+        window = tk.Toplevel(self.root)
+        window.title(f"Search rejection statistics - {case.label}")
+        window.geometry("1180x680")
+        window.minsize(850, 480)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(2, weight=1)
+
+        header_var = tk.StringVar()
+        ttk.Label(
+            window,
+            textvariable=header_var,
+            font=("TkDefaultFont", 10, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 2))
+        ttk.Label(
+            window,
+            text=(
+                "DFS pruning rows count rejected nodes/subtrees, not rejected leaf "
+                "candidates; rows without a denominator intentionally have no rate."
+            ),
+            wraplength=1120,
+        ).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+
+        notebook = ttk.Notebook(window)
+        notebook.grid(row=2, column=0, sticky="nsew", padx=10)
+
+        stage_frame = ttk.Frame(notebook)
+        raw_frame = ttk.Frame(notebook)
+        timing_frame = ttk.Frame(notebook)
+        notebook.add(stage_frame, text="By rejection stage")
+        notebook.add(raw_frame, text="Raw counters")
+        notebook.add(timing_frame, text="Timings")
+
+        def make_tree(
+            frame: ttk.Frame,
+            columns: tuple[tuple[str, str, int], ...],
+        ) -> ttk.Treeview:
+            frame.columnconfigure(0, weight=1)
+            frame.rowconfigure(0, weight=1)
+            tree = ttk.Treeview(
+                frame,
+                columns=tuple(name for name, _title, _width in columns),
+                show="headings",
+            )
+            numeric = {"examined", "result", "rate", "value", "seconds", "share"}
+            for name, title, width in columns:
+                tree.heading(name, text=title)
+                tree.column(
+                    name,
+                    width=width,
+                    anchor="e" if name in numeric else "w",
+                    stretch=name in {"stage", "details", "counter", "timing"},
+                )
+            scroll_y = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+            scroll_x = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
+            tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+            tree.grid(row=0, column=0, sticky="nsew")
+            scroll_y.grid(row=0, column=1, sticky="ns")
+            scroll_x.grid(row=1, column=0, sticky="ew")
+            return tree
+
+        stage_tree = make_tree(
+            stage_frame,
+            (
+                ("stage", "Stage / filter", 300),
+                ("examined", "Examined", 100),
+                ("result", "Rejected / result", 120),
+                ("rate", "Rate", 80),
+                ("details", "Fine reasons and related counts", 480),
+            ),
+        )
+        raw_tree = make_tree(
+            raw_frame,
+            (("counter", "Counter", 620), ("value", "Value", 180)),
+        )
+        timing_tree = make_tree(
+            timing_frame,
+            (
+                ("timing", "Timed section", 560),
+                ("seconds", "Seconds", 160),
+                ("share", "Share of elapsed", 160),
+            ),
+        )
+
+        def pretty(name: str) -> str:
+            return name.replace("_", " ")
+
+        def integer(value: int | None) -> str:
+            return "-" if value is None else f"{value:,}"
+
+        def refresh() -> None:
+            diagnostics = self.status_reader.read_search_diagnostics(case)
+            for tree in (stage_tree, raw_tree, timing_tree):
+                tree.delete(*tree.get_children(""))
+            if diagnostics is None:
+                header_var.set(f"{case.label}: no saved search statistics yet")
+                return
+            state = "complete" if diagnostics.completed else "running or paused"
+            updated = diagnostics.updated_utc or "unknown time"
+            header_var.set(
+                f"{case.label} - {state} - {diagnostics.source}, updated {updated} - "
+                f"elapsed {diagnostics.elapsed_seconds:,.1f} s"
+            )
+            for stage in diagnostics.stages:
+                detail_text = "; ".join(
+                    f"{pretty(name)}={amount:,}" for name, amount in stage.details
+                )
+                stage_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        stage.label,
+                        integer(stage.examined),
+                        integer(stage.rejected_or_result),
+                        (
+                            "-"
+                            if stage.rate_percent is None
+                            else f"{stage.rate_percent:.2f}%"
+                        ),
+                        detail_text,
+                    ),
+                )
+            for name, amount in diagnostics.counters:
+                raw_tree.insert("", "end", values=(pretty(name), integer(amount)))
+            elapsed = diagnostics.elapsed_seconds
+            for name, seconds in diagnostics.timings:
+                share = 100.0 * seconds / elapsed if elapsed else 0.0
+                timing_tree.insert(
+                    "",
+                    "end",
+                    values=(pretty(name), f"{seconds:,.3f}", f"{share:.2f}%"),
+                )
+
+        footer = ttk.Frame(window)
+        footer.grid(row=3, column=0, sticky="ew", padx=10, pady=10)
+        ttk.Button(footer, text="Refresh now", command=refresh).pack(side=tk.LEFT)
+        ttk.Label(
+            footer,
+            text="Automatically refreshed every 5 s; active checkpoint data may lag by about 60 s.",
+        ).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(footer, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+
+        def auto_refresh() -> None:
+            if not window.winfo_exists():
+                return
+            refresh()
+            window.after(5000, auto_refresh)
+
+        refresh()
+        window.after(5000, auto_refresh)
 
     def _move_tasks(self, direction: int) -> None:
         selected = self._selected_pipeline_indices()

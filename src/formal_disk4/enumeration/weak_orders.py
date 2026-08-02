@@ -739,13 +739,29 @@ class WeakOrderEnumerator:
                 self.event_sink("prefix_topology_errors", 1)
             else:
                 if prefix_topology.applicable:
-                    self.event_sink("prefix_topology_checks", 1)
+                    self.event_sink(
+                        "prefix_topology_cache_hits"
+                        if prefix_topology.cache_hit
+                        else "prefix_topology_checks",
+                        1,
+                    )
                 if not prefix_topology.feasible:
                     self.event_sink("prefix_topology_pruned_nodes", 1)
+                    reason_key = (
+                        prefix_topology.reason.lower()
+                        .replace("same-radius ", "")
+                        .replace("mapped ", "mapped_")
+                        .replace(" ", "_")
+                        .replace("/", "_")
+                        .replace("-", "_")
+                    )
+                    self.event_sink(f"prefix_topology_rejection_{reason_key}", 1)
                     self._mark_subtree_complete(path, 1)
                     return
 
         length_rows = self._resolved_length_rows(positions, block_count)
+        if self.enable_length_filter:
+            self.event_sink("length_checks", 1)
         length_result = (
             self.length_oracle.analyze(block_count, length_rows, need_witness=True)
             if self.enable_length_filter
@@ -756,6 +772,8 @@ class WeakOrderEnumerator:
             self._mark_subtree_complete(path, 1)
             return
         angle_equations = self._resolved_angle_equations(positions, block_count)
+        if self.enable_angle_filter:
+            self.event_sink("angle_checks", 1)
         angle_result = (
             self.angle_oracle.analyze(block_count, angle_equations, need_witness=True)
             if self.enable_angle_filter
