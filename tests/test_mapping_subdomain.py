@@ -14,15 +14,19 @@ from formal_disk4.orchestration.catalog import CaseCatalog
 
 ROOT = Path(__file__).resolve().parents[1]
 FERTILE_CASES = {
-    "wheel-4-half-turn-fertile-ab": ("rotation_2", 1),
-    "wheel-6-half-turn-fertile-abc": ("rotation_3", 1),
+    "wheel-4-half-turn-fertile-ab": ("rotation_2", 256, 41_163),
+    "wheel-6-half-turn-fertile-abc": ("rotation_3", 1, 2_649_836),
 }
 
 
 class MappingSubdomainTests(unittest.TestCase):
-    def test_fertile_cases_select_one_small_nonempty_mapping_shard(self) -> None:
+    def test_fertile_cases_expose_large_exactly_counted_mapping_domains(self) -> None:
         catalog = CaseCatalog.load(ROOT)
-        for case_id, (rotation, expected_mass) in FERTILE_CASES.items():
+        for case_id, (
+            rotation,
+            expected_assignment_count,
+            expected_mass,
+        ) in FERTILE_CASES.items():
             with self.subTest(case_id=case_id):
                 case = catalog.get(case_id)
                 enumeration = case.overrides_for("search")["enumeration"]
@@ -41,32 +45,35 @@ class MappingSubdomainTests(unittest.TestCase):
                 self.assertIsNotNone(shard)
                 assert shard is not None
                 assignment_ids = shard.assignment_ids(assignments)
-                self.assertEqual(len(assignment_ids), 1)
-                assignment = assignments.assignment_at(assignment_ids[0])
-                self.assertTrue(shard.allows_assignment(assignment))
-
-                weak_orders = WeakOrderEnumerator(
-                    planar_map,
-                    assignment,
-                    assignments.occurrence_names,
-                    LengthFeasibilityOracle(),
-                    AngleFeasibilityOracle(),
-                    symmetry_mode="off",
-                    enable_length_filter=False,
-                    enable_angle_filter=False,
-                    enable_exterior_arc_repetition_filter=False,
-                    track_exact_leaf_mass=True,
-                    required_cyclic_shift_transform=(
-                        assignments.transform_for_automorphism(rotation)
-                    ),
-                    mapping_subdomain=shard,
-                )
-                self.assertEqual(
-                    weak_orders._cyclic_shift_splits,
-                    (shard.cyclic_shift_split,),
-                )
-                self.assertEqual(weak_orders.total_leaf_mass, expected_mass)
-                placement = next(weak_orders.enumerate())
+                self.assertEqual(len(assignment_ids), expected_assignment_count)
+                total_mass = 0
+                first_nonempty = None
+                for assignment_id in assignment_ids:
+                    assignment = assignments.assignment_at(assignment_id)
+                    self.assertTrue(shard.allows_assignment(assignment))
+                    weak_orders = WeakOrderEnumerator(
+                        planar_map,
+                        assignment,
+                        assignments.occurrence_names,
+                        LengthFeasibilityOracle(),
+                        AngleFeasibilityOracle(),
+                        symmetry_mode="off",
+                        enable_length_filter=False,
+                        enable_angle_filter=False,
+                        enable_exterior_arc_repetition_filter=False,
+                        track_exact_leaf_mass=True,
+                        required_cyclic_shift_transform=(
+                            assignments.transform_for_automorphism(rotation)
+                        ),
+                        mapping_subdomain=shard,
+                    )
+                    total_mass += weak_orders.total_leaf_mass
+                    if first_nonempty is None and weak_orders.total_leaf_mass:
+                        first_nonempty = weak_orders
+                self.assertEqual(total_mass, expected_mass)
+                self.assertIsNotNone(first_nonempty)
+                assert first_nonempty is not None
+                placement = next(first_nonempty.enumerate())
                 self.assertTrue(shard.allows_leaf(placement.blocks))
 
                 half = len(placement.blocks) // 2

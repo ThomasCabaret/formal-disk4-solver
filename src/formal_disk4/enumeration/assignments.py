@@ -421,6 +421,47 @@ class AssignmentEnumerator:
             assignment_id = assignment_id * len(piece_options) + option_index
         return assignment_id
 
+    def assignment_ids_for_sequence_options(
+        self,
+        sequence_options: Sequence[Sequence[Sequence[int]]],
+    ) -> Tuple[int, ...]:
+        """Return raw slots matching independent allowed sequences per piece."""
+
+        if self._required_automorphism is not None:
+            raise ValueError(
+                "Assignment sequence families are not supported with pointwise "
+                "required equivariance"
+            )
+        if len(sequence_options) != len(self.piece_names):
+            raise ValueError("Assignment sequence options must cover every piece")
+        enumerator_options = self._piece_options()
+        allowed_indices = []
+        for piece_options, requested_options in zip(
+            enumerator_options, sequence_options
+        ):
+            requested = {
+                tuple(int(item) for item in sequence)
+                for sequence in requested_options
+            }
+            indices = tuple(
+                index
+                for index, sequence in enumerate(piece_options)
+                if sequence in requested
+            )
+            if not indices:
+                return ()
+            allowed_indices.append(indices)
+
+        output = []
+        for selected_indices in product(*allowed_indices):
+            assignment_id = 0
+            for option_index, piece_options in zip(
+                selected_indices, enumerator_options
+            ):
+                assignment_id = assignment_id * len(piece_options) + option_index
+            output.append(assignment_id)
+        return tuple(output)
+
     def enumerate(self) -> Iterator[ContourAssignment]:
         for assignment_id in range(self.raw_assignment_count()):
             assignment = self.canonical_assignment_at(assignment_id)

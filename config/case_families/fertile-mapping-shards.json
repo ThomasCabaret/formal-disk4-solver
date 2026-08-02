@@ -40,7 +40,7 @@
       "id": "wheel-4-half-turn-ab",
       "case_id_template": "wheel-4-half-turn-fertile-ab",
       "label": "Cycle 4 + center - fertile A/B shard",
-      "description": "One deterministic fertile shard for four outer tiles with roles A/B/A/B and imposed half-turn cyclic shift. The landmark order encodes two crossing, non-nested dual central arcs.",
+      "description": "A deterministic fertile phase family for four outer tiles with roles A/B/A/B and imposed half-turn cyclic shift. It explores every compatible peripheral phase and split whose dual central arcs cross without nesting.",
       "map_template": "wheel-4",
       "stage_overrides": {
         "search": {
@@ -51,41 +51,31 @@
             },
             "mapping_subdomain": {
               "enabled": true,
-              "id": "wheel-4-half-turn-braided-hub-ab-01",
+              "id": "wheel-4-half-turn-braided-hub-ab-phase-family-v1",
               "map": "wheel-4",
-              "assignment_sequences": {
-                "C": ["C:I0", "C:I1", "C:I2", "C:I3"],
-                "P0": ["P0:I0", "P0:I1", "P0:O1", "P0:O0"],
-                "P1": ["P1:I1", "P1:I2", "P1:O2", "P1:O1"],
-                "P2": ["P2:I3", "P2:O3", "P2:O2", "P2:I2"],
-                "P3": ["P3:I3", "P3:I0", "P3:O0", "P3:O3"]
+              "assignment_family": {
+                "fixed_sequences": {
+                  "C": ["C:I0", "C:I1", "C:I2", "C:I3"]
+                },
+                "orientation_signs": {
+                  "P0": -1,
+                  "P1": -1,
+                  "P2": -1,
+                  "P3": -1
+                }
               },
-              "cyclic_shift_split": {
-                "C": 2,
-                "P0": 1,
-                "P1": 0,
-                "P2": 3,
-                "P3": 4
-              },
-              "fundamental_strict_order": [
+              "cyclic_shift_split": "all_compatible",
+              "cyclic_shift_automorphism": "rotation_2",
+              "fundamental_strict_order": [],
+              "full_strict_order": [
                 "C:I0",
-                "P3:I3",
-                "P2:I3",
-                "P3:I0",
                 "C:I1",
-                "P0:I0"
-              ],
-              "fundamental_blocks": [
-                ["C:I0"],
-                ["P3:I3"],
-                ["P2:I3"],
-                ["P2:O3"],
-                ["P3:I0"],
-                ["C:I1"],
-                ["P2:O2"],
-                ["P0:I0"],
-                ["P3:O0"],
-                ["P3:O3"]
+                "P0:I0",
+                "C:I2",
+                "P1:I1",
+                "P0:I1",
+                "P1:I2",
+                "C:I3"
               ]
             }
           }
@@ -96,7 +86,7 @@
       "id": "wheel-6-half-turn-abc",
       "case_id_template": "wheel-6-half-turn-fertile-abc",
       "label": "Cycle 6 + center - fertile A/B/C shard",
-      "description": "One deterministic fertile shard for six outer tiles with roles A/B/C/A/B/C and imposed half-turn cyclic shift. The landmark order encodes the long three-role braided monodromy.",
+      "description": "A wide deterministic fertile shard for six outer tiles with roles A/B/C/A/B/C and imposed half-turn cyclic shift. It explores the full weak-order domain compatible with the long three-role braided monodromy.",
       "map_template": "wheel-6",
       "stage_overrides": {
         "search": {
@@ -107,7 +97,7 @@
             },
             "mapping_subdomain": {
               "enabled": true,
-              "id": "wheel-6-half-turn-braided-hub-abc-01",
+              "id": "wheel-6-half-turn-braided-hub-abc-wide-v1",
               "map": "wheel-6",
               "assignment_sequences": {
                 "C": ["C:I0", "C:I1", "C:I2", "C:I3", "C:I4", "C:I5"],
@@ -127,29 +117,21 @@
                 "P4": 3,
                 "P5": 4
               },
-              "fundamental_strict_order": [
+              "cyclic_shift_automorphism": "rotation_3",
+              "fundamental_strict_order": [],
+              "full_strict_order": [
                 "C:I0",
-                "P5:I5",
-                "P4:I5",
                 "C:I1",
-                "P5:I0",
                 "P0:I0",
                 "C:I2",
                 "P1:I1",
-                "P0:I1"
-              ],
-              "fundamental_blocks": [
-                ["C:I0", "P3:O4"],
-                ["P3:O3", "P5:I5"],
-                ["P4:I5"],
-                ["C:I1", "P4:O5"],
-                ["P4:O4", "P5:I0"],
-                ["P0:I0"],
-                ["C:I2"],
-                ["P1:I1"],
-                ["P0:I1"],
-                ["P5:O0"],
-                ["P5:O5"]
+                "P0:I1",
+                "C:I3",
+                "P2:I2",
+                "P1:I2",
+                "C:I4",
+                "P2:I3",
+                "C:I5"
               ]
             }
           }

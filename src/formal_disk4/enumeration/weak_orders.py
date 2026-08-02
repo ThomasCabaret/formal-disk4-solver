@@ -256,7 +256,10 @@ class WeakOrderEnumerator:
                 if require_reference and not mask & (1 << self.reference_index):
                     continue
                 if not self.mapping_subdomain.allows_next_block(
-                    counters, mask, self.assignment.sequences
+                    counters,
+                    mask,
+                    self.assignment.sequences,
+                    target,
                 ):
                     continue
                 next_counters = tuple(
@@ -640,7 +643,9 @@ class WeakOrderEnumerator:
             splits = tuple(
                 split
                 for split in splits
-                if self.mapping_subdomain.allows_cyclic_shift_split(split)
+                if self.mapping_subdomain.allows_cyclic_shift_split(
+                    split, self.assignment.sequences
+                )
             )
         return splits
 
@@ -821,7 +826,10 @@ class WeakOrderEnumerator:
             if (
                 self.mapping_subdomain is not None
                 and not self.mapping_subdomain.allows_next_block(
-                    counters, mask, self.assignment.sequences
+                    counters,
+                    mask,
+                    self.assignment.sequences,
+                    target,
                 )
             ):
                 self.event_sink("mapping_subdomain_pruned_nodes", 1)
@@ -896,7 +904,10 @@ class WeakOrderEnumerator:
                 if (
                     self.mapping_subdomain is not None
                     and not self.mapping_subdomain.allows_next_block(
-                        counters, mask, self.assignment.sequences
+                        counters,
+                        mask,
+                        self.assignment.sequences,
+                        split,
                     )
                 ):
                     self.event_sink("mapping_subdomain_pruned_nodes", 1)
