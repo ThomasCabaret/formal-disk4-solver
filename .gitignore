@@ -25,7 +25,7 @@ dist/
 htmlcov/
 coverage.xml
 
-# Solver-generated data
+# Solver-generated data (including all Mapping Lab datasets, models and logs)
 output/
 logs/
 *.sqlite3

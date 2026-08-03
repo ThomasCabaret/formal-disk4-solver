@@ -17,6 +17,8 @@ dependencies = [
 formal-disk4 = "formal_disk4.cli:main"
 formal-contour = "formal_disk4.cli:main"
 formal-disk4-gui = "formal_disk4.orchestration.gui:main"
+formal-disk4-mapping-lab = "formal_disk4.mapping_lab.cli:main"
+formal-disk4-mapping-dashboard = "formal_disk4.mapping_lab.dashboard:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,0 +1,46 @@
+{
+  "schema_version": "mapping-lab-config-v1",
+  "case_id": "wheel-6-half-turn-fertile-abc",
+  "output": {
+    "directory": "output/mapping_lab/wheel-6"
+  },
+  "sampling": {
+    "seed": 20260805,
+    "generations": 10000,
+    "batch_size": 64,
+    "uniform_fraction": 0.2,
+    "pool_multiplier": 3,
+    "pool_exploration_fraction": 0.15,
+    "pool_local_fraction": 0.35,
+    "pool_broad_fraction": 0.35,
+    "broad_mutation_prefix_fraction": 0.6,
+    "max_attempts_per_candidate": 2000
+  },
+  "learning": {
+    "seed_capacity": 1024,
+    "seed_minimum_stage_index": 8,
+    "archive_minimum_stage_index": 8
+  },
+  "backend": {
+    "type": "neural_stage_curriculum",
+    "hidden_layers": [96, 48],
+    "learning_rate": 0.001,
+    "l2": 0.00001,
+    "bootstrap_steps": 0,
+    "steps_per_generation": 4,
+    "batch_size": 256,
+    "max_examples_per_stage": 20000
+  },
+  "evaluation": {
+    "hard_timeout_seconds": 10.0,
+    "startup_timeout_seconds": 60.0,
+    "enable_word_solver": true,
+    "word_seconds": 2.0,
+    "max_graph_nodes": 1000,
+    "max_graph_edges": 4000,
+    "max_families": 4,
+    "max_expression_nodes": 2000,
+    "max_terminal_contour_segments": 40,
+    "max_residual_literals": 2000
+  }
+}
