@@ -1,0 +1,349 @@
+{
+  "schema_version": "formal-disk4-pipeline-diagram-v1",
+  "title": "Formal Disk4 Solver - End-to-End Pipeline",
+  "subtitle": "Production search, exact formal resolution, numerical realization, and assembly",
+  "revision": "2026-08-05",
+  "pages": [
+    {
+      "layout": "overview",
+      "title": "1. System overview",
+      "subtitle": "One candidate moves left to right; side exits classify why it does not continue.",
+      "groups": [
+        {
+          "name": "CASE MODEL",
+          "kind": "data",
+          "summary": "Choose one catalogue case and materialize its mathematical assumptions.",
+          "items": ["PlanarMap / contact graph", "piece contours and vertices", "automorphisms", "regularity and center hypotheses", "search configuration"]
+        },
+        {
+          "name": "COMBINATORIAL DOMAIN",
+          "kind": "quotient",
+          "summary": "Enumerate contour assignments and weak cyclic orders.",
+          "items": ["phase/orientation assignments", "optional imposed equivariance", "intrinsic symmetry quotient", "weak-order DFS", "incremental necessary gates"]
+        },
+        {
+          "name": "PRE-WORD FORMAL",
+          "kind": "necessary",
+          "summary": "Compile interface words and apply cheap necessary conditions.",
+          "items": ["atomic contour words", "radius-arc topology", "metric/radius/turn LP", "point-turn LP", "exact rejection certificates"]
+        },
+        {
+          "name": "WORD RESOLUTION",
+          "kind": "exact",
+          "summary": "Explore the canonical Nielsen--Levi residual graph.",
+          "items": ["residual canonicalization", "non-erasing branches", "fixed-context loop families", "finite / power families", "unsupported and bounded exits"]
+        },
+        {
+          "name": "FORMAL PROFILE",
+          "kind": "necessary",
+          "summary": "Specialize a family and rebuild exact terminal geometry variables.",
+          "items": ["terminal contact mappings", "point angle classes", "curve template classes", "exact lengths and turns", "local profile filters + deduplication"]
+        },
+        {
+          "name": "GEOMETRY + ASSEMBLY",
+          "kind": "numerical",
+          "summary": "Numerically realize one prototile, then reconstruct all copies.",
+          "items": ["staged nonlinear optimization", "numerical contour validation", "copy isometry propagation", "interface/cycle validation", "interactive viewer"]
+        }
+      ],
+      "sidecar": {
+        "title": "MAPPING LAB (EXPERIMENTAL SIDECAR)",
+        "text": "Samples and ranks complete mappings, then evaluates them through a production-filter adapter. Learning changes proposal order only; it does not change production acceptance rules."
+      }
+    },
+    {
+      "layout": "lanes",
+      "title": "2. Catalogue, assignments, and weak-order construction",
+      "subtitle": "Blue nodes remove equivalent representatives; purple nodes intentionally restrict the question being searched.",
+      "lanes": [
+        {
+          "name": "CASE AND VALIDATION",
+          "cards": [
+            {"id": "E1", "title": "Select catalogue case", "body": "Load the case manifest, map builder, search settings, output paths, and checkpoint policy.", "kind": "data"},
+            {"id": "E2", "title": "Validate combinatorial map", "body": "Check pieces, cyclic contours, vertex incidence, interfaces, hypotheses, and declared automorphisms.", "kind": "integrity"}
+          ]
+        },
+        {
+          "name": "DOMAIN AND ASSIGNMENTS",
+          "cards": [
+            {"id": "E3", "title": "Apply imposed search domain", "body": "Optionally require cyclic equivariance, a cyclic-shift fundamental domain, or a fertile mapping shard. This narrows the question; it is not a quotient proof.", "kind": "domain"},
+            {"id": "E4", "title": "Enumerate assignments", "body": "Choose a cyclic cut/offset and direct or reflected orientation for each copy. The reference orientation fixes the global gauge.", "kind": "enumeration"}
+          ]
+        },
+        {
+          "name": "QUOTIENT AND DFS STATE",
+          "cards": [
+            {"id": "E5", "title": "Assignment symmetry quotient", "body": "Keep the lexicographically canonical representative under certified intrinsic map automorphisms compatible with the imposed domain.", "kind": "quotient", "exit": "noncanonical -> equivalent assignment"},
+            {"id": "E6", "title": "Start anchored weak order", "body": "A DFS state is a sequence of coincidence blocks. Block zero contains the reference anchor.", "kind": "enumeration"},
+            {"id": "E7", "title": "Append next-occurrence block", "body": "Choose a nonempty subset of copies and consume each selected copy's next contour occurrence.", "kind": "enumeration"},
+            {"id": "E8", "title": "Mapping-shard prefix rule", "body": "When configured, require the next block to remain inside the selected fertile fundamental domain.", "kind": "domain", "exit": "outside the requested shard"}
+          ]
+        },
+        {
+          "name": "EARLY STRUCTURAL GATES",
+          "cards": [
+            {"id": "E9", "title": "K4 exterior-arc repetition", "body": "For the guarded four-tile Stein map, retain a peripheral pair whose two outer-edge endpoints may still coincide.", "kind": "theorem", "exit": "no possible repeated pair -> prune"},
+            {"id": "E10", "title": "Incremental symmetry canonicality", "body": "Use the current assignment stabilizer to reject a prefix already larger than an equivalent prefix.", "kind": "quotient", "exit": "noncanonical -> equivalent subtree"}
+          ]
+        }
+      ],
+      "note": "The imposed domain and the intrinsic quotient interact, but have different meanings: one changes the requested search space; the other only selects a representative."
+    },
+    {
+      "layout": "lanes",
+      "title": "3. Weak-order prefix gates and complete Placement emission",
+      "subtitle": "Only stable information is screened at a prefix; all complete gates are rerun at the leaf.",
+      "lanes": [
+        {
+          "name": "STABLE PREFIX GATES",
+          "cards": [
+            {"id": "E11", "title": "Stable-prefix radius topology", "body": "Compile only paths that cannot change under descendants, then propagate all known disk-circle arcs.", "kind": "necessary", "exit": "certified topology obstruction"},
+            {"id": "E12", "title": "Incremental positive lengths", "body": "For newly resolved interface rows A x = 0, require a strictly positive normalized length vector.", "kind": "necessary", "exit": "exact same-sign contradiction"},
+            {"id": "E13", "title": "Incremental point angles", "body": "Add resolved physical vertex sums and require every signed turn to remain in the open interval (-1, 1).", "kind": "necessary", "exit": "exact equality inconsistency"}
+          ]
+        },
+        {
+          "name": "DFS CONTINUATION",
+          "cards": [
+            {"id": "E14", "title": "Score and generate children", "body": "Prioritize children that resolve more length and angle equations, then continue depth-first search. This changes order only.", "kind": "ordering"}
+          ]
+        },
+        {
+          "name": "COMPLETE LEAF",
+          "cards": [
+            {"id": "E15", "title": "Leaf quotient and domain check", "body": "Canonicalize the complete weak cyclic order and verify the complete imposed-domain predicate.", "kind": "quotient", "exit": "equivalent or outside domain"},
+            {"id": "E16", "title": "Complete LP witnesses", "body": "Re-evaluate every resolved length and angle system and request witnesses when available.", "kind": "necessary"},
+            {"id": "E17", "title": "Complete radius topology", "body": "Compile every stable interface and outer arc, then run the complete topology necessary condition.", "kind": "necessary", "exit": "certified topology obstruction"},
+            {"id": "E18", "title": "Emit Placement", "body": "Store blocks, positions, exact combinatorial rows, and numerical witness margins for downstream processing.", "kind": "output"}
+          ]
+        }
+      ],
+      "note": "Special cyclic-shift mode constructs one fundamental half/order and its images directly; it still applies every complete leaf gate before emission."
+    },
+    {
+      "layout": "lanes",
+      "title": "4. Word compilation and radius-arc topology pruning",
+      "subtitle": "Word equations are exact; green topology exits are intended necessary-condition certificates.",
+      "lanes": [
+        {
+          "name": "COMPILE WORD CASE",
+          "cards": [
+            {"id": "W1", "title": "Name atomic intervals", "body": "Turn consecutive weak-order blocks into X0, X1, ... and form the positively oriented prototype contour word.", "kind": "exact"},
+            {"id": "W2", "title": "Compile interface equations", "body": "For each positive-length contact, set the left positive word equal to the inverse right positive word; retain contact parity.", "kind": "exact"},
+            {"id": "W3", "title": "Add the mirror sheet", "body": "Reflected contacts use the explicit mirror involution. Every physical equation also contributes its mirror equation.", "kind": "exact"},
+            {"id": "W4", "title": "Compile outer words", "body": "Record which prototype subwords lie on the positively oriented disk boundary.", "kind": "exact"}
+          ]
+        },
+        {
+          "name": "RADIUS-R ARC PROPAGATION",
+          "cards": [
+            {"id": "T1", "title": "Seed and transport signed arcs", "body": "Seed convex radius-R disk arcs. Transport a boundary-aligned contact image with opposite sign; leave a nonaligned image unresolved.", "kind": "necessary"},
+            {"id": "T2", "title": "Hard outer endpoint gate", "body": "A transported smooth radius-R arc may not cross a hard outer endpoint, because the endpoint has a forced nonzero turn.", "kind": "necessary", "exit": "smooth arc crosses hard corner"},
+            {"id": "T3", "title": "Signed-support conflict", "body": "No positive-length atomic interval may simultaneously carry forced convex and forced concave radius-R support.", "kind": "necessary", "exit": "positive convex/concave overlap"},
+            {"id": "T4", "title": "Forced overlap confirmation", "body": "When ordering depends on lengths, confirm a forced positive opposite-sign overlap with the exact strict-length system before rejection.", "kind": "necessary", "exit": "exactly forced signed overlap"}
+          ]
+        }
+      ],
+      "note": "The stable-prefix version compiles only descendant-invariant paths. Any unexpected prefix or topology exception conservatively passes rather than rejecting."
+    },
+    {
+      "layout": "lanes",
+      "title": "5. Exact pre-word metric and turn curriculum",
+      "subtitle": "The systems are nested in this order; a rejection requires an exact rational contradiction or nonpositive strict margin.",
+      "lanes": [
+        {
+          "name": "LOCAL METRIC SYSTEMS",
+          "cards": [
+            {"id": "M1", "title": "Positive atomic lengths", "body": "Solve homogeneous interface-length equalities with one normalization and require every atomic length to be strictly positive.", "kind": "necessary", "exit": "strict positive cone is empty"},
+            {"id": "M2", "title": "Local radius measures", "body": "Introduce signed convex/concave radius-R measures and enforce transport relations induced by boundary-aligned contacts.", "kind": "necessary", "exit": "exact local system infeasible"},
+            {"id": "M3", "title": "Local smooth turns", "body": "Relate smooth-turn variables to signed radius measures and to the oriented interface identifications.", "kind": "necessary", "exit": "exact local system infeasible"},
+            {"id": "M4", "title": "Physical point-turn equations", "body": "Build vertex equivalence classes, sum incident prototype turns at each physical vertex, and enforce -1 < turn < 1.", "kind": "necessary", "exit": "exact point-turn system infeasible"}
+          ]
+        },
+        {
+          "name": "GLOBAL NECESSARY INVARIANTS",
+          "cards": [
+            {"id": "M5", "title": "Global radius balance", "body": "Across n copies require n (L_plus - L_minus) = C_disk, where the signed measures cancel on internal contacts.", "kind": "necessary", "exit": "exact balance infeasible"},
+            {"id": "M6", "title": "Global smooth-turn balance", "body": "Require n * tau_smooth = 2*pi after cancellation of paired internal smooth turns.", "kind": "necessary", "exit": "exact balance infeasible"},
+            {"id": "M7", "title": "Strict radius-R concavity", "body": "When center_strictly_inside_one_tile is declared, require L_minus > 0 on the prototype contour.", "kind": "theorem", "exit": "strict concave measure impossible"},
+            {"id": "M8", "title": "Isoperimetric bound", "body": "Apply the necessary perimeter bound C_disk <= sqrt(n) * perimeter(prototype), using a conservative rational upper bound.", "kind": "necessary", "exit": "isoperimetric bound violated"}
+          ]
+        }
+      ],
+      "note": "Floating-point LPs are screens only: an ambiguous or failed numerical solve passes. Rejection is based on the exact rational follow-up."
+    },
+    {
+      "layout": "lanes",
+      "title": "6. Exact-partial word resolution and family policy",
+      "subtitle": "Amber exits mean unresolved or unsupported, never a proof of impossibility.",
+      "lanes": [
+        {
+          "name": "RESIDUAL NORMALIZATION",
+          "cards": [
+            {"id": "S1", "title": "Cancel common context", "body": "Cancel common prefixes and suffixes in every residual word equation.", "kind": "exact"},
+            {"id": "S2", "title": "Detect direct contradiction", "body": "Reject an equation whose reduced sides force an empty word to equal a nonempty constant word.", "kind": "exact", "exit": "exact residual contradiction"},
+            {"id": "S3", "title": "Canonicalize residual state", "body": "Rename variables canonically, include the mirror environment, and deduplicate already visited residual systems.", "kind": "exact"}
+          ]
+        },
+        {
+          "name": "NIELSEN--LEVI BRANCHING",
+          "cards": [
+            {"id": "S4", "title": "Generate non-erasing branches", "body": "Apply the implemented Nielsen prefix substitutions for the leading variables/constants of the chosen residual equation.", "kind": "exact"},
+            {"id": "S5", "title": "Update expression environment", "body": "Compose the substitution into all words and into the symbolic environment, then recurse on the canonical child state.", "kind": "exact"},
+            {"id": "S6", "title": "Classify repeated residual", "body": "Recognize fixed-context residual cycles and compile successive recognized cycles into power or nested-power expressions.", "kind": "exact", "exit": "unknown cycle -> unsupported"}
+          ]
+        },
+        {
+          "name": "FAMILIES AND BOUNDS",
+          "cards": [
+            {"id": "S7", "title": "Emit canonical family", "body": "Emit a finite, power, or nested-power environment and validate selected exponent instantiations as a consistency guard.", "kind": "output"},
+            {"id": "S8", "title": "Apply resource guards", "body": "Bound wall time, graph nodes/edges, residual literals, expression nodes, family count, and terminal contour size.", "kind": "resource", "exit": "limit -> deferred word case"},
+            {"id": "S9", "title": "Choose family expansion", "body": "Specialize finite families. A symbolic power family remains formal unless policy selects concrete exponents.", "kind": "resource", "exit": "unexpanded -> no profile yet"}
+          ]
+        }
+      ],
+      "note": "Compile or solver exceptions taint the campaign and may skip the affected work item. They are integrity failures recorded in errors.jsonl, not rejections."
+    },
+    {
+      "layout": "lanes",
+      "title": "7. Terminal contact system, exact decorations, and profile filters",
+      "subtitle": "A specialized word family is rebuilt as an exact formal geometry profile before any numerical search.",
+      "lanes": [
+        {
+          "name": "TERMINAL CONTACTS",
+          "cards": [
+            {"id": "P1", "title": "Expand terminal contour", "body": "Instantiate the selected family environment and materialize the full terminal prototype contour.", "kind": "exact"},
+            {"id": "P2", "title": "Verify interface words", "body": "Recheck every terminal left/right interface identity exactly, including direct/reflected parity and the mirror relation.", "kind": "exact", "exit": "terminal mapping inconsistency"},
+            {"id": "P3", "title": "Build directed segment pairs", "body": "Create the directed terminal contact records used later by exact decoration and copy assembly.", "kind": "exact"}
+          ]
+        },
+        {
+          "name": "POINT AND CURVE CLASSES",
+          "cards": [
+            {"id": "P4", "title": "Point-angle classes", "body": "Identify terminal endpoints that represent the same prototype point-angle variable.", "kind": "exact"},
+            {"id": "P5", "title": "Physical vertex sums", "body": "Assemble exact signed angle equations for every physical vertex of the candidate map.", "kind": "necessary"},
+            {"id": "P6", "title": "Outer-arc smoothness", "body": "Impose internal smoothness inside every terminal run labelled as one disk-circle outer arc.", "kind": "necessary"},
+            {"id": "P7", "title": "Curve-template classes", "body": "Propagate contact relations and group terminal components that must share a curve template.", "kind": "exact"}
+          ]
+        },
+        {
+          "name": "LENGTHS, TURNS, MARKINGS",
+          "cards": [
+            {"id": "P8", "title": "Normalize terminal lengths", "body": "Build the exact affine length system, require positive component lengths, and choose a normalized witness.", "kind": "necessary", "exit": "no positive exact witness"},
+            {"id": "P9", "title": "Mark the outer circle", "body": "Transfer disk-boundary membership and radius-R orientation to terminal contour components.", "kind": "exact"},
+            {"id": "P10", "title": "Joint exact feasibility", "body": "Solve the combined point-angle, curve-turn, length, and winding constraints with a strict feasibility margin.", "kind": "necessary", "exit": "inconsistent or zero margin"}
+          ]
+        },
+        {
+          "name": "LOCAL FILTERS AND OUTPUT",
+          "cards": [
+            {"id": "P11", "title": "Basic contour invariants", "body": "Require a nonempty contour, positive exact terminal lengths, and every point angle strictly inside its admissible interval.", "kind": "necessary", "exit": "basic invariant fails"},
+            {"id": "P12", "title": "Angular and winding margin", "body": "Recheck joint angular feasibility and the exact signed winding/turn margins.", "kind": "necessary", "exit": "joint exact margin fails"},
+            {"id": "P13", "title": "Mapping and template coverage", "body": "Require complete contact coverage, compatible template classes, and a complete outer-circle marking.", "kind": "necessary", "exit": "coverage/compatibility fails"},
+            {"id": "P14", "title": "Conservative dedup + persist", "body": "Hash map, assignment key, weak-order blocks, and specialization environment; persist one FormalProfile survivor in SQLite/JSONL.", "kind": "output"}
+          ]
+        }
+      ],
+      "note": "Profile-build exceptions taint the campaign. The optional cyclic_no_backtracking heuristic is disabled by default because it has a known counterexample."
+    },
+    {
+      "layout": "lanes",
+      "title": "8. Numerical prototile geometry and mapping-derived assembly",
+      "subtitle": "Orange outcomes are numerical evidence only; absence of a solution is not a formal impossibility result.",
+      "lanes": [
+        {
+          "name": "GEOMETRY INPUT",
+          "cards": [
+            {"id": "G1", "title": "Read FormalProfile survivor", "body": "Stream candidates.jsonl and skip only profile IDs with a persisted geometric solution.", "kind": "data"},
+            {"id": "G2", "title": "Parse formal geometry problem", "body": "Load exact affine angle, length, and curve-turn expressions; contact mappings stay attached for later assembly.", "kind": "exact"},
+            {"id": "G3", "title": "Parameterize one prototile", "body": "Generic shared polylines, forced straight segments, and analytic circular arcs; fix origin and initial tangent gauge.", "kind": "numerical"}
+          ]
+        },
+        {
+          "name": "STAGED NUMERICAL SEARCH",
+          "cards": [
+            {"id": "G4", "title": "Closure least-squares", "body": "Optimize formal free parameters and generic-template shapes for final point/tangent closure, with bounded random restarts.", "kind": "numerical"},
+            {"id": "G5", "title": "Full contour validation", "body": "Check closure, tangent cycle, formal point angles and lengths, positive sampled edges, common radii, area, and sampled self-intersection.", "kind": "numerical", "exit": "validation failure -> try restart/refinement"},
+            {"id": "G6", "title": "Clearance refinement", "body": "For a closed but colliding/degenerate contour, refine while preserving the closure objective.", "kind": "numerical"},
+            {"id": "G7", "title": "Persist geometry outcome", "body": "Valid contour -> geometric_solutions.jsonl. Timeout/exhausted restarts -> no_solution_found status, not a proof.", "kind": "output"}
+          ]
+        },
+        {
+          "name": "ASSEMBLY AND VIEWER",
+          "cards": [
+            {"id": "G8", "title": "Anchor reference copy", "body": "Set the reference prototile isometry to identity.", "kind": "exact"},
+            {"id": "G9", "title": "Propagate copy isometries", "body": "Use each directed terminal contact and relative parity to determine neighboring orthogonal transforms.", "kind": "numerical"},
+            {"id": "G10", "title": "Validate complete contact graph", "body": "Check connectivity, parity, sampled interface residuals, and consistency across every graph cycle.", "kind": "numerical", "exit": "inconsistent assembly -> reject visualization record"},
+            {"id": "G11", "title": "Index and display", "body": "Read solution offsets on demand, transform the prototile polygon, and show the assembled pieces in the interactive viewer.", "kind": "output"}
+          ]
+        }
+      ],
+      "note": "The current geometry stage solves a single piece first. It does not optimize all copy placements jointly; assembly is reconstructed deterministically afterward from formal contacts."
+    },
+    {
+      "layout": "audit",
+      "title": "9. Meaning of exits and open mathematical provenance",
+      "subtitle": "Only the first two green/blue classes can support exhaustive formal conclusions.",
+      "categories": [
+        {"kind": "quotient", "title": "Intrinsic quotient", "text": "Removes a representative only when a certified automorphism maps it to another enumerated representative."},
+        {"kind": "domain", "title": "Imposed domain", "text": "Answers a narrower question by construction (rotation/equivariance/fertile shard); not valid for the unrestricted problem."},
+        {"kind": "necessary", "title": "Necessary-condition rejection", "text": "Intended mathematical impossibility certificate. Floating screens are conservative; exact rational checks confirm sensitive LP rejections."},
+        {"kind": "resource", "title": "Deferred / unsupported", "text": "A graph, expression, family, contour, or time budget ended the attempt. Must never be reported as unsatisfiable."},
+        {"kind": "numerical", "title": "Numerical non-proof", "text": "Optimization or sampled validation did not find a realization. This is evidence, not a formal rejection."},
+        {"kind": "integrity", "title": "Integrity / implementation error", "text": "Malformed or inconsistent constructed data, or an unexpected exception. Campaign is tainted when work may have been skipped."}
+      ],
+      "questions": [
+        {
+          "id": "Q1",
+          "title": "Transported exterior-arc repetition theorem",
+          "math": "For the guarded four-tile Stein map, why must there exist peripheral i != j with the same oriented prototype outer interval, equivalently start_i = start_j and end_i = end_j in the weak cyclic order?",
+          "needed": "Exact theorem statement, all geometric regularity/center hypotheses, and the Kurusa--Langi--Vigh source or a self-contained proof."
+        },
+        {
+          "id": "Q2",
+          "title": "Strict radius-R concavity in a Stein configuration",
+          "math": "Why does center_strictly_inside_one_tile imply L_minus = sum_i r_i^- > 0 on the prototype contour, rather than merely L_minus >= 0?",
+          "needed": "A proof that a positive-measure disk-circle arc is transported to an internal interface with opposite sign under exactly the hypotheses encoded by the map flag."
+        },
+        {
+          "id": "Q3",
+          "title": "Completeness of Nielsen branching",
+          "math": "Why do branch_substitutions enumerate every non-erasing solution of each residual word equation, modulo the canonical renaming/inversion used by the graph?",
+          "needed": "A standard Nielsen--Levi lemma/citation or a proof tied to the implemented branch cases."
+        },
+        {
+          "id": "Q4",
+          "title": "Fixed-context residual-cycle compilation",
+          "math": "Why does a detected cycle V -> p V s generate exactly the family p^n V s^n for all n >= 1, and why do successive compiled cycles preserve completeness for nested powers?",
+          "needed": "A soundness/completeness proof for classify_fixed_context_loop and the recursion that restarts from the ancestor residual."
+        }
+      ],
+      "warning": "The optional cyclic_no_backtracking profile heuristic is disabled by default and has a known counterexample. If enabled, it is explicitly non-mathematical and must not support an exhaustive claim."
+    },
+    {
+      "layout": "code_map",
+      "title": "10. Implementation map",
+      "subtitle": "Primary production modules audited for this diagram.",
+      "rows": [
+        ["Catalogue / orchestration", "orchestration/catalog.py, orchestration/pipeline.py", "CaseCatalog, PipelineExecutor"],
+        ["Map and hypotheses", "maps/base.py, maps/registry.py", "PlanarMap, ProblemHypotheses, MapAutomorphism"],
+        ["Assignments / imposed symmetry", "enumeration/assignments.py, mapping_subdomain.py", "AssignmentEnumerator, MappingSubdomain"],
+        ["Intrinsic quotient", "enumeration/symmetry.py", "MappingSymmetryQuotient"],
+        ["Weak cyclic orders", "enumeration/weak_orders.py", "WeakOrderEnumerator"],
+        ["K4 theorem gate", "enumeration/exterior_arc_repetition.py", "ExteriorArcRepetitionConstraint"],
+        ["Early LP gates", "constraints/length_lp.py, constraints/angle_lp.py", "LengthFeasibilityOracle, AngleFeasibilityOracle"],
+        ["Radius topology", "preword/prefix_topology.py, preword/arc_topology.py", "PrefixRadiusArcTopologyFilter, RadiusArcTopologyFilter"],
+        ["Pre-word linear systems", "preword/linear_invariants.py, preword/filter.py", "PrewordLinearInvariantFilter, PrewordPruningPipeline"],
+        ["Word compilation", "words/compile.py", "compile_word_case, build_terminal_contact_system"],
+        ["Exact-partial words", "words/compact.py, words/exact_partial.py", "ExactPartialWordSolver"],
+        ["Family expansion", "words/families.py", "expand_family, FamilyExpansionPolicy"],
+        ["Terminal decoration", "profiles/build.py, profiles/decorations.py", "build_formal_profile, build_decorations"],
+        ["Local profile filters", "profiles/filters.py, profiles/canonical.py", "ProfileFilterPipeline, conservative_profile_key"],
+        ["Formal search driver", "pipeline/runner.py", "SolverRunner"],
+        ["Numerical geometry", "geometry/model.py, geometry/solver.py, geometry/validation.py", "NumericalContourSolver, validate_geometry"],
+        ["Assembly / display", "visualization/assembly.py, visualization/validate.py, visualization/runner.py", "assemble_geometric_solution, VisualizationRunner"],
+        ["Mapping Lab sidecar", "mapping_lab/core.py, deep_experiment.py", "CompleteMappingEvaluator, DeepExperimentRunner"]
+      ]
+    }
+  ]
+}
