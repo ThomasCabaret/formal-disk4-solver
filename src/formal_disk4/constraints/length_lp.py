@@ -31,8 +31,14 @@ class LengthFeasibilityOracle:
     """LP oracle for positive atomic contour lengths.
 
     It solves max epsilon under A x = 0, sum(x)=1 and x_i >= epsilon.
-    The combinatorial matrices are integral. SciPy/HiGHS is used as the fast
-    prototype backend; the returned witness is checked against all constraints.
+    FILTER JUSTIFICATION (local): interface length preservation gives the
+    homogeneous equalities, and every non-erasing contour atom has positive
+    length. Thus a certified absence of a positive null-vector is necessary.
+
+    The combinatorial matrices are integral. SciPy/HiGHS is only a fast witness
+    finder: failure, zero margin, or an unverified result is reported as unknown
+    and accepted. The only direct rejection below is the exact same-sign-row
+    contradiction.
     """
 
     def __init__(self, tolerance: float = 1e-9, cache_size: int = 200_000) -> None:
@@ -88,7 +94,8 @@ class LengthFeasibilityOracle:
         _, matrix_rows = key
         for row in matrix_rows:
             nonzero = [value for value in row if value]
-            # A nonzero homogeneous row with one coefficient sign cannot vanish
+            # FILTER JUSTIFICATION (local): a nonzero homogeneous row with one
+            # coefficient sign cannot vanish
             # when every atomic contour length is strictly positive.
             if nonzero and (all(value > 0 for value in nonzero) or all(value < 0 for value in nonzero)):
                 result = LengthFeasibilityResult(False, 0.0, (), "same-sign contradiction")

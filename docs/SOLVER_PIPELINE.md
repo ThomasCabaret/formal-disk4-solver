@@ -50,3 +50,22 @@ single-prototile geometry and visualization stages. The Mapping Lab is shown as
 an experimental sidecar because it samples complete mappings and evaluates them
 through a production-filter adapter; it does not alter production filter
 semantics.
+
+## Filter-comment vocabulary
+
+Production pruning sites use a short standardized prefix so that their logical
+status can be audited without reconstructing the whole pipeline:
+
+- `FILTER JUSTIFICATION (local)` records a direct necessary-condition argument;
+- `FILTER JUSTIFICATION (theorem)` cites the numbered result that licenses the
+  rejection, currently in `docs/six_structural_results.tex`;
+- `QUOTIENT JUSTIFICATION` identifies a bijective equivalence reduction;
+- `SEARCH-DOMAIN RESTRICTION` identifies an imposed, non-exhaustive shard;
+- `CONSERVATIVE FALLBACK` means uncertainty is accepted rather than rejected;
+- `RESOURCE LIMIT, NOT REJECTION` and `UNSUPPORTED, NOT UNSAT` prevent an
+  incomplete computation from being reported as a mathematical impossibility.
+
+The theorem document also fixes the current word-solver boundary: unary
+fixed-context cycles are justified by Theorem 1.6, while Theorem 1.7 and
+Corollary 8.2 require any reachable non-simple residual SCC to remain
+unsupported unless a separate completeness proof is supplied.

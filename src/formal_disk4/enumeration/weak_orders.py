@@ -718,14 +718,21 @@ class WeakOrderEnumerator:
             self.mapping_subdomain is not None
             and not self.mapping_subdomain.allows_leaf(blocks)
         ):
+            # SEARCH-DOMAIN RESTRICTION: this leaf lies outside the requested
+            # mapping shard; it is not impossible in the unrestricted problem.
             self.event_sink("mapping_subdomain_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
             return
 
+        # FILTER JUSTIFICATION (theorem): see
+        # ExteriorArcRepetitionConstraint and Theorem 1.1 in
+        # docs/six_structural_results.tex.
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
             self._mark_subtree_complete(path, 1)
             return
+        # QUOTIENT JUSTIFICATION: retain one representative under certified
+        # intrinsic map automorphisms; see MappingSymmetryQuotient.
         if not self._leaf_is_canonical(blocks):
             self.event_sink("symmetry_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
@@ -745,6 +752,8 @@ class WeakOrderEnumerator:
                         else "prefix_topology_checks",
                         1,
                     )
+                # FILTER JUSTIFICATION: RadiusArcTopologyFilter documents each
+                # sound interval contradiction used here.
                 if not prefix_topology.feasible:
                     self.event_sink("prefix_topology_pruned_nodes", 1)
                     reason_key = (
@@ -776,6 +785,8 @@ class WeakOrderEnumerator:
             if self.enable_length_filter
             else None
         )
+        # FILTER JUSTIFICATION: LengthFeasibilityOracle rejects here only on its
+        # exact positive-length contradiction.
         if length_result is not None and not length_result.feasible:
             self.event_sink("length_pruned_nodes", 1)
             self._mark_subtree_complete(path, 1)
@@ -788,6 +799,8 @@ class WeakOrderEnumerator:
             if self.enable_angle_filter
             else None
         )
+        # FILTER JUSTIFICATION: AngleFeasibilityOracle rejects here only on
+        # exact rational inconsistency of necessary angle equations.
         if angle_result is not None and not angle_result.feasible:
             self.event_sink("angle_pruned_nodes", 1)
             self._mark_subtree_complete(path, 1)
@@ -817,7 +830,11 @@ class WeakOrderEnumerator:
         positions: Sequence[int],
         block_count: int,
     ) -> bool:
-        """Apply the exact mapping-fertility gate only at a complete leaf."""
+        """Apply the necessary radius-arc topology gate at a complete leaf.
+
+        FILTER JUSTIFICATION: RadiusArcTopologyFilter owns the individual local
+        arguments. An exception is a conservative pass, never a rejection.
+        """
 
         if self.prefix_topology_filter is None:
             return True
@@ -1123,7 +1140,8 @@ class WeakOrderEnumerator:
             positions=positions,
         )
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
-            # Once every possible repeated exterior-arc pair has separated an
+            # FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex,
+            # Theorem 1.1. Once every possible repeated exterior-arc pair has separated an
             # endpoint, no descendant can restore equality in a past block.
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
             self._mark_subtree_complete(
@@ -1138,6 +1156,8 @@ class WeakOrderEnumerator:
             block_count=len(blocks),
             positions=positions,
         )
+        # QUOTIENT JUSTIFICATION: the prefix certificate removes only branches
+        # whose intrinsic-symmetry orbit already has an earlier representative.
         if not self._prefix_is_canonical(blocks):
             self.event_sink("symmetry_pruned_nodes", 1)
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
@@ -1171,6 +1191,8 @@ class WeakOrderEnumerator:
                         else "prefix_topology_checks",
                         1,
                     )
+                # FILTER JUSTIFICATION: RadiusArcTopologyFilter documents each
+                # sound interval contradiction used here.
                 if not prefix_topology.feasible:
                     self.event_sink("prefix_topology_pruned_nodes", 1)
                     reason_key = (
@@ -1205,7 +1227,7 @@ class WeakOrderEnumerator:
                 positions=positions,
             )
         if complete and not self._leaf_is_canonical(blocks):
-            # The complete intrinsic-symmetry quotient is an integer permutation
+            # QUOTIENT JUSTIFICATION: the complete intrinsic-symmetry quotient is an integer permutation
             # check. Run it before any newly resolved LP at this leaf and before
             # compile_word_case / preword LP / word solving in the pipeline.
             self.event_sink("symmetry_pruned_leaves", 1)
@@ -1216,6 +1238,8 @@ class WeakOrderEnumerator:
             and self.mapping_subdomain is not None
             and not self.mapping_subdomain.allows_leaf(blocks)
         ):
+            # SEARCH-DOMAIN RESTRICTION: this is outside the requested shard,
+            # not a proof about the unrestricted structural family.
             self.event_sink("mapping_subdomain_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
             return
@@ -1232,6 +1256,8 @@ class WeakOrderEnumerator:
             )
             self.event_sink("length_checks", 1)
             length_result = self.length_oracle.analyze(block_count, length_rows)
+            # FILTER JUSTIFICATION: exact positive-length contradiction; see
+            # LengthFeasibilityOracle.
             if not length_result.feasible:
                 self.event_sink("length_pruned_nodes", 1)
                 self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
@@ -1248,6 +1274,8 @@ class WeakOrderEnumerator:
             )
             self.event_sink("angle_checks", 1)
             angle_result = self.angle_oracle.analyze(block_count, angle_equations)
+            # FILTER JUSTIFICATION: exact angle-equation contradiction; see
+            # AngleFeasibilityOracle.
             if not angle_result.feasible:
                 self.event_sink("angle_pruned_nodes", 1)
                 self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
@@ -1309,6 +1337,7 @@ class WeakOrderEnumerator:
                     counters, mask, self.assignment.sequences
                 )
             ):
+                # SEARCH-DOMAIN RESTRICTION: prune only the imposed shard.
                 self.event_sink("mapping_subdomain_pruned_nodes", 1)
                 continue
             appended = self._append_block(blocks, counters, positions, mask)

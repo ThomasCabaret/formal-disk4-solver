@@ -37,6 +37,11 @@ class PrewordPruningResult:
 class PrewordPruningPipeline:
     """Independent necessary conditions applied before word resolution.
 
+    FILTER CONTRACT: every negative result is a necessary-condition
+    contradiction. Disabled checks, unresolved symbolic images, numerical
+    failures, and resource limits must pass or report an unsupported outcome;
+    none of them may be converted into a formal rejection.
+
     Structural interval checks run first because they are cheaper and highly
     selective. The exact linear systems are built only for survivors, keeping
     the expensive Nielsen--Levi graph behind all available low-cost pruning.
@@ -71,6 +76,8 @@ class PrewordPruningPipeline:
             if self.enable_topology
             else self.topology_filter.seed_only(compiled)
         )
+        # FILTER JUSTIFICATION: the topology layer rejects only a certified
+        # radius-R interval contradiction; see RadiusArcTopologyFilter.
         if not topology.feasible:
             self._current_phase = "done"
             return PrewordPruningResult(False, topology.reason, topology, None)
@@ -78,6 +85,9 @@ class PrewordPruningPipeline:
             self._current_phase = "done"
             return PrewordPruningResult(True, "feasible", topology, None)
         self._current_phase = "linear_invariants"
+        # FILTER JUSTIFICATION: the linear layer rejects only after its exact
+        # rational oracle certifies that necessary metric/turn identities have
+        # no strictly positive solution.
         linear = self.linear_filter.analyze(planar_map, placement, compiled, topology)
         self._current_phase = "done"
         return PrewordPruningResult(

@@ -119,6 +119,9 @@ class PrewordLinearInvariantFilter:
     concave measures, and smooth curve turns scaled by the disk circumference.
     This scaling keeps the circle relation linear: H = +/-2 L on a radius-R arc.
 
+    FILTER CONTRACT: every inequality below is a necessary geometric condition,
+    and HybridMarginOracle rejects only with an exact rational certificate.
+
     Point angles remain a separate LP because their local vertex equations do
     not share variables with lengths. Both systems use a floating screen and an
     exact rational certificate before rejecting a placement.
@@ -384,8 +387,9 @@ class PrewordLinearInvariantFilter:
             and _AffineRowSpace(width, local_equalities_before_globals).implies(radius_equation)
         )
         if self.enable_radius_measures:
-            # This theorem is valid even if local propagation is incomplete. Keeping
-            # it explicit strengthens the LP while the audit checks our local model.
+            # FILTER JUSTIFICATION (local): summing radius-R measure over all
+            # congruent copies cancels every internal interface with opposite
+            # sign; only the physical outer-circle arcs remain.
             equalities.append(radius_equation)
 
         smooth_global = row()
@@ -398,12 +402,18 @@ class PrewordLinearInvariantFilter:
             and _AffineRowSpace(width, local_equalities_before_globals).implies(smooth_equation)
         )
         if self.enable_smooth_turns and planar_map.hypotheses.piecewise_c2_boundary:
+            # FILTER JUSTIFICATION (local): total boundary turn is additive;
+            # internal interface turns cancel between the two physical sides,
+            # while the disk boundary contributes one full positive turn.
             equalities.append(smooth_equation)
 
         if (
             self.enable_radius_measures
             and planar_map.hypotheses.requires_radius_r_concavity
         ):
+            # FILTER JUSTIFICATION (theorem):
+            # docs/six_structural_results.tex, Theorem 1.3. A Stein center tile
+            # forces a positive-length concave radius-R prototype component.
             values = row()
             self._add_block(values, negative_offset, (-1,) * size)
             values[margin_index] = 1
@@ -411,6 +421,11 @@ class PrewordLinearInvariantFilter:
 
         sqrt_bound: Fraction | None = None
         if self.enable_isoperimetric:
+            # FILTER JUSTIFICATION (local): the disk perimeter divided among n
+            # congruent copies and the planar isoperimetric inequality imply
+            # outer_length <= sqrt(n) * prototype_perimeter. The rational
+            # ceiling is an upper bound, so this implemented inequality is only
+            # weaker than the exact necessary condition.
             sqrt_bound = _safe_sqrt_upper_bound(
                 tile_count, self.sqrt_upper_bound_denominator
             )
@@ -459,6 +474,9 @@ class PrewordLinearInvariantFilter:
             and self.enforce_global_point_turn_balance
             and planar_map.hypotheses.piecewise_c2_boundary
         ):
+            # FILTER JUSTIFICATION (local): the total prototype turn is 2pi;
+            # after separating smooth turn, the remaining point turns have the
+            # displayed normalized total. This equality is exact and additive.
             equalities.append(global_equation)
 
         for index in range(point_count):

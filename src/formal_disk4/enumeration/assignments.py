@@ -84,7 +84,15 @@ class ContourAssignment:
 
 
 class AssignmentEnumerator:
-    """Enumerate phase/orientation assignments with a lazy symmetry quotient."""
+    """Enumerate phase/orientation assignments with a lazy symmetry quotient.
+
+    QUOTIENT JUSTIFICATION: intrinsic map automorphisms retain one canonical
+    representative of each equivalent assignment orbit.
+
+    SEARCH-DOMAIN RESTRICTION: ``required_equivariance`` is instead a symmetry
+    imposed by the catalog case. It deliberately searches only assignments
+    fixed by that action and must not be described as an unrestricted proof.
+    """
 
     def __init__(
         self,

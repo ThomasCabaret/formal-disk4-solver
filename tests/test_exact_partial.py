@@ -57,6 +57,33 @@ class ExactPartialSolverTests(unittest.TestCase):
                     (),
                 )
 
+    def test_concurrent_return_cycles_are_reported_as_unsupported(self) -> None:
+        # docs/six_structural_results.tex, Theorem 1.7: XY=YX has two
+        # noncommuting self-return branches whose arbitrary interleavings are
+        # not exhausted by a fixed list of unary/nested power templates.
+        equations = (Equation(word("X", "Y"), word("Y", "X")),)
+        solver = ExactPartialWordSolver(equations, ("X", "Y"))
+        list(
+            solver.solve(
+                SolverLimits(
+                    max_graph_nodes=500,
+                    max_graph_edges=2_000,
+                    max_families=100,
+                )
+            )
+        )
+        self.assertEqual(
+            solver.last_summary.status,
+            "exact_unsupported_family_language",
+        )
+        self.assertFalse(solver.last_summary.exact_unsat)
+        self.assertTrue(
+            any(
+                "non-simple residual SCC" in component.reason
+                for component in solver.unsupported_components
+            )
+        )
+
     def test_mutually_evolving_cycle_is_rejected(self) -> None:
         transition = {
             "V0": (Literal("V0"), Literal("V1")),

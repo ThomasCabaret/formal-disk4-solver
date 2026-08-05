@@ -1,0 +1,612 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,margin=28mm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!45!black,
+  citecolor=green!35!black,
+  urlcolor=blue!45!black,
+  pdftitle={Six Structural Results for Monohedral Disk Tilings and Non-Erasing Word Equations},
+  pdfauthor={OpenAI}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\setlist{topsep=0.35em,itemsep=0.25em,parsep=0pt}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\BR}{B_R}
+\newcommand{\SR}{S_R}
+\newcommand{\interior}{\operatorname{int}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\id}{\operatorname{id}}
+\newcommand{\supp}{\operatorname{supp}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Astar}{A^{*}}
+\newcommand{\Aplus}{A^{+}}
+
+\title{\textbf{Six Structural Results for Monohedral Disk Tilings\\and Non-Erasing Word Equations}}
+\author{}
+\date{5 August 2026}
+
+\begin{document}
+\maketitle
+\vspace{-2.0em}
+
+\section{Statements of the Results}
+
+\begin{theorem}[Transported exterior-arc repetition]\label{thm:repetition}
+Let
+\[
+  \BR=\{x\in\mathbb R^2:\|x\|\le R\},\qquad R>0,
+\]
+and let $D_1,\ldots,D_n$ be a monohedral tiling of $\BR$ by Jordan regions, with $n>1$. Thus the $D_i$ are pairwise congruent compact sets homeomorphic to a closed disk, their interiors are pairwise disjoint, and their union is $\BR$.
+
+Put
+\[
+  S_i=D_i\cap\partial\BR,
+\]
+and choose, for each $i$, an isometry $g_{i1}:D_i\to D_1$, with $g_{11}=\id$. Then there exist distinct indices $i,j$ such that
+\[
+  g_{i1}(S_i)=g_{j1}(S_j).
+\]
+Here an empty set or a singleton is allowed as a degenerate circular arc.
+
+If the common arc is nondegenerate and the physical outer arcs are oriented positively along $\partial\BR$, let
+\[
+  \eps_i=\det Dg_{i1}\in\{+1,-1\}.
+\]
+Then the transported endpoints occur in the same order when $\eps_i=\eps_j$, and in the opposite order when $\eps_i=-\eps_j$. Hence equality of \emph{oriented} prototype intervals is obtained after the reflection parity is normalized.
+\end{theorem}
+
+\begin{corollary}[Peripheral repetition]\label{cor:peripheral}
+Under the hypotheses of \cref{thm:repetition}, suppose that exactly one tile has empty intersection with $\partial\BR$, and that every other tile has a nondegenerate outer arc. Then two of the boundary-touching tiles have the same transported nondegenerate outer arc, up to the endpoint reversal prescribed by their orientation parities.
+\end{corollary}
+
+\begin{theorem}[Strict radius-$R$ concavity in a Stein configuration]\label{thm:concavity}
+Let $D_1,\ldots,D_n$ be a monohedral tiling of $\BR$ by Jordan regions, with $n>1$, and let $O$ be the center of $\BR$. If
+\[
+  O\in\interior D_c
+\]
+for one tile $D_c$, then the boundary of the prototile contains a nondegenerate circular arc of radius $R$ that is concave relative to the prototile.
+
+Consequently, whenever $L_-$ denotes the total arclength assigned to concave radius-$R$ contour components in a finite or countably additive contour decomposition, one necessarily has
+\[
+  L_->0.
+\]
+The existence assertion itself requires no rectifiability hypothesis on the rest of the boundary.
+\end{theorem}
+
+\begin{theorem}[Complete non-erasing Nielsen--Levi branching]\label{thm:nielsen}
+Let $A$ be an alphabet, let $\mathcal X$ be a set of variables, and let
+\[
+  U=V
+\]
+be a word equation over $A\cup\mathcal X$. A non-erasing solution is a morphism
+\[
+  \sigma:(A\cup\mathcal X)^*\to A^*
+\]
+that fixes every letter of $A$ and satisfies $\sigma(X)\in A^+$ for every active variable $X$.
+
+After cancellation of a common initial token, let $a$ and $b$ be the first remaining tokens on the two sides. Every non-erasing solution belongs to exactly one of the following applicable branches.
+
+\begin{enumerate}[label=\textnormal{(\alph*)}]
+\item If $a,b\in A$, equal letters cancel and unequal letters give a contradiction.
+\item If $a=X$ and $b=Y$ are distinct variables, then exactly one of
+\[
+  \sigma(X)=\sigma(Y),\qquad
+  \sigma(X)=\sigma(Y)w,\qquad
+  \sigma(Y)=\sigma(X)w
+\]
+holds, where $w\in A^+$ in the two proper-prefix cases. These cases are represented respectively by
+\[
+  X\mapsto Y,\qquad X\mapsto YX',\qquad Y\mapsto XY',
+\]
+with a fresh non-erasing suffix variable, or by an equivalent safe reuse of the replaced variable.
+\item If $a=X\in\mathcal X$ and $b=c\in A$, then exactly one of
+\[
+  \sigma(X)=c,\qquad \sigma(X)=cw\quad(w\in A^+)
+\]
+holds. These cases are represented by
+\[
+  X\mapsto c,
+  \qquad X\mapsto cX'.
+\]
+The constant--variable case is symmetric.
+\item If the two first tokens are the same variable, they cancel.
+\end{enumerate}
+
+For every branch, composition with the branch substitution gives a bijection between the non-erasing solutions of the child equation and the solutions of the parent equation belonging to that branch. Therefore the listed branches are sound, pairwise disjoint at the semantic level, and complete.
+
+Moreover, quotienting residual equations by a bijective renaming of variables preserves the solution set up to a canonical bijection. The same is true for a fixed involutive anti-automorphism, such as a mirror operation, provided it is applied simultaneously to both sides, to all branch substitutions, and to the reconstruction environment.
+\end{theorem}
+
+\begin{theorem}[Fixed-point-free involutive palindromes]\label{thm:palindrome}
+Let $\Sigma$ be an alphabet equipped with an involution
+\[
+  a\longmapsto \bar a
+\]
+with no fixed letter:
+\[
+  \bar{\bar a}=a,
+  \qquad \bar a\ne a
+  \quad(a\in\Sigma).
+\]
+Extend it to the involutive anti-automorphism $\mu:\Sigma^*\to\Sigma^*$ defined by
+\[
+  \mu(a_1\cdots a_k)=\bar a_k\cdots\bar a_1.
+\]
+Then a nonempty word $w$ satisfies $w=\mu(w)$ if and only if there is a unique nonempty word $r$ such that
+\[
+  w=r\mu(r).
+\]
+In particular, every nonempty $\mu$-fixed word has even length.
+
+Let $X$ be a variable whose value is constrained by $X=\mu(X)$, and let $R$ be a fresh non-erasing variable. Replacing $X$ by
+\[
+  R\mu(R)
+\]
+induces a bijection between solutions of the parent system satisfying $X=\mu(X)$ and solutions of the resulting child system. This bijection remains valid after canonical signed-variable renamings and inversions provided that every canonical transformation is bijective and $\mu$-equivariant:
+\[
+  \rho(\mu(Z))=\mu(\rho(Z)).
+\]
+
+The fixed-point-free hypothesis is necessary for the asserted classification of all nonempty fixed words: if $a=\bar a$, then the one-letter word $a$ satisfies $a=\mu(a)$ but cannot equal $r\mu(r)$.
+\end{theorem}
+
+\begin{theorem}[Fixed-context loop iteration under a unary-cycle hypothesis]\label{thm:loops}
+Let $M$ be a free monoid of symbolic expressions, let $V$ be a distinguished symbol, and let $\Phi:M\to M$ be an endomorphism. Assume that there are words $p,s\in M$ such that
+\[
+  \Phi(V)=pVs,
+  \qquad \Phi(p)=p,
+  \qquad \Phi(s)=s.
+\]
+Then, for every integer $n\ge 0$,
+\[
+  \Phi^n(V)=p^nVs^n.
+\]
+Thus one or more traversals of the loop generate exactly the family $p^nVs^n$ for $n\ge1$; the exponent $n=0$ must be retained separately unless the untraversed ancestor state is already explored.
+
+Consider now a directed residual-state graph whose edges carry sound and complete branch substitutions. Compression of a returning path $C$ into a single exponent is sound and complete for the path family
+\[
+  C^nQ,\qquad n\ge0,
+\]
+provided that the accumulated endomorphism is computed after undoing canonical renamings and that every exit path $Q$ is retained.
+
+Recursive power compilation is complete if every nontrivial strongly connected component encountered by the recursion is a directed simple cycle, possibly with exit edges, or if the cycles are otherwise certified to be properly nested in the current ancestor stack. The certification must also guarantee invariant contexts, preservation of earlier parameters, and re-exploration of all exits. No unary-power or nested-power conclusion follows merely from equality of canonical residual states.
+\end{theorem}
+
+\begin{theorem}[Concurrent Nielsen cycles exist]\label{thm:concurrent}
+For the non-erasing word equation
+\[
+  XY=YX,
+\]
+the standard complete Nielsen--Levi residual graph contains two distinct returning branches at the same residual state:
+\[
+  C_X:\quad X\mapsto YX,
+  \qquad
+  C_Y:\quad Y\mapsto XY.
+\]
+After the indicated substitution and cancellation, each branch returns to the equation $XY=YX$. Consequently every finite word in the two cycle symbols is a valid residual path:
+\[
+  \{C_X,C_Y\}^*.
+\]
+Moreover, after any such path one may take the equality exit $Q$ given by $X\mapsto Y$; composing the reconstruction substitutions with any nonempty terminal value produces an actual non-erasing solution. Thus paths such as
+\[
+  C_XC_YC_XC_YQ,
+  \qquad
+  C_XC_XC_YC_XQ
+\]
+are not merely graph-theoretic artefacts.
+
+The two cycle endomorphisms do not commute and their contexts mutate under one another. Hence they are neither disjoint nor properly nested. The same counterexample survives the addition of a $\mu$-mirror equation when every branch substitution is transported $\mu$-equivariantly.
+
+Therefore, no general structural theorem forces all Nielsen cycles to be disjoint or properly nested. A residual component containing this pattern is exhaustive only if its entire finite path language is represented, for example by retaining the strongly connected finite-state component or by a sound rational-transduction construction. A compiler that represents only individual successive or nested power families must classify such a component as unsupported unless it proves an additional restriction excluding the pattern.
+\end{theorem}
+
+\clearpage
+\section{Geometric Definitions and Preliminary Facts}
+
+A \emph{Jordan region} is a compact subset of the plane homeomorphic to a closed disk. Its boundary is a Jordan curve. A finite family of Jordan regions is a tiling of a region when their union is the region and their interiors are pairwise disjoint. The tiling is \emph{monohedral} when all tiles are congruent.
+
+Let $C$ be a nondegenerate circular subarc of the boundary of a Jordan region $D$. At every relative interior point of $C$, a sufficiently small neighborhood is divided by $C$ into two sides, exactly one of which belongs locally to $D$. If this side is the interior side of the supporting circle, $C$ is \emph{convex} for $D$; otherwise it is \emph{concave} for $D$.
+
+We shall use the following established fact from Kurusa, L\'angi, and V\'igh \cite[Lemmas 2.6 and 2.8]{KLV2020}.
+
+\begin{lemma}[Outer-arc structure]\label{lem:outer}
+In a monohedral tiling of a circular disk by Jordan regions, each set
+\[
+  S_i=D_i\cap\partial\BR
+\]
+is a closed connected circular arc, allowing degeneracy. After any two tiles are transported into a common prototype tile, their transported outer arcs either have disjoint relative interiors or coincide.
+\end{lemma}
+
+The second assertion admits a short direct proof. Suppose that two transported arcs overlap in a nondegenerate arc. They then lie on the same circle of radius $R$. Transporting that supporting circle back through either tile isometry gives the physical boundary circle $\partial\BR$. The overlap is therefore contained in both physical outer arcs. Maximality of the connected outer arcs gives containment in each direction, hence equality. This is the argument of \cite[Remark 2.8]{KLV2020}.
+
+\begin{lemma}[Circular arcs and parallel bodies]\label{lem:parallel}
+Let $K$ be a compact convex planar set whose boundary consists of finitely many circular arcs of radius $R$ and straight line segments, with every segment tangent to its adjacent circular arcs. If the circular arcs have total turning $2\pi$, then
+\[
+  K=P+\BR
+\]
+for a compact convex polygon $P$, possibly reduced to a point.
+\end{lemma}
+
+\begin{proof}
+Traverse $\partial K$ counterclockwise. Along a circular arc of radius $R$, the center of curvature is constant; along a tangent segment, the inward normal is constant while the point of tangency moves linearly. Subtracting the radius-$R$ outward normal from the boundary point collapses each circular arc to a vertex and sends each tangent segment to a segment. The resulting closed convex polygonal curve is the boundary of a convex polygon $P$. Reversing this inward-offset construction gives $K=P+\BR$. Degenerate segments or repeated vertices are harmless.
+\end{proof}
+
+\section{Proof of the Exterior-Arc Repetition Theorem}
+
+\begin{proof}[Proof of \cref{thm:repetition}]
+By scaling, it is enough to treat $R=1$. Write
+\[
+  A_i=g_{i1}(S_i)\subset\partial\conv D_1.
+\]
+The inclusion in the convex-hull boundary is immediate: each physical outer arc $S_i$ is supported by the unit disk containing $D_i$, and an isometry transports supporting arcs to supporting arcs.
+
+Assume for contradiction that no two $A_i$ coincide. By \cref{lem:outer}, their relative interiors are pairwise disjoint. The physical arcs $S_i$ cover the unit circle, and no nondegenerate outer subarc can belong to two tiles, since both tiles would locally occupy the same inward side and their interiors would overlap. Therefore their arclengths sum to $2\pi$. Isometries preserve arclength, so the total turning of the unit circular arcs $A_i$ is also $2\pi$.
+
+The total turning of the boundary of a compact convex planar set is $2\pi$. Hence every portion of $\partial\conv D_1$ not already contained in the arcs $A_i$ has zero turning. Such portions are straight segments, and they meet the circular arcs tangentially. By \cref{lem:parallel},
+\[
+  \conv D_1=P+B_1
+\]
+for a convex polygon $P$, possibly a point.
+
+Because $D_1\subset B_1$, its circumradius is at most $1$. On the other hand, $P+B_1$ has circumradius at least $1$, with equality only if $P$ is a point. Thus $P$ must be a point and $\conv D_1$ must be a disk of radius $1$. Since it is contained in $B_1$, it is exactly $B_1$.
+
+Every point of the unit circle is an extreme point of $\conv D_1$, and every extreme point of the convex hull of a compact set belongs to that set. Hence
+\[
+  \partial B_1\subset D_1.
+\]
+A Jordan region contained in $B_1$ and containing the whole boundary circle must equal $B_1$: otherwise a point of $B_1\setminus D_1$ would lie in the unbounded complementary component of the Jordan curve $\partial D_1$ but could not be connected to infinity without crossing $\partial B_1\subset D_1$. Thus $D_1=B_1$, contradicting $n>1$.
+
+Therefore two transported arcs coincide.
+
+For the orientation statement, an orientation-preserving isometry transports the positive boundary orientation of a tile to the positive prototype orientation, while an orientation-reversing isometry reverses it. Hence equal supports have equal endpoint order when the two parities agree and reversed endpoint order when they differ.
+\end{proof}
+
+\begin{proof}[Proof of \cref{cor:peripheral}]
+The unique tile with empty outer intersection cannot form a coincident pair with a nondegenerate arc. Therefore the pair supplied by \cref{thm:repetition} consists of two boundary-touching tiles. The orientation assertion follows from the last part of that theorem.
+\end{proof}
+
+\section{Proof of Strict Radius-$R$ Concavity}
+
+\begin{proof}[Proof of \cref{thm:concavity}]
+First, some tile $D_p\ne D_c$ contains a nondegenerate outer arc. Indeed, if every noncentral tile met $\partial\BR$ only in a set with empty relative interior, then the finite union of those closed sets would also have empty relative interior. The closed set $D_c\cap\partial\BR$ would contain a dense relatively open subset of the circle and hence all of $\partial\BR$. As in the proof of \cref{thm:repetition}, this would force $D_c=\BR$, contradicting $n>1$.
+
+Choose a nondegenerate circular arc
+\[
+  A\subset D_p\cap\partial\BR
+\]
+and an isometry
+\[
+  h:D_p\longrightarrow D_c.
+\]
+The image $h(A)$ is a radius-$R$ circular arc on $\partial D_c$, convex relative to $D_c$. Its supporting circle has center $h(O)$.
+
+The supporting circle of $h(A)$ cannot coincide with $\partial\BR$. If it did, the equality of the two radius-$R$ circles would give $h(O)=O$. Since $O\in\interior D_c$, applying $h^{-1}$ would then yield
+\[
+  O\in\interior D_p,
+\]
+contradicting the disjointness of tile interiors.
+
+Distinct circles of equal radius meet in at most two points. Since $h(A)\subset D_c\subset\BR$, removing those possible intersection points leaves a nondegenerate subarc
+\[
+  J\subset h(A)\cap\interior\BR.
+\]
+Every point of $J$ belongs to at least one tile other than $D_c$. To see this, approach the point from the local side of $J$ not occupied by $D_c$; these nearby points lie in the finite union of the other closed tiles, so one tile occurs along a convergent subsequence and contains the limit point. Consequently,
+\[
+  J=\bigcup_{j\ne c}(J\cap D_j)
+\]
+is a finite closed cover of the compact arc $J$. By the Baire category theorem, one member contains a nondegenerate relative subarc $J'$. Thus
+\[
+  J'\subset D_c\cap D_j
+\]
+for some $j\ne c$.
+
+At a relative interior point of $J'$, both Jordan regions occupy one of the two local sides of the smooth arc. They cannot occupy the same side, because their interiors are disjoint. Hence they occupy opposite sides. The arc is convex for $D_c$, so it is concave for $D_j$. It has positive arclength and radius $R$.
+
+All tiles are congruent, so the prototile itself contains such a concave radius-$R$ arc. Any total concave radius-$R$ arclength therefore satisfies $L_->0$.
+\end{proof}
+
+\begin{remark}
+The strict conclusion depends on the existence of a positive-length outer arc and on finite closed covering. It does not follow merely from a signed global balance. Conversely, the theorem asserts the existence of an actual concave arc, not merely a positive formal variable. A symbolic measure $L_-$ is a valid necessary-condition variable only if its domain includes every contour component that may realize such an arc.
+\end{remark}
+
+\section{Word Equations and Prefix Comparability}
+
+Let $A^*$ be the free monoid on an alphabet $A$, with identity word $\epsilon$. For words $x,y\in A^*$, write $x\preceq y$ when $x$ is a prefix of $y$.
+
+\begin{lemma}[Levi prefix lemma]\label{lem:levi}
+If
+\[
+  xy=uv
+\]
+in a free monoid, then $x$ and $u$ are prefix-comparable: either $x=uw$ or $u=xw$ for a unique word $w$. If $|x|=|u|$, then $x=u$.
+\end{lemma}
+
+\begin{proof}
+Both $x$ and $u$ are prefixes of the same word $xy=uv$. The shorter of two prefixes of a word is a prefix of the longer. Cancellation in a free monoid gives uniqueness of the remaining suffix. Equal lengths force equality.
+\end{proof}
+
+A branch substitution $\theta$ acts on all occurrences of a variable. A child solution $\tau$ reconstructs a parent solution as $\tau\circ\theta$, where constants are fixed.
+
+\section{Proof of Complete Nielsen--Levi Branching}
+
+\begin{proof}[Proof of \cref{thm:nielsen}]
+Cancel all common initial tokens. This operation is reversible because free monoids are cancellative.
+
+If the first remaining tokens are letters, a common letter cancels and unequal letters cannot become equal under a solution, proving case (a). If the same variable occurs first on both sides, its nonempty image is a common prefix and cancels, proving case (d).
+
+Now let the first tokens be distinct variables $X$ and $Y$. For any non-erasing solution $\sigma$, the words $\sigma(X)$ and $\sigma(Y)$ are nonempty prefixes of the same evaluated word. By \cref{lem:levi}, exactly one of the following holds:
+\[
+\sigma(X)=\sigma(Y),\qquad
+\sigma(X)=\sigma(Y)w\ (w\ne\epsilon),\qquad
+\sigma(Y)=\sigma(X)w\ (w\ne\epsilon).
+\]
+They are semantically disjoint because the last two are proper-prefix alternatives.
+
+In the equality case, use $\theta(X)=Y$. The parent solution factors uniquely through a child solution that assigns the common word to $Y$. Conversely, every child solution reconstructs a parent solution with equal images.
+
+In the second case, use a fresh variable $X'$ and
+\[
+  \theta(X)=YX'.
+\]
+Given a parent solution with $\sigma(X)=\sigma(Y)w$, define the child solution by $\tau(X')=w$ and leave all other images unchanged. Then $\sigma=\tau\circ\theta$. Since $w\ne\epsilon$, the child solution is non-erasing. Conversely, every non-erasing child solution yields a parent solution in this proper-prefix class. The third case is symmetric. Reusing $X$ in place of $X'$ is safe when the reconstruction environment records that the new $X$ denotes the suffix rather than the original image.
+
+Suppose next that the first tokens are a variable $X$ and a letter $c$. The evaluated word $\sigma(X)$ must begin with $c$. Either $\sigma(X)=c$, represented by $X\mapsto c$, or
+\[
+  \sigma(X)=cw
+\]
+with $w\in A^+$, represented by $X\mapsto cX'$. The same factorization and reconstruction argument gives a bijection in each branch. The constant--variable case is obtained by exchanging the two sides.
+
+Thus every solution enters one applicable branch, every branch reconstructs only solutions of its declared class, and the branch factorization is bijective. This proves soundness and completeness.
+
+Finally, let $\rho$ be a bijective variable renaming. A solution $\sigma$ of an equation $E$ corresponds bijectively to the solution $\sigma\circ\rho^{-1}$ of the renamed equation $\rho(E)$. Therefore canonical renaming does not remove solutions. If $\mu$ is an involutive anti-automorphism, then
+\[
+  \mu(xy)=\mu(y)\mu(x).
+\]
+Applying $\mu$ to both sides of every equation and transporting substitutions and reconstruction data by $\mu$ again gives a bijection, because $\mu^2=\id$. A quotient using a mirror operation is therefore complete only under this simultaneous transport.
+\end{proof}
+
+\begin{remark}[Necessary branch inventory]
+In the non-erasing setting, the equality branch $X\mapsto Y$ and the exact-letter branch $X\mapsto c$ are indispensable. They are the boundary cases between the two proper-prefix alternatives. Omitting either one destroys completeness.
+\end{remark}
+
+\section{Fixed-Point-Free Involutive Palindromes}
+
+\begin{proof}[Proof of \cref{thm:palindrome}]
+Let
+\[
+  w=a_1a_2\cdots a_k
+\]
+and suppose that $w=\mu(w)$. Equality letter by letter gives
+\[
+  a_i=\bar a_{k+1-i}
+  \qquad(1\le i\le k).
+\]
+If $k$ were odd, the middle index $i=(k+1)/2$ would satisfy
+\[
+  a_i=\bar a_i,
+\]
+contrary to the fixed-point-free hypothesis. Thus $k=2m$ is even. Put
+\[
+  r=a_1\cdots a_m.
+\]
+For $1\le j\le m$, the $(m+j)$-th letter of $w$ is
+\[
+  a_{m+j}=\bar a_{m+1-j}.
+\]
+Therefore the second half of $w$ is
+\[
+  \bar a_m\cdots\bar a_1=\mu(r),
+\]
+and hence
+\[
+  w=r\mu(r).
+\]
+The word $r$ is uniquely determined as the first half of $w$. Conversely,
+\[
+  \mu\bigl(r\mu(r)\bigr)
+  =\mu(\mu(r))\mu(r)
+  =r\mu(r),
+\]
+so every word of this form is $\mu$-fixed.
+
+For the solution correspondence, let $\theta$ be the substitution
+\[
+  \theta(X)=R\mu(R),
+\]
+with $R$ fresh, and transport the paired symbol $\mu(X)$ consistently. If $\tau$ is a non-erasing child solution, then $\sigma=\tau\circ\theta$ is a parent solution and
+\[
+  \sigma(X)=\tau(R)\mu(\tau(R))
+\]
+is $\mu$-fixed. This proves soundness.
+
+Conversely, let $\sigma$ be a parent solution with nonempty $\sigma(X)=\mu(\sigma(X))$. By the first part there is a unique nonempty word $r$ with
+\[
+  \sigma(X)=r\mu(r).
+\]
+Define $\tau(R)=r$ and leave every other variable value unchanged. Since $R$ is fresh, this defines a unique non-erasing child solution and $\sigma=\tau\circ\theta$. Thus the correspondence is bijective.
+
+Finally let $\rho$ be a bijective $\mu$-equivariant signed-variable renaming or inversion. Then
+\[
+  \rho\bigl(R\mu(R)\bigr)
+  =\rho(R)\rho(\mu(R))
+  =\rho(R)\mu(\rho(R)).
+\]
+Hence canonical transport carries the factorization branch to the same factorization on the renamed variable orbit, and the preceding bijection commutes with canonicalization. Without $\mu$-equivariance this conclusion need not hold.
+
+If a fixed letter exists, say $a=\bar a$, then $a=\mu(a)$ has odd length, whereas every word $r\mu(r)$ has even length. This proves necessity of the hypothesis.
+\end{proof}
+
+\begin{remark}[Exact hypothesis to audit]
+The factorization theorem is unconditional once the token involution is fixed-point-free. A formal system may use the branch exhaustively only after verifying that every terminal alphabet symbol belongs to a two-element $\mu$-orbit and that canonical variable transformations commute with $\mu$. The mere existence of a mirror operation does not by itself prove either property.
+\end{remark}
+
+\section{Fixed-Context Cycles and Concurrent Returns}
+
+A residual-state graph is a directed graph in which each edge records a branch substitution and the exact residual equation obtained after simplification. A path induces the composition of its edge substitutions. A canonical return is a path ending at an equation that becomes identical to its ancestor after a certified bijective renaming; the renaming must be undone when computing the actual loop endomorphism.
+
+\begin{lemma}[Iteration of an invariant context]\label{lem:iterate}
+If $\Phi(V)=pVs$, $\Phi(p)=p$, and $\Phi(s)=s$, then
+\[
+  \Phi^n(V)=p^nVs^n
+\]
+for every $n\ge0$.
+\end{lemma}
+
+\begin{proof}
+The assertion is immediate for $n=0$. If it holds for $n$, then
+\[
+\begin{aligned}
+\Phi^{n+1}(V)
+  &=\Phi\bigl(p^nVs^n\bigr)\\
+  &=\Phi(p)^n\,\Phi(V)\,\Phi(s)^n\\
+  &=p^n(pVs)s^n\\
+  &=p^{n+1}Vs^{n+1}.
+\end{aligned}
+\]
+Induction completes the proof.
+\end{proof}
+
+\begin{proof}[Proof of \cref{thm:loops}]
+The first assertion is \cref{lem:iterate}. If a detected loop has already been traversed once at the moment of detection, the newly compiled family naturally uses $n\ge1$. The case $n=0$ is nevertheless a genuine path and is covered only if the ancestor state and its direct exits remain represented.
+
+For the path statement, let $C$ be the returning path and let $Q$ be an exit path beginning at the ancestor state. Every concrete path $C^nQ$ has accumulated reconstruction equal to $n$ repetitions of the loop endomorphism followed by the reconstruction of $Q$. Conversely, every exponent $n$ expands to the concrete path $C^nQ$. Compression is therefore sound and complete for exactly this unary-cycle path family.
+
+If a nontrivial strongly connected component is a directed simple cycle, every path that remains in the component has a unique decomposition into a bounded initial segment, a number of complete cycle traversals, and a bounded final segment leading to an exit. The complete traversals are represented by one exponent, while retaining all bounded segments and exits gives every finite path. The same argument applies recursively to cycles certified to be properly nested in an ancestor stack: induction on nesting depth composes the exact inner and outer path decompositions.
+
+The additional invariants in the theorem are necessary. A canonical return must be de-canonicalized before its endomorphism is read. If $\Phi(p)\ne p$ or $\Phi(s)\ne s$, then
+\[
+  \Phi^2(V)=\Phi(p)\,pVs\,\Phi(s),
+\]
+which need not equal $p^2Vs^2$. If a return exchanges variables or introduces a mirror, that permutation or parity must be represented explicitly. Equality of residual states alone is therefore insufficient.
+\end{proof}
+
+\begin{proof}[Proof of \cref{thm:concurrent}]
+Begin with
+\[
+  XY=YX.
+\]
+In the proper-prefix branch in which the value of $Y$ is a strict prefix of the value of $X$, use the standard safe variable reuse
+\[
+  X\mapsto YX,
+\]
+where the new occurrence of $X$ denotes the nonempty suffix. Substitution gives
+\[
+  (YX)Y=Y(YX),
+\]
+that is,
+\[
+  YXY=YYX.
+\]
+Cancelling the common initial $Y$ returns exactly to
+\[
+  XY=YX.
+\]
+This is the loop $C_X$.
+
+The symmetric proper-prefix branch uses
+\[
+  Y\mapsto XY.
+\]
+It gives
+\[
+  X(XY)=(XY)X,
+\]
+so cancellation of the common initial $X$ again returns to $XY=YX$. This is the distinct loop $C_Y$.
+
+Since both loops start and end at the same residual state, every finite word over $\{C_X,C_Y\}$ is a path in the residual graph. To see that every such path can lead to an actual solution, append the equality exit $Q$ that identifies the two remaining variables, and assign their common value to any nonempty word $u$. Reconstructing backwards through each occurrence of $C_X$ or $C_Y$ preserves non-erasure and makes the declared prefix relation strict, because a nonempty suffix is added at every step. The resulting assignment is therefore a genuine solution of the original equation whose branch history is the prescribed path.
+
+The accumulated endomorphisms are not interchangeable. Write
+\[
+  \alpha(X)=YX,\quad \alpha(Y)=Y,
+  \qquad
+  \beta(X)=X,\quad \beta(Y)=XY.
+\]
+Then, with composition interpreted as substitution into the earlier reconstruction,
+\[
+  \beta(\alpha(X))=XYX,
+  \qquad
+  \alpha(\beta(X))=YX.
+\]
+Thus $\alpha$ and $\beta$ do not commute. In addition, the context $Y$ in $\alpha(X)=YX$ is changed by $\beta$, and the context $X$ in $\beta(Y)=XY$ is changed by $\alpha$. Neither loop is a fixed invariant context relative to the other.
+
+If a mirror equation is adjoined, transport $\alpha$ and $\beta$ by $\mu$ on the mirrored variables. The direct equation returns by initial cancellation and the mirror equation returns by the corresponding terminal or mirrored cancellation, so the two-loop component persists.
+
+It follows that the language of paths from the state to the equality exit contains
+\[
+  \{C_X,C_Y\}^*Q.
+\]
+A finite collection of power templates with a fixed syntactic ordering and finitely many integer exponent parameters cannot automatically represent this language. Indeed, a template with $k$ parameters has at most $O(N^k)$ parameter tuples whose expanded path length is at most $N$, while $\{C_X,C_Y\}^*$ contains $2^N$ words of length $N$. More generally, unary power compilation proves completeness only for the path language it explicitly denotes; it does not replace a Kleene star over two competing cycles.
+
+Therefore an exhaustive procedure must either retain and solve the whole strongly connected component, compile a representation whose denotation includes every finite interleaving, or classify the component as unsupported. This proves the theorem.
+\end{proof}
+
+\begin{corollary}[Safe graph-theoretic cycle criterion]\label{cor:safe-scc}
+A sufficient condition for exhaustive unary power compilation is that every reachable nontrivial strongly connected component of the canonical residual graph be a directed simple cycle after all reconstruction labels and de-canonicalizing renamings are retained. If a component contains two independent returning paths from the same state, the simple-cycle proof does not apply; the component requires a separate completeness argument or an unsupported outcome.
+\end{corollary}
+
+\begin{proof}
+The simple-cycle case is the unique cycle decomposition used in the proof of \cref{thm:loops}. The second statement follows from \cref{thm:concurrent}, which supplies an explicit two-cycle component for which arbitrary interleavings are semantically realizable.
+\end{proof}
+
+\section{Scope of the Six Results}
+
+The first theorem is a geometric repetition theorem for arbitrary Jordan-region monohedral tilings of a circular disk. No smoothness or rectifiability assumption is required. Its oriented endpoint form necessarily depends on direct-versus-reflected parity.
+
+The second theorem is stronger than a signed balance: it produces an actual positive-length concave circular interface. It remains valid when the rest of the boundary is nonrectifiable.
+
+The third theorem is local and exact. It proves completeness of the elementary non-erasing prefix branches, not termination of repeated Nielsen transformations. Any formal system that omits one of the limit branches loses completeness.
+
+The fourth theorem completely classifies nonempty words fixed by a reversal-complement anti-involution only under the fixed-point-free alphabet hypothesis. Under that hypothesis the branch $X=R\mu(R)$ is bijective, including under $\mu$-equivariant canonical signed renamings. Without that hypothesis the branch is incomplete.
+
+The fifth theorem gives an exact unary-cycle compression theorem under certified fixed-context and simple-cycle or proper-nesting hypotheses. It does not justify compilation of arbitrary repeated residual states.
+
+The sixth theorem proves that concurrent and arbitrarily interleavable Nielsen cycles occur already in the elementary commutation equation $XY=YX$. Consequently, disjointness or proper nesting of all cycles is not a general property of complete Nielsen--Levi residual graphs. Any exhaustive procedure must test a sufficient graph restriction, represent the full strongly connected path language, or return an unsupported status.
+
+\begin{thebibliography}{9}
+
+\bibitem{KLV2020}
+A. Kurusa, Z. L\'angi, and V. V\'igh,
+\emph{Tiling a Circular Disc with Congruent Pieces},
+Mediterranean Journal of Mathematics \textbf{17} (2020), Article 156.
+\href{https://doi.org/10.1007/s00009-020-01595-3}{doi:10.1007/s00009-020-01595-3}.
+
+\bibitem{DayManea2024}
+J. D. Day and F. Manea,
+\emph{On the Structure of Solution-Sets to Regular Word Equations},
+Theory of Computing Systems \textbf{68} (2024), 662--739.
+\href{https://doi.org/10.1007/s00224-021-10058-5}{doi:10.1007/s00224-021-10058-5}.
+
+\bibitem{PrzybockiBarrett2025}
+B. Przybocki and C. Barrett,
+\emph{The Termination of Nielsen Transformations Applied to Word Equations with Length Constraints},
+preprint, 2025.
+\href{https://arxiv.org/abs/2501.11789}{arXiv:2501.11789}.
+
+\bibitem{Nielsen1917}
+J. Nielsen,
+\emph{Die Isomorphismen der allgemeinen, unendlichen Gruppe mit zwei Erzeugenden},
+Mathematische Annalen \textbf{78} (1917), 385--397.
+
+\end{thebibliography}
+
+\end{document}

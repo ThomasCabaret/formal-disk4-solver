@@ -79,7 +79,10 @@ class AngleFeasibilityOracle:
     only when transporting signed turns at points strictly inside a mapped
     interface.  At a geometric map vertex the enumerator simply sums all
     incident solid angles: 2*pi for an interior vertex and pi for an outer
-    vertex.  This oracle maximizes a common strict margin.
+    vertex. These are necessary local winding identities. The only rejection is
+    exact rational inconsistency of those equalities; floating LP failure or an
+    unverified strict margin is conservatively returned as unknown/feasible.
+    This oracle maximizes a common strict margin.
     """
 
     def __init__(self, tolerance: float = 1e-9) -> None:
@@ -125,6 +128,8 @@ class AngleFeasibilityOracle:
             self.cache_hits += 1
             return cached
 
+        # FILTER JUSTIFICATION (local): exact Gaussian elimination proves that
+        # the necessary point-angle equalities cannot hold simultaneously.
         if not _exactly_consistent(point_count, normalized):
             result = AngleFeasibilityResult(
                 False, 0.0, (), "infeasible_certified:inconsistent_equalities"

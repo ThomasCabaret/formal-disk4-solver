@@ -56,6 +56,11 @@ class SymmetryAction:
 class MappingSymmetryQuotient:
     """Canonical quotient of complete offset mappings under intrinsic symmetry.
 
+    QUOTIENT JUSTIFICATION: every action is a certified bijective automorphism
+    of the complete combinatorial map. Keeping the lexicographically canonical
+    orbit representative therefore removes only equivalent mappings, never an
+    inequivalent solution.
+
     The quotient acts on the complete weak cyclic order.  Each image is returned
     to the search gauge by orienting the reference copy directly and rotating the
     cyclic order so the first base occurrence of the reference copy lies in block

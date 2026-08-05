@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 class MappingSubdomain:
     """A deterministic, imposed shard of the mapping domain.
 
+    SEARCH-DOMAIN RESTRICTION: rejecting a mapping here is an imposed experiment
+    shard, not a proof that the unrestricted structural case is impossible.
+
     This is deliberately separate from the intrinsic-symmetry quotient.  The
     assignment and cyclic-shift split select one shard, while ``strict_order``
     is enforced incrementally during weak-order enumeration.

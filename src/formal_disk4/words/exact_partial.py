@@ -724,13 +724,118 @@ def _validate_family(
     return True, tuple(assignments)
 
 
+def _non_simple_residual_sccs(
+    edges: Sequence[
+        Tuple[Tuple[object, ...], Tuple[object, ...], cw.CompactTransition]
+    ],
+) -> Tuple[
+    Tuple[
+        frozenset[Tuple[object, ...]],
+        Tuple[Tuple[Tuple[object, ...], Tuple[object, ...], cw.CompactTransition], ...],
+    ],
+    ...,
+]:
+    """Return reachable nontrivial SCCs that are not directed simple cycles.
+
+    FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex,
+    Theorem 1.7 and Corollary 8.2.  Two distinct returning Nielsen paths can
+    interleave arbitrarily, so unary/nested powers are exhaustive only after
+    the explored labelled residual component is certified to be a simple
+    directed cycle.  Parallel edges with different reconstruction labels count
+    as distinct internal edges.
+    """
+
+    unique_edges = set(edges)
+    nodes = {
+        node
+        for source, target, _transition in unique_edges
+        for node in (source, target)
+    }
+    adjacency = {node: set() for node in nodes}
+    reverse = {node: set() for node in nodes}
+    for source, target, _transition in unique_edges:
+        adjacency[source].add(target)
+        reverse[target].add(source)
+
+    # Iterative Kosaraju avoids recursion-depth failures on a large residual graph.
+    seen: set[Tuple[object, ...]] = set()
+    finish_order: list[Tuple[object, ...]] = []
+    for root in sorted(nodes, key=repr):
+        if root in seen:
+            continue
+        stack = [(root, False)]
+        while stack:
+            node, expanded = stack.pop()
+            if expanded:
+                finish_order.append(node)
+                continue
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.append((node, True))
+            stack.extend(
+                (child, False)
+                for child in sorted(adjacency[node], key=repr, reverse=True)
+                if child not in seen
+            )
+
+    components: list[frozenset[Tuple[object, ...]]] = []
+    assigned: set[Tuple[object, ...]] = set()
+    for root in reversed(finish_order):
+        if root in assigned:
+            continue
+        component: set[Tuple[object, ...]] = set()
+        stack = [root]
+        assigned.add(root)
+        while stack:
+            node = stack.pop()
+            component.add(node)
+            for parent in reverse[node]:
+                if parent not in assigned:
+                    assigned.add(parent)
+                    stack.append(parent)
+        components.append(frozenset(component))
+
+    component_index = {
+        node: index
+        for index, component in enumerate(components)
+        for node in component
+    }
+    internal_by_component: list[
+        list[Tuple[Tuple[object, ...], Tuple[object, ...], cw.CompactTransition]]
+    ] = [[] for _component in components]
+    for edge in unique_edges:
+        source_component = component_index[edge[0]]
+        if source_component == component_index[edge[1]]:
+            internal_by_component[source_component].append(edge)
+
+    unsafe = []
+    for component, component_edges in zip(components, internal_by_component):
+        internal = tuple(sorted(component_edges, key=repr))
+        nontrivial = len(component) > 1 or any(
+            source == target for source, target, _transition in internal
+        )
+        if not nontrivial:
+            continue
+        outgoing = {node: 0 for node in component}
+        incoming = {node: 0 for node in component}
+        for source, target, _transition in internal:
+            outgoing[source] += 1
+            incoming[target] += 1
+        if any(outgoing[node] != 1 or incoming[node] != 1 for node in component):
+            unsafe.append((component, internal))
+    return tuple(unsafe)
+
+
 class ExactPartialWordSolver:
     """Exact-partial Nielsen-Levi solver.
 
     Finite branches are emitted directly. A repeated residual state is compiled
-    only when its cycle is a fixed-context power loop. Such loops may be met
-    successively, yielding nested Power expressions. Any other repeated state is
-    recorded as an unsupported complex iterative component and is not unfolded.
+    only when its cycle is a fixed-context power loop (Theorem 1.6 in
+    docs/six_structural_results.tex).  Because individually valid loops can
+    nevertheless interleave, the explored labelled residual graph is audited
+    before an exhaustive status is reported; a non-simple strongly connected
+    component is retained as unsupported (Theorem 1.7 and Corollary 8.2).
     """
 
     def __init__(
@@ -841,6 +946,16 @@ class ExactPartialWordSolver:
         should_stop = stop_predicate or (lambda: False)
         emitted_signatures: set[object] = set()
         seen_search_signatures: set[object] = set()
+        discovered_residuals = {
+            self.initial_residual.signature: self.initial_residual
+        }
+        discovered_edges: set[
+            Tuple[
+                Tuple[object, ...],
+                Tuple[object, ...],
+                cw.CompactTransition,
+            ]
+        ] = set()
         family_id = 0
         stop = False
 
@@ -934,6 +1049,22 @@ class ExactPartialWordSolver:
                 limits.validation_exponent,
             )
             if not valid:
+                # UNSUPPORTED, NOT UNSAT: this is an internal consistency guard
+                # on symbolic reconstruction, not a proof that the underlying
+                # residual state has no solution. Silently dropping the family
+                # would make a later exhaustive-unsat status unsound.
+                counters.unsupported_complex_components += 1
+                self.unsupported_components.append(
+                    UnsupportedComponent(
+                        reason="emitted symbolic family failed exact validation",
+                        trace=tuple(trace),
+                        cycle_length=0,
+                        residual_equations=tuple(
+                            str(equation) for equation in self.original_equations
+                        ),
+                        transformation=(),
+                    )
+                )
                 return
             emitted_signatures.add(signature)
             kind = _family_kind(canonical_map)
@@ -986,6 +1117,8 @@ class ExactPartialWordSolver:
                 limits.max_terminal_contour_segments is not None
                 and environment.terminal_min > limits.max_terminal_contour_segments
             ):
+                # SEARCH-DOMAIN RESTRICTION: this optional terminal-size budget
+                # excludes a branch but is reported as restricted, never unsat.
                 counters.terminal_contour_pruned += 1
                 update_progress(
                     "terminal_contour_cutoff",
@@ -994,6 +1127,8 @@ class ExactPartialWordSolver:
                     trace=trace,
                 )
                 return
+            # RESOURCE LIMIT, NOT UNSAT: stopping graph expansion makes the
+            # result unresolved.
             if limits.max_graph_nodes is not None and counters.visited_states >= limits.max_graph_nodes:
                 counters.graph_limit_reached = True
                 stop = True
@@ -1006,6 +1141,9 @@ class ExactPartialWordSolver:
                 tuple(sorted(minimums.items())),
                 used_cycles,
             )
+            # QUOTIENT JUSTIFICATION: this is the identical canonical residual,
+            # reconstruction environment, exponent domain, and cycle context;
+            # revisiting it would reproduce the same descendant search.
             if search_signature in seen_search_signatures:
                 return
             seen_search_signatures.add(search_signature)
@@ -1014,6 +1152,7 @@ class ExactPartialWordSolver:
                 limits.max_expression_nodes is not None
                 and environment.node_count > limits.max_expression_nodes
             ):
+                # RESOURCE LIMIT, NOT UNSAT: the final status remains unresolved.
                 counters.expression_limit_reached = True
                 return
 
@@ -1036,6 +1175,7 @@ class ExactPartialWordSolver:
                     counters.external_stop_reached = True
                     stop = True
                     return
+                # RESOURCE LIMIT, NOT UNSAT: the final status remains unresolved.
                 if limits.max_graph_edges is not None and counters.graph_edges >= limits.max_graph_edges:
                     counters.graph_limit_reached = True
                     stop = True
@@ -1078,6 +1218,7 @@ class ExactPartialWordSolver:
                     limits.max_residual_literals is not None
                     and raw_literal_count > limits.max_residual_literals
                 ):
+                    # RESOURCE LIMIT, NOT UNSAT: the residual was not solved.
                     counters.residual_literal_limit_reached = True
                     stop = True
                     update_progress(
@@ -1094,11 +1235,22 @@ class ExactPartialWordSolver:
                     ordered_raw_variables,
                     residual.variable_count + 1,
                 )
+                # FILTER JUSTIFICATION (theorem): child=None means exact
+                # cancellation reached empty=nonempty, which has no non-erasing
+                # solution by Theorem 1.4 in docs/six_structural_results.tex.
                 if child is None:
                     continue
 
                 transition = cw.edge_transition(
                     residual.variable_count, substitution, child.rename
+                )
+                discovered_residuals.setdefault(child.signature, child)
+                discovered_edges.add(
+                    (
+                        residual.signature,
+                        child.signature,
+                        cw.transition_signature(transition),
+                    )
                 )
                 replacement_ids = {
                     variable: arena.from_word(word)
@@ -1138,6 +1290,9 @@ class ExactPartialWordSolver:
                                 ancestor.variable_count, loop_transition
                             )
                         if plan is None:
+                            # UNSUPPORTED, NOT UNSAT: Theorem 1.6 licenses only
+                            # fixed-context loops; other returns are retained in
+                            # the summary instead of being declared impossible.
                             counters.unsupported_complex_components += 1
                             self.unsupported_components.append(
                                 UnsupportedComponent(
@@ -1226,6 +1381,31 @@ class ExactPartialWordSolver:
             residual=self.initial_residual,
             environment=initial_environment,
         )
+        for component, internal_edges in _non_simple_residual_sccs(
+            tuple(discovered_edges)
+        ):
+            # UNSUPPORTED, NOT UNSAT: a non-simple SCC denotes interleavings
+            # not covered by the emitted unary/nested powers.  Theorem 1.7 in
+            # docs/six_structural_results.tex gives XY=YX as a concrete case.
+            representative_signature = min(component, key=repr)
+            representative = discovered_residuals[representative_signature]
+            counters.unsupported_complex_components += 1
+            self.unsupported_components.append(
+                UnsupportedComponent(
+                    reason=(
+                        "non-simple residual SCC is not covered by unary/nested "
+                        "power compilation (docs/six_structural_results.tex, "
+                        "Theorem 1.7 and Corollary 8.2)"
+                    ),
+                    trace=(),
+                    cycle_length=len(internal_edges),
+                    residual_equations=tuple(
+                        cw.equation_to_text(equation)
+                        for equation in representative.equations
+                    ),
+                    transformation=(),
+                )
+            )
         exact_unsat = (
             emitted == 0
             and counters.unsupported_complex_components == 0

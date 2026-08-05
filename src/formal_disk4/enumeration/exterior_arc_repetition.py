@@ -22,11 +22,16 @@ class OrderedOuterArc:
 class ExteriorArcRepetitionConstraint:
     """Incremental necessary condition for the supported K4 Stein map shape.
 
-    The transported-exterior-arc theorem used by Kurusa--Langi--Vigh implies
-    that at least two peripheral copies use exactly the same prototype boundary
-    arc. For full map edges,
-    equality is equivalent to equality of both endpoint blocks in the weak
-    cyclic order.
+    FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex, Theorem
+    1.1 (and Corollary 1.2 in the empty-center subcase). At least two copies use
+    the same transported outer arc. Under the Stein center hypothesis the
+    central copy cannot share a nondegenerate transported outer arc with a
+    peripheral copy: undoing the two tile isometries would make an isometry fix
+    the disk center while placing it in two disjoint tile interiors. Hence the
+    repeated pair may be sought among the three peripheral copies.
+
+    For full map edges, equality is equivalent to equality of both endpoint
+    blocks in the weak cyclic order, after reflection parity is normalized.
     """
 
     applicable: bool
@@ -92,8 +97,10 @@ def build_exterior_arc_repetition_constraint(
 
     This deliberately conservative implementation accepts only four-piece Stein
     maps whose three peripheral pieces each own one full nondegenerate outer
-    edge.  The central piece may have no outer contact, a point contact, or its
-    own outer arc; only peripheral arcs participate in the repetition theorem.
+    edge. The central piece may have no outer contact, a point contact, or its
+    own outer arc; the center argument recorded on
+    ExteriorArcRepetitionConstraint excludes it from a nondegenerate repeated
+    pair. If any structural premise is not explicit, the filter is disabled.
     """
 
     if not enabled:

@@ -90,6 +90,12 @@ def encode_problem(
 
 
 def simplify_equation(equation: CompactEquation) -> CompactEquation | bool | None:
+    """Cancel common ends; reject only empty=nonempty under non-erasure.
+
+    FILTER JUSTIFICATION (theorem): cancellation and the non-erasing
+    contradiction are the first step of docs/six_structural_results.tex,
+    Theorem 1.4.
+    """
     left, right = equation
     prefix = 0
     common = min(len(left), len(right))
@@ -285,6 +291,13 @@ def ordered_raw_variables(variables: Sequence[int], parent_variable_count: int) 
 def branch_substitutions(
     equations: Tuple[CompactEquation, ...], variable_count: int
 ) -> Iterator[Tuple[str, CompactSubstitution]]:
+    """Enumerate the complete non-erasing prefix branches.
+
+    FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex, Theorem
+    1.4. The same-variable/opposite-orientation case additionally uses Theorem
+    1.5; packed tokens form fixed-point-free inverse pairs, and signed canonical
+    renamings preserve that involution.
+    """
     left, right = equations[0]
     left_literal = left[0]
     right_literal = right[0]
@@ -295,6 +308,7 @@ def branch_substitutions(
     if left_variable == right_variable:
         if (left_literal & 1) == (right_literal & 1):
             raise RuntimeError("Identical literals should have been cancelled")
+        # Theorem 1.5 gives the unique factorization X = R mu(R).
         yield "involutive_palindrome", (left_variable, (residual, residual ^ 1))
         return
 
@@ -388,6 +402,13 @@ def transition_text(transition: CompactTransition) -> Tuple[Tuple[str, str], ...
 def classify_fixed_context_loop(
     variable_count: int, transition: CompactTransition
 ) -> tuple[LoopPlan | None, str]:
+    """Recognize exactly the unary fixed-context loops of Theorem 1.6.
+
+    This local classification does not establish global exhaustiveness when
+    distinct loops coexist. ExactPartialWordSolver separately audits residual
+    SCCs using Theorem 1.7 and Corollary 8.2 of
+    docs/six_structural_results.tex.
+    """
     variable_set = set(range(variable_count))
     codomain = {item >> 1 for word in transition for item in word}
     if not codomain <= variable_set:

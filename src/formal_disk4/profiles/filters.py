@@ -13,6 +13,8 @@ class ProfileFilter(Protocol):
 
 
 class NonemptyContourFilter:
+    """INTEGRITY FILTER: a geometric prototype must have boundary data."""
+
     name = "nonempty_contour"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -20,6 +22,12 @@ class NonemptyContourFilter:
 
 
 class CyclicNoBacktrackingFilter:
+    """HEURISTIC ONLY: reject an apparent immediate inverse traversal.
+
+    Congruent curve variables need not denote the same geometric occurrence,
+    so this is not a necessary condition and is disabled by default.
+    """
+
     name = "cyclic_no_backtracking"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -34,6 +42,12 @@ class CyclicNoBacktrackingFilter:
 
 
 class PositiveTerminalLengthFilter:
+    """FILTER JUSTIFICATION (local): retained contour atoms are non-erasing.
+
+    Therefore every terminal component must receive a strictly positive length
+    from the already certified exact joint-linear witness.
+    """
+
     name = "positive_terminal_curve_lengths"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -48,6 +62,8 @@ class PositiveTerminalLengthFilter:
 
 
 class SignedAngleClassFilter:
+    """FILTER JUSTIFICATION (local): a Jordan-boundary angle lies in (0, 2pi)."""
+
     name = "signed_angle_classes"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -66,6 +82,12 @@ class SignedAngleClassFilter:
 
 
 class JointAngularFeasibilityFilter:
+    """FILTER JUSTIFICATION (local): all point and turn identities are necessary.
+
+    Strict feasibility is required because degenerate zero/full point angles do
+    not describe the boundary of a Jordan region in the supported formal model.
+    """
+
     name = "joint_point_curve_turn_feasibility"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -86,6 +108,8 @@ class JointAngularFeasibilityFilter:
 
 
 class MappingCoverageFilter:
+    """INTEGRITY FILTER: each declared interface needs one nonempty map."""
+
     name = "mapping_coverage"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -101,6 +125,8 @@ class MappingCoverageFilter:
 
 
 class CurveTemplateCompatibilityFilter:
+    """FILTER JUSTIFICATION (local): a positive arc cannot be straight and circular."""
+
     name = "curve_template_compatibility"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -113,6 +139,12 @@ class CurveTemplateCompatibilityFilter:
 
 
 class OuterCircleDecorationFilter:
+    """INTEGRITY FILTER: require the complete outer-circle formalization.
+
+    This rejects incomplete decorated profiles, not candidates merely because a
+    numerical geometry backend failed to construct them.
+    """
+
     name = "outer_circle_decorations"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -142,6 +174,8 @@ class OuterCircleDecorationFilter:
 
 
 class DeferredSubsumptionFilter:
+    """DEFERRED, NOT REJECTED: subsumption is a cross-profile quotient step."""
+
     name = "decorated_subsumption"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
@@ -149,6 +183,8 @@ class DeferredSubsumptionFilter:
 
 
 class DeferredPolynomialGeometryFilter:
+    """DEFERRED, NOT REJECTED: geometry is checked by the later backend."""
+
     name = "polynomial_geometry"
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:

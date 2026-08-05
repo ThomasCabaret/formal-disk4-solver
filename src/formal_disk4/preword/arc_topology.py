@@ -145,8 +145,16 @@ class RadiusArcTopologyFilter:
     checked for forced traversal of a hard outer endpoint and for forced overlap
     with an oppositely signed known circular interval.
 
+    FILTER JUSTIFICATION (local): an interface is an isometry between boundary
+    arcs. It transports a radius-R circular subarc to a radius-R subarc on the
+    opposite local side, hence reverses its convex/concave sign. A transported
+    smooth arc cannot cross a hard endpoint where the outer circular component
+    ends, and one atomic interval cannot simultaneously have both signs.
+
     This stage performs only topological interval reasoning. Metric balances and
     global curvature identities are handled by a separate exact linear system.
+    Unresolved images and propagation limits are conservative: they lose
+    pruning opportunities but never reject the placement.
     """
 
     def __init__(
@@ -264,8 +272,12 @@ class RadiusArcTopologyFilter:
             nonlocal propagation_truncated
             if interval.sign not in (-1, 1):
                 raise ValueError("Circular interval sign must be +/-1")
+            # FILTER JUSTIFICATION (local): equal endpoints would make this
+            # proper circular component cover the entire prototype contour.
             if interval.start_boundary == interval.end_boundary:
                 return "same-radius circular interval covers the whole prototype"
+            # FILTER JUSTIFICATION (local): a smooth radius-R component cannot
+            # continue through a boundary declared to be its hard outer end.
             if self.enable_endpoint_crossing:
                 for boundary in hard_outer_boundaries:
                     if self._boundary_strictly_inside(
@@ -279,10 +291,14 @@ class RadiusArcTopologyFilter:
                 interval.start_boundary, interval.end_boundary, size
             ):
                 previous = signs.get(index)
+                # FILTER JUSTIFICATION (local): the same open contour atom has
+                # a unique local side, so it cannot be both convex and concave.
                 if previous is not None and previous != interval.sign:
                     return "same atomic interval forced both convex and concave"
             if interval in known:
                 return None
+            # RESOURCE LIMIT, NOT REJECTION: stop propagating and accept the
+            # candidate provisionally when the interval closure becomes large.
             if len(known) >= self.max_intervals:
                 propagation_truncated = True
                 return None
@@ -327,6 +343,10 @@ class RadiusArcTopologyFilter:
                                     continue
                                 endpoint_checks += 1
                                 point = target.prefixes[position]
+                                # FILTER JUSTIFICATION (local): strict metric
+                                # betweenness proves that the mapped smooth arc
+                                # crosses a hard endpoint; no guessed word split
+                                # or floating comparison is used for rejection.
                                 if self._forced_strict_between(
                                     source_start,
                                     point,
@@ -370,6 +390,8 @@ class RadiusArcTopologyFilter:
                                 target, other, variable_index, size
                             ):
                                 overlap_checks += 1
+                                # FILTER JUSTIFICATION (local): a positive-length
+                                # overlap cannot carry opposite circular signs.
                                 if self._forced_positive_overlap(
                                     source_start,
                                     source_end,
@@ -392,6 +414,8 @@ class RadiusArcTopologyFilter:
                             or target_end_index is None
                             or target_start_index >= target_end_index
                         ):
+                            # CONSERVATIVE FALLBACK: without two certified image
+                            # boundaries there is no sound propagated interval.
                             unresolved_images += 1
                             continue
                         target_word = target.word[target_start_index:target_end_index]
