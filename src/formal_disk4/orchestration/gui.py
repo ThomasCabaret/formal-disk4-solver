@@ -10,6 +10,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from formal_disk4.orchestration.catalog_diagrams import CatalogDiagramWindow
 from formal_disk4.orchestration.catalog import CaseCatalog, CaseDefinition
 from formal_disk4.orchestration.pipeline import (
     PipelineCallbacks,
@@ -74,6 +75,11 @@ class PipelineApp:
         ttk.Button(filter_row, text="Clear", command=self._clear_selection).grid(
             row=0, column=2, padx=(6, 0)
         )
+        ttk.Button(
+            filter_row,
+            text="Catalog diagrams...",
+            command=self._show_catalog_diagrams,
+        ).grid(row=0, column=3, padx=(6, 0))
 
         self.case_tree = ttk.Treeview(
             left,
@@ -332,6 +338,24 @@ class PipelineApp:
     def _clear_selection(self) -> None:
         self.selected_cases.clear()
         self._populate_catalog()
+
+    def _show_catalog_diagrams(self) -> None:
+        focused = self.case_tree.focus()
+        initial_case_id = focused[5:] if focused.startswith("case:") else None
+        if initial_case_id is None and self.selected_cases:
+            initial_case_id = next(
+                (
+                    case.case_id
+                    for case in self.catalog.cases
+                    if case.case_id in self.selected_cases
+                ),
+                None,
+            )
+        CatalogDiagramWindow(
+            self.root,
+            self.catalog,
+            initial_case_id=initial_case_id,
+        )
 
     def _parse_arguments(self) -> tuple[str, ...]:
         text = self.arguments_var.get().strip()

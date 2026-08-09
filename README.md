@@ -281,6 +281,12 @@ tasks start immediately and multiple viewers can remain open at the same time.
 A missing or empty geometric solution file opens a viewer displaying
 `No geometric solution` instead of failing the pipeline.
 
+The `Catalog diagrams...` button opens a structural browser.  Its polygonal
+schematics are generated directly from each production `PlanarMap`: a shared
+segment represents a positive-length interface, while a point-only contact is
+shown as a shared vertex without a shared edge.  The shapes are deliberately
+not asserted to be congruent.
+
 Since 1.7.2, the GUI option is named `Resume existing work/checkpoints`. When
 checked, completed pipeline tasks are skipped and solver checkpoints are
 resumed. When unchecked, the pipeline state is cleared and `--restart` is
