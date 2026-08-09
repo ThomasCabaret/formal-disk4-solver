@@ -73,8 +73,28 @@ class MapContext:
 
 
 class SolverRunner:
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        config: Mapping[str, Any],
+        *,
+        planar_maps: Sequence[PlanarMap] | None = None,
+    ) -> None:
         self.config = dict(config)
+        self._provided_planar_maps = (
+            tuple(planar_maps) if planar_maps is not None else None
+        )
+        if self._provided_planar_maps is not None:
+            configured_names = tuple(str(value) for value in self.config["maps"])
+            provided_names = tuple(item.name for item in self._provided_planar_maps)
+            if configured_names != provided_names:
+                raise ValueError(
+                    "Dynamic planar-map names must exactly match config['maps']"
+                )
+            if bool(self.config.get("checkpoint", {}).get("enabled", True)):
+                raise ValueError(
+                    "Dynamic planar maps require checkpoint.enabled=false because "
+                    "their structure is not part of the production config fingerprint"
+                )
         self.stats = RunStats()
         self._last_progress = self.stats.started_at
         self._stop_requested = False
@@ -525,7 +545,12 @@ class SolverRunner:
             if equivariance_enabled
             else None
         )
-        for planar_map in iterate_maps(tuple(self.config["maps"])):
+        planar_maps = (
+            self._provided_planar_maps
+            if self._provided_planar_maps is not None
+            else tuple(iterate_maps(tuple(self.config["maps"])))
+        )
+        for planar_map in planar_maps:
             assignment_enumerator = AssignmentEnumerator(
                 planar_map,
                 allow_reflections=bool(enumeration_config["allow_reflections"]),
