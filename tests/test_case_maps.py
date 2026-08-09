@@ -26,6 +26,12 @@ class CaseMapTests(unittest.TestCase):
                 "k4-minus-point",
                 "k4-minus-arc",
                 "wheel-4",
+                "c3-6plus3-s3",
+                "c3-6plus3-s3b",
+                "c3-6plus3-t2",
+                "c3-6plus3-t3",
+                "c3-6plus3-t2b",
+                "c3-6plus3-t3b",
             ),
         )
         self.assertEqual(canonical_map_name("k3-pizza"), "c3")

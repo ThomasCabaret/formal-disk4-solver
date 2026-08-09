@@ -6,6 +6,14 @@ from typing import Callable, Dict, Iterator, Sequence
 
 from .base import PlanarMap
 from .c3 import build_c3_map
+from .c3_six_plus_three import (
+    build_c3_six_plus_three_s3_map,
+    build_c3_six_plus_three_s3b_map,
+    build_c3_six_plus_three_t2_map,
+    build_c3_six_plus_three_t2b_map,
+    build_c3_six_plus_three_t3_map,
+    build_c3_six_plus_three_t3b_map,
+)
 from .c4 import build_c4_map
 from .centered_two_ring import (
     build_centered_double_cycle_map,
@@ -75,6 +83,36 @@ _REGISTRATIONS = (
         build_wheel_4_map,
         "Four outer tiles forming a cycle around one central tile (wheel W5)",
         aliases=("four-cycle-center",),
+    ),
+    MapRegistration(
+        "c3-6plus3-s3",
+        build_c3_six_plus_three_s3_map,
+        "Six outer and three disjoint inner tiles with imposed C3 structure",
+    ),
+    MapRegistration(
+        "c3-6plus3-s3b",
+        build_c3_six_plus_three_s3b_map,
+        "S3 six-plus-three map with three inner boundary-point contacts",
+    ),
+    MapRegistration(
+        "c3-6plus3-t2",
+        build_c3_six_plus_three_t2_map,
+        "Inner triangle whose tiles each contact two of the six outer tiles",
+    ),
+    MapRegistration(
+        "c3-6plus3-t3",
+        build_c3_six_plus_three_t3_map,
+        "Inner triangle whose tiles each contact three of the six outer tiles",
+    ),
+    MapRegistration(
+        "c3-6plus3-t2b",
+        build_c3_six_plus_three_t2b_map,
+        "T2 six-plus-three map with three inner boundary-point contacts",
+    ),
+    MapRegistration(
+        "c3-6plus3-t3b",
+        build_c3_six_plus_three_t3b_map,
+        "T3 six-plus-three map with three inner boundary-point contacts",
     ),
 )
 

@@ -1,0 +1,75 @@
+{
+  "schema_version": "formal-disk4-case-family-v1",
+  "family_id": "c3-six-plus-three",
+  "label": "C3 families with six outer and three inner tiles",
+  "description": "Nine-tile weak-problem structures extracted from the C3 6+3 schematic specification.",
+  "base_configs": {
+    "search": "config/cycle_campaign/search.json",
+    "geometry": "config/cycle_campaign/geometry.json",
+    "visualize": "config/cycle_campaign/visualizer.json"
+  },
+  "output_template": "output/cases/{case_id}",
+  "tags": [
+    "cyclic",
+    "c3",
+    "six-outer-three-inner",
+    "nine-tiles",
+    "weak-problem",
+    "rotation-1"
+  ],
+  "stage_overrides": {
+    "search": {
+      "enumeration": {
+        "cyclic_equivariance": {
+          "enabled": true,
+          "automorphism": "rotation_1",
+          "enforce_weak_orders": true
+        }
+      }
+    }
+  },
+  "variants": [
+    {
+      "id": "s3",
+      "case_id_template": "c3-6plus3-s3",
+      "label": "C3 6+3 S3 - disjoint inner tiles",
+      "description": "The inner tiles have no positive-length mutual contacts; alternating outer tiles reach the central junction.",
+      "map_template": "c3-6plus3-s3"
+    },
+    {
+      "id": "s3b",
+      "case_id_template": "c3-6plus3-s3b",
+      "label": "C3 6+3 S3b - boundary points",
+      "description": "S3 with three inner tiles reaching the disk boundary at points, opening three alternating outer-cycle contacts.",
+      "map_template": "c3-6plus3-s3b"
+    },
+    {
+      "id": "t2",
+      "case_id_template": "c3-6plus3-t2",
+      "label": "C3 6+3 T2 - inner triangle, external degree 2",
+      "description": "The inner tiles form a triangle and each inner tile has positive-length contacts with two outer tiles.",
+      "map_template": "c3-6plus3-t2"
+    },
+    {
+      "id": "t3",
+      "case_id_template": "c3-6plus3-t3",
+      "label": "C3 6+3 T3 - inner triangle, external degree 3",
+      "description": "The inner tiles form a triangle and each inner tile has positive-length contacts with three outer tiles.",
+      "map_template": "c3-6plus3-t3"
+    },
+    {
+      "id": "t2b",
+      "case_id_template": "c3-6plus3-t2b",
+      "label": "C3 6+3 T2b - boundary points",
+      "description": "T2 with three inner boundary-point contacts and three opened alternating outer-cycle contacts.",
+      "map_template": "c3-6plus3-t2b"
+    },
+    {
+      "id": "t3b",
+      "case_id_template": "c3-6plus3-t3b",
+      "label": "C3 6+3 T3b - boundary points",
+      "description": "T3 with three inner boundary-point contacts and three opened alternating outer-cycle contacts.",
+      "map_template": "c3-6plus3-t3b"
+    }
+  ]
+}
