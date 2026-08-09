@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
@@ -6,6 +7,7 @@ from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.weak_orders import Placement, WeakOrderEnumerator
 from formal_disk4.maps import build_c3_map, build_c4_map
 from formal_disk4.preword import (
+    PREWORD_LINEAR_CURRICULUM_STAGES,
     PrewordLinearInvariantFilter,
     PrewordPruningPipeline,
     RadiusArcTopologyFilter,
@@ -90,6 +92,97 @@ class PrewordCircularArcTests(unittest.TestCase):
             self.assertTrue(result.linear_invariants.signed_radius_balance_derived)
             self.assertTrue(result.linear_invariants.smooth_turn_balance_derived)
             self.assertTrue(result.linear_invariants.point_turn_balance_derived)
+
+    def test_metric_curriculum_is_monotone_and_matches_production(self) -> None:
+        planar_map = build_c3_map()
+        assignments = AssignmentEnumerator(
+            planar_map,
+            allow_reflections=True,
+            symmetry_mode="incremental",
+        )
+        assignment = next(assignments.enumerate())
+        placement = next(
+            WeakOrderEnumerator(
+                planar_map,
+                assignment,
+                assignments.occurrence_names,
+                LengthFeasibilityOracle(),
+                AngleFeasibilityOracle(),
+            ).enumerate()
+        )
+        compiled = compile_word_case(planar_map, placement)
+        topology = RadiusArcTopologyFilter().analyze(
+            planar_map, placement, compiled
+        )
+        linear = PrewordLinearInvariantFilter()
+        production = linear.analyze(planar_map, placement, compiled, topology)
+        curriculum = linear.metric_curriculum(
+            planar_map, placement, compiled, topology
+        )
+        names = tuple(step.name for step in curriculum.steps)
+        self.assertEqual(names, PREWORD_LINEAR_CURRICULUM_STAGES)
+        failed = False
+        for step in curriculum.steps:
+            if failed:
+                self.assertFalse(step.feasible)
+            failed = failed or not step.feasible
+        self.assertEqual(curriculum.steps[-1].feasible, production.feasible)
+        self.assertEqual(
+            curriculum.steps[-1].status, production.point_angle_status
+        )
+        metric_final = next(
+            step for step in curriculum.steps if step.name == "isoperimetric"
+        )
+        self.assertEqual(metric_final.status, production.metric_status)
+        self.assertEqual(metric_final.margin, production.metric_margin)
+
+    def test_metric_curriculum_stops_after_exact_prefix_failure(self) -> None:
+        planar_map = build_c3_map()
+        assignments = AssignmentEnumerator(
+            planar_map,
+            allow_reflections=True,
+            symmetry_mode="incremental",
+        )
+        assignment = next(assignments.enumerate())
+        placement = next(
+            WeakOrderEnumerator(
+                planar_map,
+                assignment,
+                assignments.occurrence_names,
+                LengthFeasibilityOracle(),
+                AngleFeasibilityOracle(),
+            ).enumerate()
+        )
+        compiled = compile_word_case(planar_map, placement)
+        topology = RadiusArcTopologyFilter().analyze(
+            planar_map, placement, compiled
+        )
+        impossible = replace(
+            placement,
+            length_rows=(
+                *placement.length_rows,
+                (1, *(0 for _ in range(placement.interval_count - 1))),
+            ),
+        )
+        linear = PrewordLinearInvariantFilter()
+        production = linear.analyze(planar_map, impossible, compiled, topology)
+        curriculum = linear.metric_curriculum(
+            planar_map, impossible, compiled, topology
+        )
+
+        self.assertFalse(production.feasible)
+        self.assertEqual(curriculum.first_failure, "positive_lengths")
+        self.assertEqual(
+            tuple(step.name for step in curriculum.steps),
+            PREWORD_LINEAR_CURRICULUM_STAGES,
+        )
+        self.assertTrue(curriculum.steps[0].exact_certificate_used)
+        self.assertTrue(
+            all(
+                step.status == "blocked_by_prior_failure"
+                for step in curriculum.steps[1:]
+            )
+        )
 
     def test_mapped_circular_arc_cannot_cross_hard_outer_endpoint(self) -> None:
         planar_map = build_c3_map()

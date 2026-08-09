@@ -1,0 +1,49 @@
+{
+  "schema_version": "mapping-lab-deep-experiment-config-v2",
+  "case_id": "wheel-6-half-turn-fertile-abc",
+  "output": {
+    "directory": "output/mapping_lab/studies/wheel-6-repair"
+  },
+  "arms": ["uniform", "local_topology", "length_repair"],
+  "bootstrap": {
+    "minimum_stage_index": 8,
+    "prior_training_max_examples_per_stage": 5000,
+    "source_arm_directories": []
+  },
+  "sampling": {
+    "seed": 20260806,
+    "generations": 1000,
+    "batch_size": 64,
+    "pool_multiplier": 4,
+    "exploration_fraction": 0.15,
+    "mutation_fraction": 0.8,
+    "local_neighbors_per_parent": 64,
+    "max_attempts_per_candidate": 3000
+  },
+  "archive": {
+    "capacity": 5000,
+    "per_failure": 2000
+  },
+  "backend": {
+    "type": "neural_stage_curriculum",
+    "hidden_layers": [128, 64],
+    "learning_rate": 0.001,
+    "l2": 0.00001,
+    "bootstrap_steps": 0,
+    "steps_per_generation": 4,
+    "batch_size": 256,
+    "max_examples_per_stage": 5000
+  },
+  "evaluation": {
+    "hard_timeout_seconds": 20.0,
+    "startup_timeout_seconds": 60.0,
+    "enable_word_solver": true,
+    "word_seconds": 2.0,
+    "max_graph_nodes": 1000,
+    "max_graph_edges": 4000,
+    "max_families": 4,
+    "max_expression_nodes": 2000,
+    "max_terminal_contour_segments": 40,
+    "max_residual_literals": 2000
+  }
+}

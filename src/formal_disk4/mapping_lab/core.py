@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, Tuple
 
+import numpy as np
+from scipy.optimize import linprog
+
 from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
@@ -83,6 +86,27 @@ class MappingCandidate:
 
 
 @dataclass(frozen=True)
+class LengthRepairProbe:
+    """Cheap, non-authoritative score used only to rank mapping proposals."""
+
+    candidate_id: str
+    complete_topology_feasible: bool
+    preword_topology_feasible: bool
+    positive_lengths_feasible: bool
+    positive_length_margin: float | None
+    normalized_length_slack: float | None
+    reason: str
+
+    @property
+    def topology_level(self) -> int:
+        if self.preword_topology_feasible:
+            return 2
+        if self.complete_topology_feasible:
+            return 1
+        return 0
+
+
+@dataclass(frozen=True)
 class LabEvaluation:
     candidate_id: str
     proposal_source: str
@@ -97,6 +121,7 @@ class LabEvaluation:
     length_margin: float | None
     angle_margin: float | None
     events: Tuple[Tuple[str, int], ...]
+    diagnostics: Mapping[str, object]
     masks: Tuple[int, ...]
     blocks: Tuple[Tuple[int, ...], ...]
     word_summary: Mapping[str, object] | None = None
@@ -117,6 +142,7 @@ class LabEvaluation:
             "length_margin": self.length_margin,
             "angle_margin": self.angle_margin,
             "events": dict(self.events),
+            "diagnostics": dict(self.diagnostics),
             "masks": list(self.masks),
             "blocks": [
                 [occurrence_names[item] for item in block]
@@ -141,6 +167,7 @@ class LabEvaluation:
             length_margin=None,
             angle_margin=None,
             events=(),
+            diagnostics={},
             masks=candidate.masks,
             blocks=candidate.blocks,
         )
@@ -161,6 +188,7 @@ class LabEvaluation:
             length_margin=None,
             angle_margin=None,
             events=(),
+            diagnostics={},
             masks=candidate.masks,
             blocks=candidate.blocks,
         )
@@ -232,6 +260,7 @@ class MappingSpace:
         *,
         reference_masks: Sequence[int] | None = None,
         mutation_prefix_fraction: float = 1.0,
+        preferred_mutation_indices: Sequence[int] | None = None,
         proposal_source: str = "uniform",
         proposal_strategy: str = "uniform",
     ) -> MappingCandidate | None:
@@ -250,7 +279,20 @@ class MappingSpace:
                     ),
                 ),
             )
-            mutation_index = rng.randrange(mutation_limit)
+            preferred = tuple(
+                sorted(
+                    {
+                        int(index) % len(reference_masks)
+                        for index in (preferred_mutation_indices or ())
+                        if int(index) % len(reference_masks) < mutation_limit
+                    }
+                )
+            )
+            mutation_index = (
+                int(rng.choice(preferred))
+                if preferred
+                else rng.randrange(mutation_limit)
+            )
         while counters != self.split:
             available = 0
             for piece_index, (counter, sequence) in enumerate(
@@ -303,8 +345,180 @@ class MappingSpace:
                 for piece_index, counter in enumerate(counters)
             )
 
+        return self._complete_candidate(
+            tuple(half_blocks),
+            tuple(masks),
+            proposal_source=proposal_source,
+            proposal_strategy=proposal_strategy,
+        )
+
+    def local_neighbors(
+        self,
+        reference_masks: Sequence[int],
+        rng: random.Random,
+        *,
+        limit: int = 128,
+        proposal_source: str = "local_repair",
+    ) -> Tuple[Tuple[MappingCandidate, str], ...]:
+        """Return valid one-edit weak-order neighbors of a fertile mapping.
+
+        Unlike :meth:`sample` with ``reference_masks``, these operations never
+        regenerate an arbitrary suffix. They modify only one adjacent boundary:
+        merge, split, commute independent blocks, or shift one piece occurrence
+        across that boundary. ``candidate_from_masks`` remains the final guard
+        for the imposed mapping subdomain and cyclic completion.
+        """
+
+        reference = tuple(int(value) for value in reference_masks)
+        proposals: dict[str, tuple[MappingCandidate, str]] = {}
+
+        def retain(masks: Sequence[int], operator: str) -> None:
+            if len(proposals) >= max(1, int(limit)) * 4:
+                return
+            try:
+                candidate = self.candidate_from_masks(
+                    tuple(int(value) for value in masks),
+                    proposal_source=proposal_source,
+                    proposal_strategy=operator,
+                )
+            except (TypeError, ValueError):
+                return
+            if candidate.masks == reference:
+                return
+            proposals.setdefault(candidate.candidate_id, (candidate, operator))
+
+        for boundary in range(max(0, len(reference) - 1)):
+            left = reference[boundary]
+            right = reference[boundary + 1]
+            before = reference[:boundary]
+            after = reference[boundary + 2 :]
+
+            # Two blocks can coincide only when they contain different pieces.
+            if not left & right:
+                retain((*before, left | right, *after), "local_merge")
+                retain((*before, right, left, *after), "local_swap")
+
+            if left.bit_count() > 1:
+                for bit_index in range(self.piece_count):
+                    bit = 1 << bit_index
+                    if left & bit:
+                        remainder = left ^ bit
+                        retain(
+                            (*before, bit, remainder, right, *after),
+                            "local_split",
+                        )
+                        retain(
+                            (*before, remainder, bit, right, *after),
+                            "local_split",
+                        )
+                    if len(proposals) >= max(1, int(limit)) * 4:
+                        break
+
+            if right.bit_count() > 1:
+                for bit_index in range(self.piece_count):
+                    bit = 1 << bit_index
+                    if right & bit:
+                        remainder = right ^ bit
+                        retain(
+                            (*before, left, bit, remainder, *after),
+                            "local_split",
+                        )
+                        retain(
+                            (*before, left, remainder, bit, *after),
+                            "local_split",
+                        )
+                    if len(proposals) >= max(1, int(limit)) * 4:
+                        break
+
+            # Move one occurrence across the boundary when the destination does
+            # not already contain an occurrence of the same piece.
+            if left.bit_count() > 1:
+                movable = left & ~right
+                for bit_index in range(self.piece_count):
+                    bit = 1 << bit_index
+                    if movable & bit:
+                        retain(
+                            (*before, left ^ bit, right | bit, *after),
+                            "local_shift_right",
+                        )
+            if right.bit_count() > 1:
+                movable = right & ~left
+                for bit_index in range(self.piece_count):
+                    bit = 1 << bit_index
+                    if movable & bit:
+                        retain(
+                            (*before, left | bit, right ^ bit, *after),
+                            "local_shift_left",
+                        )
+
+        values = list(proposals.values())
+        rng.shuffle(values)
+        return tuple(values[: max(1, int(limit))])
+
+    def candidate_from_masks(
+        self,
+        masks: Sequence[int],
+        *,
+        proposal_source: str = "recovered",
+        proposal_strategy: str = "recovered",
+    ) -> MappingCandidate:
+        """Rebuild and validate a mapping from its fundamental cyclic masks."""
+        counters = tuple(0 for _ in self.prefixes)
+        half_blocks: list[Tuple[int, ...]] = []
+        normalized_masks = tuple(int(value) for value in masks)
+        for block_index, mask in enumerate(normalized_masks):
+            available = 0
+            for piece_index, (counter, sequence) in enumerate(
+                zip(counters, self.prefixes)
+            ):
+                if counter < len(sequence):
+                    available |= 1 << piece_index
+            if mask <= 0 or mask & ~available:
+                raise ValueError(f"invalid recovered mapping mask at block {block_index}")
+            if not half_blocks and not mask & (1 << self.reference_index):
+                raise ValueError("recovered mapping violates the reference-piece anchor")
+            if not self.subdomain.allows_next_block(
+                counters,
+                mask,
+                self.assignment.sequences,
+                self.split,
+            ):
+                raise ValueError("recovered mapping violates its mapping subdomain")
+            block = tuple(
+                sorted(
+                    self.prefixes[piece_index][counters[piece_index]]
+                    for piece_index in range(self.piece_count)
+                    if mask & (1 << piece_index)
+                )
+            )
+            half_blocks.append(block)
+            counters = tuple(
+                counter + (1 if mask & (1 << piece_index) else 0)
+                for piece_index, counter in enumerate(counters)
+            )
+        if counters != self.split:
+            raise ValueError("recovered mapping masks do not complete the cyclic split")
+        candidate = self._complete_candidate(
+            tuple(half_blocks),
+            normalized_masks,
+            proposal_source=proposal_source,
+            proposal_strategy=proposal_strategy,
+        )
+        if candidate is None:
+            raise ValueError("recovered mapping violates its leaf constraint")
+        return candidate
+
+    def _complete_candidate(
+        self,
+        half_blocks: Tuple[Tuple[int, ...], ...],
+        masks: Tuple[int, ...],
+        *,
+        proposal_source: str,
+        proposal_strategy: str,
+    ) -> MappingCandidate | None:
+
         full_blocks: list[Tuple[int, ...]] = []
-        current = tuple(half_blocks)
+        current = half_blocks
         for _ in range(self.subdomain.cyclic_action_order):
             full_blocks.extend(current)
             current = tuple(
@@ -325,6 +539,35 @@ class MappingSpace:
             proposal_source=str(proposal_source),
             proposal_strategy=str(proposal_strategy),
         )
+
+    def mapping_masks_from_feature_vector(
+        self, features: Sequence[float]
+    ) -> tuple[int, ...]:
+        """Invert the lossless rank prefix of :meth:`mapping_feature_vector`."""
+        values = tuple(float(value) for value in features)
+        if len(values) != self.mapping_feature_dimension:
+            raise ValueError("mapping feature dimension mismatch")
+        occurrence_count = sum(self.split)
+        block_count = int(round(values[-1] * occurrence_count))
+        if block_count <= 0 or block_count > occurrence_count:
+            raise ValueError("encoded mapping block count is invalid")
+        denominator = max(1, block_count - 1)
+        ranks = tuple(
+            int(round(value * denominator))
+            for value in values[:occurrence_count]
+        )
+        if any(rank < 0 or rank >= block_count for rank in ranks):
+            raise ValueError("encoded mapping rank is invalid")
+        masks = [0] * block_count
+        offset = 0
+        for piece_index, count in enumerate(self.split):
+            for rank in ranks[offset : offset + count]:
+                masks[rank] |= 1 << piece_index
+            offset += count
+        if any(mask == 0 for mask in masks):
+            raise ValueError("encoded mapping contains an empty block")
+        candidate = self.candidate_from_masks(tuple(masks))
+        return candidate.masks
 
     @property
     def mapping_feature_dimension(self) -> int:
@@ -386,6 +629,8 @@ class CompleteMappingEvaluator:
         topology_config = preword_config.get("topology", {})
         linear_config = preword_config.get("linear_invariants", {})
         self._events: Counter[str] = Counter()
+        self._current_diagnostics: dict[str, object] = {}
+        self._repair_tolerance = tolerance
         prefix = PrefixRadiusArcTopologyFilter(
             space.planar_map,
             space.assignment,
@@ -395,6 +640,7 @@ class CompleteMappingEvaluator:
             ),
             max_intervals=int(topology_config.get("max_intervals", 1024)),
         )
+        self.prefix_topology = prefix
         self.enumerator = WeakOrderEnumerator(
             planar_map=space.planar_map,
             assignment=space.assignment,
@@ -446,6 +692,177 @@ class CompleteMappingEvaluator:
             ),
             enable_topology=bool(topology_config.get("enabled", True)),
             enable_linear_invariants=bool(linear_config.get("enabled", True)),
+        )
+
+    def _positive_length_result(
+        self,
+        block_count: int,
+        length_rows: Sequence[Sequence[int]],
+    ) -> tuple[bool, float | None]:
+        """Cheap proposal-only LP for the first positive-length condition.
+
+        This is deliberately not an acceptance test. Selected proposals still
+        pass through the production exact rational preword pipeline. Running
+        that exact oracle on every local neighbour would dominate the sampler.
+        """
+        width = block_count + 1
+        margin_index = block_count
+        objective = np.zeros(width, dtype=float)
+        objective[margin_index] = -1.0
+        equality_rows = []
+        equality_rhs = []
+        for row in length_rows:
+            padded = np.zeros(width, dtype=float)
+            padded[:block_count] = np.asarray(row, dtype=float)
+            equality_rows.append(padded)
+            equality_rhs.append(0.0)
+        normalization = np.zeros(width, dtype=float)
+        normalization[:block_count] = 1.0
+        equality_rows.append(normalization)
+        equality_rhs.append(1.0)
+        inequalities = np.zeros((block_count, width), dtype=float)
+        for index in range(block_count):
+            inequalities[index, index] = -1.0
+            inequalities[index, margin_index] = 1.0
+        try:
+            solution = linprog(
+                objective,
+                A_ub=inequalities,
+                b_ub=np.zeros(block_count, dtype=float),
+                A_eq=np.asarray(equality_rows, dtype=float),
+                b_eq=np.asarray(equality_rhs, dtype=float),
+                bounds=[(0.0, 1.0)] * block_count + [(0.0, 1.0)],
+                method="highs",
+            )
+        except Exception:
+            return False, None
+        if not solution.success or solution.x is None:
+            return False, None
+        margin = max(0.0, float(solution.x[margin_index]))
+        return margin > self._repair_tolerance, margin
+
+    @staticmethod
+    def _normalized_length_slack(
+        block_count: int,
+        length_rows: Sequence[Sequence[int]],
+    ) -> float | None:
+        """Return a graded LP distance to the positive length cone.
+
+        This relaxation is proposal guidance only. Formal acceptance still uses
+        the production exact rational preword pipeline.
+        """
+
+        normalized = []
+        for raw_row in length_rows:
+            row = np.asarray(tuple(float(value) for value in raw_row), dtype=float)
+            scale = float(np.abs(row).sum())
+            if scale > 0.0:
+                normalized.append(row / scale)
+        if not normalized:
+            return 0.0
+        row_count = len(normalized)
+        width = block_count + row_count
+        objective = np.zeros(width, dtype=float)
+        objective[block_count:] = 1.0 / row_count
+        inequalities = []
+        rhs = []
+        for row_index, row in enumerate(normalized):
+            slack_index = block_count + row_index
+            positive = np.zeros(width, dtype=float)
+            positive[:block_count] = row
+            positive[slack_index] = -1.0
+            inequalities.append(positive)
+            rhs.append(0.0)
+            inequalities.append(-positive)
+            inequalities[-1][slack_index] = -1.0
+            rhs.append(0.0)
+        equality = np.zeros((1, width), dtype=float)
+        equality[0, :block_count] = 1.0
+        # A small interior floor distinguishes a merely nonnegative null-vector
+        # from the strictly positive vector required by the formal system.
+        floor = 1e-3 / max(1, block_count)
+        try:
+            solution = linprog(
+                objective,
+                A_ub=np.asarray(inequalities, dtype=float),
+                b_ub=np.asarray(rhs, dtype=float),
+                A_eq=equality,
+                b_eq=np.asarray([1.0], dtype=float),
+                bounds=[(floor, 1.0)] * block_count
+                + [(0.0, None)] * row_count,
+                method="highs",
+            )
+        except Exception:
+            return None
+        if not solution.success or solution.fun is None:
+            return None
+        return max(0.0, float(solution.fun))
+
+    def repair_probe(self, candidate: MappingCandidate) -> LengthRepairProbe:
+        """Score a complete mapping without running the word solver."""
+
+        positions_list = [-1] * len(self.space.assignments.occurrence_names)
+        for block_index, block in enumerate(candidate.blocks):
+            for occurrence_id in block:
+                positions_list[occurrence_id] = block_index
+        positions = tuple(positions_list)
+        block_count = len(candidate.blocks)
+        complete = self.prefix_topology.analyze(
+            positions, block_count, complete=True
+        )
+        if not complete.feasible:
+            return LengthRepairProbe(
+                candidate.candidate_id,
+                False,
+                False,
+                False,
+                None,
+                None,
+                str(complete.reason),
+            )
+
+        length_rows = self.enumerator._resolved_length_rows(positions, block_count)
+        angle_equations = self.enumerator._resolved_angle_equations(
+            positions, block_count
+        )
+        placement = Placement(
+            placement_id=-1,
+            assignment=self.space.assignment,
+            blocks=candidate.blocks,
+            positions=positions,
+            length_rows=length_rows,
+            length_margin=0.0,
+            length_witness=(),
+            angle_equations=angle_equations,
+            angle_margin=0.0,
+            angle_witness=(),
+        )
+        compiled = compile_word_case(self.space.planar_map, placement)
+        topology = self.preword.topology_filter.analyze(
+            self.space.planar_map, placement, compiled
+        )
+        if not topology.feasible:
+            return LengthRepairProbe(
+                candidate.candidate_id,
+                True,
+                False,
+                False,
+                None,
+                None,
+                str(topology.reason),
+            )
+        positive, margin = self._positive_length_result(block_count, length_rows)
+        slack = 0.0 if positive else self._normalized_length_slack(
+            block_count, length_rows
+        )
+        return LengthRepairProbe(
+            candidate.candidate_id,
+            True,
+            True,
+            positive,
+            margin,
+            slack,
+            "feasible",
         )
 
     def _record_event(self, name: str, amount: int = 1) -> None:
@@ -503,6 +920,14 @@ class CompleteMappingEvaluator:
     def evaluate(self, candidate: MappingCandidate) -> LabEvaluation:
         started = time.perf_counter()
         self._events = Counter()
+        self._current_diagnostics = {}
+        if bool(self.config.get("enable_learning_diagnostics", False)):
+            try:
+                self._current_diagnostics = self._learning_diagnostics(candidate)
+            except Exception as error:
+                self._current_diagnostics = {
+                    "diagnostic_error": f"{type(error).__name__}: {error}"
+                }
         placements = tuple(
             self.enumerator._evaluate_cyclic_leaf(  # isolated production adapter
                 candidate.blocks,
@@ -527,6 +952,23 @@ class CompleteMappingEvaluator:
         preword = self.preword.analyze(
             self.space.planar_map, placement, compiled
         )
+        if (
+            bool(self.config.get("enable_deep_curriculum_diagnostics", False))
+            and preword.topology.feasible
+        ):
+            try:
+                self._current_diagnostics["preword_linear_curriculum"] = (
+                    self.preword.linear_filter.metric_curriculum(
+                        self.space.planar_map,
+                        placement,
+                        compiled,
+                        preword.topology,
+                    ).to_dict()
+                )
+            except Exception as error:
+                self._current_diagnostics["diagnostic_error"] = (
+                    f"{type(error).__name__}: {error}"
+                )
         if not preword.topology.feasible:
             return self._result(
                 candidate,
@@ -563,6 +1005,77 @@ class CompleteMappingEvaluator:
         return self._evaluate_word_case(
             candidate, placement, compiled, started, events
         )
+
+    def _learning_diagnostics(
+        self, candidate: MappingCandidate
+    ) -> dict[str, object]:
+        positions_list = [-1] * len(self.space.assignments.occurrence_names)
+        for block_index, block in enumerate(candidate.blocks):
+            for occurrence_id in block:
+                positions_list[occurrence_id] = block_index
+        positions = tuple(positions_list)
+        block_count = len(candidate.blocks)
+        prefix = self.prefix_topology.analyze(positions, block_count)
+        complete = self.prefix_topology.analyze(
+            positions, block_count, complete=True
+        )
+        length_rows = self.enumerator._resolved_length_rows(positions, block_count)
+        length = self.enumerator.length_oracle.analyze(
+            block_count, length_rows, need_witness=True
+        )
+        angle_equations = self.enumerator._resolved_angle_equations(
+            positions, block_count
+        )
+        angle = self.enumerator.angle_oracle.analyze(
+            block_count, angle_equations, need_witness=True
+        )
+        placement = Placement(
+            placement_id=-1,
+            assignment=self.space.assignment,
+            blocks=candidate.blocks,
+            positions=positions,
+            length_rows=length_rows,
+            length_margin=length.margin,
+            length_witness=length.lengths,
+            angle_equations=angle_equations,
+            angle_margin=angle.margin,
+            angle_witness=angle.turns_pi,
+        )
+        compiled = compile_word_case(self.space.planar_map, placement)
+        preword = self.preword.analyze(
+            self.space.planar_map, placement, compiled
+        )
+        def topology_record(result: Any) -> dict[str, object]:
+            return {
+                "applicable": bool(result.applicable),
+                "feasible": bool(result.feasible),
+                "reason": str(result.reason),
+                "stable_interfaces": int(result.stable_interfaces),
+                "stable_outer_arcs": int(result.stable_outer_arcs),
+                "topology": (
+                    result.topology.to_dict()
+                    if result.topology is not None
+                    else None
+                ),
+            }
+
+        return {
+            "prefix_topology": topology_record(prefix),
+            "complete_topology": topology_record(complete),
+            "length": {
+                "feasible": bool(length.feasible),
+                "margin": float(length.margin),
+                "status": str(length.status),
+                "equation_count": len(length_rows),
+            },
+            "angle": {
+                "feasible": bool(angle.feasible),
+                "margin": float(angle.margin),
+                "status": str(angle.status),
+                "equation_count": len(angle_equations),
+            },
+            "preword": preword.to_dict(),
+        }
 
     def _evaluate_word_case(
         self,
@@ -626,8 +1139,8 @@ class CompleteMappingEvaluator:
             word_summary=summary,
         )
 
-    @staticmethod
     def _result(
+        self,
         candidate: MappingCandidate,
         *,
         status: str,
@@ -662,6 +1175,7 @@ class CompleteMappingEvaluator:
             length_margin=length_margin,
             angle_margin=angle_margin,
             events=tuple(sorted((str(key), int(value)) for key, value in events.items())),
+            diagnostics=dict(self._current_diagnostics),
             masks=candidate.masks,
             blocks=candidate.blocks,
             word_summary=word_summary,

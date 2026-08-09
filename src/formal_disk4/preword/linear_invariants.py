@@ -18,6 +18,80 @@ from formal_disk4.words.compile import CompiledWordCase
 from .arc_topology import RadiusArcTopologyResult
 
 
+PREWORD_LINEAR_CURRICULUM_STAGES = (
+    "positive_lengths",
+    "radius_local",
+    "smooth_turn_local",
+    "radius_global",
+    "smooth_turn_global",
+    "radius_concavity",
+    "isoperimetric",
+    "point_turns",
+)
+
+
+@dataclass(frozen=True)
+class PrewordLinearCurriculumStep:
+    name: str
+    feasible: bool
+    margin: Fraction | None
+    status: str
+    exact_certificate_used: bool
+    equality_count: int
+    inequality_count: int
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "name": self.name,
+            "feasible": self.feasible,
+            "margin": (
+                {
+                    "numerator": self.margin.numerator,
+                    "denominator": self.margin.denominator,
+                    "float": float(self.margin),
+                }
+                if self.margin is not None
+                else None
+            ),
+            "status": self.status,
+            "exact_certificate_used": self.exact_certificate_used,
+            "equality_count": self.equality_count,
+            "inequality_count": self.inequality_count,
+        }
+
+
+@dataclass(frozen=True)
+class PrewordLinearCurriculumResult:
+    steps: Tuple[PrewordLinearCurriculumStep, ...]
+    signed_radius_balance_derived: bool
+    smooth_turn_balance_derived: bool
+    point_turn_balance_derived: bool
+
+    @property
+    def passed_steps(self) -> int:
+        count = 0
+        for step in self.steps:
+            if not step.feasible:
+                break
+            count += 1
+        return count
+
+    @property
+    def first_failure(self) -> str | None:
+        return next((step.name for step in self.steps if not step.feasible), None)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "stage_names": list(PREWORD_LINEAR_CURRICULUM_STAGES),
+            "passed_steps": self.passed_steps,
+            "first_failure": self.first_failure,
+            "signed_radius_balance_derived": self.signed_radius_balance_derived,
+            "smooth_turn_balance_derived": self.smooth_turn_balance_derived,
+            "point_turn_balance_derived": self.point_turn_balance_derived,
+            "steps": [step.to_dict() for step in self.steps],
+        }
+
+
 @dataclass(frozen=True)
 class PrewordLinearInvariantResult:
     feasible: bool
@@ -31,6 +105,8 @@ class PrewordLinearInvariantResult:
     point_turn_balance_derived: bool
     radius_concavity_required: bool
     isoperimetric_bound: Fraction | None
+    metric_margin: Fraction | None = None
+    point_angle_margin: Fraction | None = None
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -44,6 +120,24 @@ class PrewordLinearInvariantResult:
             "smooth_turn_balance_derived": self.smooth_turn_balance_derived,
             "point_turn_balance_derived": self.point_turn_balance_derived,
             "radius_concavity_required": self.radius_concavity_required,
+            "metric_margin": (
+                {
+                    "numerator": self.metric_margin.numerator,
+                    "denominator": self.metric_margin.denominator,
+                    "float": float(self.metric_margin),
+                }
+                if self.metric_margin is not None
+                else None
+            ),
+            "point_angle_margin": (
+                {
+                    "numerator": self.point_angle_margin.numerator,
+                    "denominator": self.point_angle_margin.denominator,
+                    "float": float(self.point_angle_margin),
+                }
+                if self.point_angle_margin is not None
+                else None
+            ),
             "isoperimetric_sqrt_upper_bound": (
                 {
                     "numerator": self.isoperimetric_bound.numerator,
@@ -221,6 +315,7 @@ class PrewordLinearInvariantFilter:
                 False,
                 planar_map.hypotheses.requires_radius_r_concavity,
                 sqrt_bound,
+                metric.margin,
             )
 
         point, point_derived = self._analyze_point_turns(planar_map, placement)
@@ -237,6 +332,8 @@ class PrewordLinearInvariantFilter:
                 point_derived,
                 planar_map.hypotheses.requires_radius_r_concavity,
                 sqrt_bound,
+                metric.margin,
+                point.margin,
             )
 
         return PrewordLinearInvariantResult(
@@ -251,6 +348,125 @@ class PrewordLinearInvariantFilter:
             point_derived,
             planar_map.hypotheses.requires_radius_r_concavity,
             sqrt_bound,
+            metric.margin,
+            point.margin,
+        )
+
+    def metric_curriculum(
+        self,
+        planar_map: PlanarMap,
+        placement: Placement,
+        compiled: CompiledWordCase,
+        topology: RadiusArcTopologyResult,
+    ) -> PrewordLinearCurriculumResult:
+        """Evaluate nested necessary systems for learning diagnostics only.
+
+        Every step only adds constraints.  Therefore a failure can never be
+        followed by a genuine pass, and the final metric system is exactly the
+        one used by :meth:`analyze` in production.
+        """
+        if not topology.feasible:
+            return PrewordLinearCurriculumResult((), False, False, False)
+        steps: list[PrewordLinearCurriculumStep] = []
+        metric, audit, _ = self._analyze_metric(
+            planar_map,
+            placement,
+            compiled,
+            topology,
+            curriculum=steps,
+        )
+        point_derived = False
+        if metric.feasible:
+            point, point_derived = self._analyze_point_turns(planar_map, placement)
+            steps.append(
+                PrewordLinearCurriculumStep(
+                    "point_turns",
+                    point.feasible,
+                    point.margin,
+                    point.status,
+                    point.exact_certificate_used,
+                    len(placement.angle_equations) + 1,
+                    2 * placement.interval_count + 1,
+                )
+            )
+        else:
+            steps.append(
+                PrewordLinearCurriculumStep(
+                    "point_turns",
+                    False,
+                    None,
+                    "blocked_by_prior_failure",
+                    False,
+                    len(placement.angle_equations) + 1,
+                    2 * placement.interval_count + 1,
+                )
+            )
+        return PrewordLinearCurriculumResult(
+            tuple(steps), audit[0], audit[1], point_derived
+        )
+
+    def _record_metric_curriculum_step(
+        self,
+        curriculum: list[PrewordLinearCurriculumStep] | None,
+        name: str,
+        domains: Sequence[str],
+        equalities: Sequence[LinearConstraint],
+        inequalities: Sequence[LinearConstraint],
+        margin_index: int,
+    ) -> None:
+        if curriculum is None:
+            return
+        if any(not step.feasible for step in curriculum):
+            curriculum.append(
+                PrewordLinearCurriculumStep(
+                    name,
+                    False,
+                    None,
+                    "blocked_by_prior_failure",
+                    False,
+                    len(equalities),
+                    len(inequalities),
+                )
+            )
+            return
+        result = self.metric_oracle.analyze(
+            variable_domains=domains,
+            equalities=equalities,
+            inequalities=inequalities,
+            margin_index=margin_index,
+        )
+        curriculum.append(
+            PrewordLinearCurriculumStep(
+                name,
+                result.feasible,
+                result.margin,
+                result.status,
+                result.exact_certificate_used,
+                len(equalities),
+                len(inequalities),
+            )
+        )
+
+    @staticmethod
+    def _record_not_applicable_curriculum_step(
+        curriculum: list[PrewordLinearCurriculumStep] | None,
+        name: str,
+        equalities: Sequence[LinearConstraint],
+        inequalities: Sequence[LinearConstraint],
+    ) -> None:
+        if curriculum is None:
+            return
+        prior_feasible = all(step.feasible for step in curriculum)
+        curriculum.append(
+            PrewordLinearCurriculumStep(
+                name,
+                prior_feasible,
+                None,
+                "not_applicable" if prior_feasible else "blocked_by_prior_failure",
+                False,
+                len(equalities),
+                len(inequalities),
+            )
         )
 
     def _analyze_metric(
@@ -259,6 +475,8 @@ class PrewordLinearInvariantFilter:
         placement: Placement,
         compiled: CompiledWordCase,
         topology: RadiusArcTopologyResult,
+        *,
+        curriculum: list[PrewordLinearCurriculumStep] | None = None,
     ) -> tuple[HybridLinearResult, tuple[bool, bool], Fraction | None]:
         size = len(compiled.atomic_variables)
         variable_index = {name: index for index, name in enumerate(compiled.atomic_variables)}
@@ -285,6 +503,13 @@ class PrewordLinearInvariantFilter:
         def add_inequality(values: Sequence[int | Fraction], rhs: int | Fraction = 0) -> None:
             inequalities.append(LinearConstraint.build(values, rhs))
 
+        # Bounding the margin is redundant for strict feasibility but keeps
+        # every diagnostic prefix bounded.  It is also part of the historical
+        # final production system.
+        values = row()
+        values[margin_index] = 1
+        add_inequality(values, 1)
+
         # Existing interface-length equations remain the primary geometric scale
         # constraints. The normalization only removes the common scale factor.
         for length_equation in placement.length_rows:
@@ -301,7 +526,22 @@ class PrewordLinearInvariantFilter:
             values[margin_index] = 1
             add_inequality(values, 0)
 
-            if self.enable_radius_measures:
+        self._record_metric_curriculum_step(
+            curriculum,
+            "positive_lengths",
+            domains,
+            equalities,
+            inequalities,
+            margin_index,
+        )
+
+        outer_counts = [0] * size
+        for outer in compiled.outer_arcs:
+            counts = self._word_counts(outer.positive_word, variable_index, size)
+            outer_counts = [left + right for left, right in zip(outer_counts, counts)]
+
+        if self.enable_radius_measures:
+            for index in range(size):
                 # Radius-R portions are measures inside an atomic curve; they may
                 # occupy only part of a generic atom before word subdivision.
                 values = row()
@@ -310,13 +550,6 @@ class PrewordLinearInvariantFilter:
                 values[length_offset + index] = -1
                 add_inequality(values, 0)
 
-        outer_counts = [0] * size
-        for outer in compiled.outer_arcs:
-            counts = self._word_counts(outer.positive_word, variable_index, size)
-            outer_counts = [left + right for left, right in zip(outer_counts, counts)]
-
-        local_equalities_before_globals: list[LinearConstraint] = list(equalities)
-        if self.enable_radius_measures:
             for interface in compiled.interfaces:
                 left = self._word_counts(interface.left_positive_word, variable_index, size)
                 right = self._word_counts(interface.right_positive_word, variable_index, size)
@@ -342,6 +575,20 @@ class PrewordLinearInvariantFilter:
                 values = row()
                 values[(negative_offset if sign > 0 else positive_offset) + index] = 1
                 add_equality(values, 0)
+
+        if self.enable_radius_measures:
+            self._record_metric_curriculum_step(
+                curriculum,
+                "radius_local",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "radius_local", equalities, inequalities
+            )
 
         if self.enable_smooth_turns and planar_map.hypotheses.piecewise_c2_boundary:
             for interface in compiled.interfaces:
@@ -374,6 +621,20 @@ class PrewordLinearInvariantFilter:
                 values[length_offset + index] = -2 * sign
                 add_equality(values)
 
+        if self.enable_smooth_turns and planar_map.hypotheses.piecewise_c2_boundary:
+            self._record_metric_curriculum_step(
+                curriculum,
+                "smooth_turn_local",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "smooth_turn_local", equalities, inequalities
+            )
+
         local_equalities_before_globals = list(equalities)
         tile_count = len(planar_map.pieces)
 
@@ -391,6 +652,18 @@ class PrewordLinearInvariantFilter:
             # congruent copies cancels every internal interface with opposite
             # sign; only the physical outer-circle arcs remain.
             equalities.append(radius_equation)
+            self._record_metric_curriculum_step(
+                curriculum,
+                "radius_global",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "radius_global", equalities, inequalities
+            )
 
         smooth_global = row()
         self._add_block(smooth_global, turn_offset, (tile_count,) * size)
@@ -406,6 +679,18 @@ class PrewordLinearInvariantFilter:
             # internal interface turns cancel between the two physical sides,
             # while the disk boundary contributes one full positive turn.
             equalities.append(smooth_equation)
+            self._record_metric_curriculum_step(
+                curriculum,
+                "smooth_turn_global",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "smooth_turn_global", equalities, inequalities
+            )
 
         if (
             self.enable_radius_measures
@@ -418,6 +703,18 @@ class PrewordLinearInvariantFilter:
             self._add_block(values, negative_offset, (-1,) * size)
             values[margin_index] = 1
             add_inequality(values, 0)
+            self._record_metric_curriculum_step(
+                curriculum,
+                "radius_concavity",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "radius_concavity", equalities, inequalities
+            )
 
         sqrt_bound: Fraction | None = None
         if self.enable_isoperimetric:
@@ -433,17 +730,43 @@ class PrewordLinearInvariantFilter:
             self._add_block(values, length_offset, outer_counts)
             self._add_block(values, length_offset, (-sqrt_bound,) * size)
             add_inequality(values, 0)
+            self._record_metric_curriculum_step(
+                curriculum,
+                "isoperimetric",
+                domains,
+                equalities,
+                inequalities,
+                margin_index,
+            )
+        else:
+            self._record_not_applicable_curriculum_step(
+                curriculum, "isoperimetric", equalities, inequalities
+            )
 
-        values = row()
-        values[margin_index] = 1
-        add_inequality(values, 1)
-
-        result = self.metric_oracle.analyze(
-            variable_domains=domains,
-            equalities=equalities,
-            inequalities=inequalities,
-            margin_index=margin_index,
+        failed_step = next(
+            (
+                step
+                for step in curriculum or ()
+                if not step.feasible and step.status != "blocked_by_prior_failure"
+            ),
+            None,
         )
+        if failed_step is not None:
+            # All later systems only add constraints.  Re-solving the complete
+            # system after an exact prefix failure cannot add information.
+            result = HybridLinearResult(
+                False,
+                failed_step.margin,
+                failed_step.status,
+                failed_step.exact_certificate_used,
+            )
+        else:
+            result = self.metric_oracle.analyze(
+                variable_domains=domains,
+                equalities=equalities,
+                inequalities=inequalities,
+                margin_index=margin_index,
+            )
         return result, (radius_derived, smooth_derived), sqrt_bound
 
     def _analyze_point_turns(

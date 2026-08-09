@@ -1,0 +1,28 @@
+{
+  "schema_version": "mapping-lab-positive-control-config-v1",
+  "case_id": "double-cycle-offset-6",
+  "output": {
+    "directory": "output/mapping_lab/positive-control/double-cycle-offset-6"
+  },
+  "split": {
+    "validation_assignments": [2, 7]
+  },
+  "backend": {
+    "seed": 20260809,
+    "hidden_layers": [128, 64],
+    "learning_rate": 0.001,
+    "l2": 0.00001,
+    "offline_steps": 1500,
+    "batch_size": 256
+  },
+  "ranking_fractions": [0.05, 0.1, 0.25],
+  "replay": {
+    "seeds": [20260809, 20260810, 20260811],
+    "warmup": 128,
+    "batch_size": 32,
+    "rounds": 30,
+    "exploration_fraction": 0.15,
+    "initial_training_steps": 300,
+    "steps_per_round": 8
+  }
+}
