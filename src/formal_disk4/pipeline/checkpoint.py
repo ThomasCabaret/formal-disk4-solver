@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Sequence
 
 
 CHECKPOINT_SCHEMA_VERSION = 1
@@ -18,7 +18,11 @@ def _utc_now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def search_fingerprint(config: Mapping[str, Any]) -> str:
+def search_fingerprint(
+    config: Mapping[str, Any],
+    *,
+    raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
+) -> str:
     """Hash only options that change which mathematical cases are processed.
 
     Runtime limits, progress formatting, output paths and checkpoint cadence are
@@ -33,6 +37,11 @@ def search_fingerprint(config: Mapping[str, Any]) -> str:
         "solver": config.get("solver"),
         "filters": config.get("filters"),
     }
+    if raw_assignment_ids_by_map is not None:
+        payload["raw_assignment_ids_by_map"] = {
+            str(map_name): [int(item) for item in assignment_ids]
+            for map_name, assignment_ids in sorted(raw_assignment_ids_by_map.items())
+        }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

@@ -714,6 +714,8 @@ class WeakOrderEnumerator:
             positions=positions,
         )
 
+        if self.mapping_subdomain is not None:
+            self.event_sink("mapping_subdomain_leaf_checks", 1)
         if (
             self.mapping_subdomain is not None
             and not self.mapping_subdomain.allows_leaf(blocks)
@@ -727,12 +729,20 @@ class WeakOrderEnumerator:
         # FILTER JUSTIFICATION (theorem): see
         # ExteriorArcRepetitionConstraint and Theorem 1.1 in
         # docs/six_structural_results.tex.
+        if self.exterior_arc_repetition.applicable:
+            self.event_sink("exterior_arc_repetition_checks", 1)
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
             self._mark_subtree_complete(path, 1)
             return
         # QUOTIENT JUSTIFICATION: retain one representative under certified
         # intrinsic map automorphisms; see MappingSymmetryQuotient.
+        if (
+            self.symmetry_mode != "off"
+            and self.mapping_symmetry is not None
+            and self.mapping_symmetry.complete_mapping_quotient_enabled
+        ):
+            self.event_sink("symmetry_leaf_checks", 1)
         if not self._leaf_is_canonical(blocks):
             self.event_sink("symmetry_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
@@ -916,6 +926,8 @@ class WeakOrderEnumerator:
         for mask in range(1, available_mask + 1):
             if mask & ~available_mask:
                 continue
+            if self.mapping_subdomain is not None:
+                self.event_sink("mapping_subdomain_prefix_checks", 1)
             if (
                 self.mapping_subdomain is not None
                 and not self.mapping_subdomain.allows_next_block(
@@ -994,6 +1006,8 @@ class WeakOrderEnumerator:
                     return
                 if not self._resume_child_allowed(root_path, mask):
                     continue
+                if self.mapping_subdomain is not None:
+                    self.event_sink("mapping_subdomain_prefix_checks", 1)
                 if (
                     self.mapping_subdomain is not None
                     and not self.mapping_subdomain.allows_next_block(
@@ -1025,13 +1039,12 @@ class WeakOrderEnumerator:
         if self.required_cyclic_shift_transform is not None:
             yield from self._enumerate_cyclic_shift()
             return
-        if (
-            self.exterior_arc_repetition.applicable
-            and not self.exterior_arc_repetition.candidate_pairs
-        ):
-            self.event_sink("exterior_arc_repetition_pruned_assignments", 1)
-            self._mark_subtree_complete((), self.total_leaf_mass)
-            return
+        if self.exterior_arc_repetition.applicable:
+            self.event_sink("exterior_arc_repetition_assignment_checks", 1)
+            if not self.exterior_arc_repetition.candidate_pairs:
+                self.event_sink("exterior_arc_repetition_pruned_assignments", 1)
+                self._mark_subtree_complete((), self.total_leaf_mass)
+                return
 
         counters = tuple(0 for _ in self.piece_names)
         positions = tuple(-1 for _ in self.occurrences)
@@ -1047,6 +1060,8 @@ class WeakOrderEnumerator:
                 return
             if self._resuming and mask != self._resume_path[0]:
                 continue
+            if self.mapping_subdomain is not None:
+                self.event_sink("mapping_subdomain_prefix_checks", 1)
             if (
                 self.mapping_subdomain is not None
                 and not self.mapping_subdomain.allows_next_block(
@@ -1139,6 +1154,8 @@ class WeakOrderEnumerator:
             block_count=len(blocks),
             positions=positions,
         )
+        if self.exterior_arc_repetition.applicable:
+            self.event_sink("exterior_arc_repetition_checks", 1)
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             # FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex,
             # Theorem 1.1. Once every possible repeated exterior-arc pair has separated an
@@ -1158,6 +1175,11 @@ class WeakOrderEnumerator:
         )
         # QUOTIENT JUSTIFICATION: the prefix certificate removes only branches
         # whose intrinsic-symmetry orbit already has an earlier representative.
+        if (
+            self.symmetry_mode == "incremental"
+            and len(self.incremental_stabilizer) > 1
+        ):
+            self.event_sink("symmetry_prefix_checks", 1)
         if not self._prefix_is_canonical(blocks):
             self.event_sink("symmetry_pruned_nodes", 1)
             self._mark_subtree_complete(path, self._subtree_leaf_mass(counters))
@@ -1226,6 +1248,13 @@ class WeakOrderEnumerator:
                 block_count=len(blocks),
                 positions=positions,
             )
+        if (
+            complete
+            and self.symmetry_mode != "off"
+            and self.mapping_symmetry is not None
+            and self.mapping_symmetry.complete_mapping_quotient_enabled
+        ):
+            self.event_sink("symmetry_leaf_checks", 1)
         if complete and not self._leaf_is_canonical(blocks):
             # QUOTIENT JUSTIFICATION: the complete intrinsic-symmetry quotient is an integer permutation
             # check. Run it before any newly resolved LP at this leaf and before
@@ -1233,6 +1262,8 @@ class WeakOrderEnumerator:
             self.event_sink("symmetry_pruned_leaves", 1)
             self._mark_subtree_complete(path, 1)
             return
+        if complete and self.mapping_subdomain is not None:
+            self.event_sink("mapping_subdomain_leaf_checks", 1)
         if (
             complete
             and self.mapping_subdomain is not None
@@ -1331,6 +1362,8 @@ class WeakOrderEnumerator:
         )
         candidates = []
         for mask in self._candidate_masks(available_mask):
+            if self.mapping_subdomain is not None:
+                self.event_sink("mapping_subdomain_prefix_checks", 1)
             if (
                 self.mapping_subdomain is not None
                 and not self.mapping_subdomain.allows_next_block(

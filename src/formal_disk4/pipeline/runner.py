@@ -38,6 +38,7 @@ from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 
 from .checkpoint import CheckpointStore, search_fingerprint
 from .heartbeat import HeartbeatReporter
+from .filter_report import AssignmentFilterEvaluation, FilterReport
 from .output import JsonlWriter, NullJsonlWriter, atomic_write_json
 from .stats import RunStats
 
@@ -51,14 +52,19 @@ class MapContext:
     assignment_masses: Tuple[int, ...] = ()
     raw_assignment_ids: Tuple[int, ...] = ()
     mapping_subdomain: MappingSubdomain | None = None
+    assignment_count_before_api_selection: int = 0
 
     def assignment_at(self, assignment_id: int) -> ContourAssignment | None:
-        raw_id = (
+        return self.assignment_enumerator.canonical_assignment_at(
+            self.raw_assignment_id_at(assignment_id)
+        )
+
+    def raw_assignment_id_at(self, assignment_id: int) -> int:
+        return (
             self.raw_assignment_ids[assignment_id]
             if self.raw_assignment_ids
             else assignment_id
         )
-        return self.assignment_enumerator.canonical_assignment_at(raw_id)
 
     def mass_at(self, assignment_id: int) -> int:
         if self.assignment_masses:
@@ -78,15 +84,45 @@ class SolverRunner:
         config: Mapping[str, Any],
         *,
         planar_maps: Sequence[PlanarMap] | None = None,
+        raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
+        collect_assignment_reports: bool = False,
     ) -> None:
         self.config = dict(config)
         self._provided_planar_maps = (
             tuple(planar_maps) if planar_maps is not None else None
         )
+        self._raw_assignment_ids_by_map = {
+            str(map_name): tuple(int(item) for item in assignment_ids)
+            for map_name, assignment_ids in (raw_assignment_ids_by_map or {}).items()
+        }
+        self._collect_assignment_reports = bool(collect_assignment_reports)
+        self._assignment_reports: list[AssignmentFilterEvaluation] = []
+        self._active_assignment_report: Dict[str, object] | None = None
+        configured_map_names = tuple(str(value) for value in self.config["maps"])
+        unknown_selection_maps = set(self._raw_assignment_ids_by_map) - set(
+            configured_map_names
+        )
+        if unknown_selection_maps:
+            raise ValueError(
+                "Assignment selection names maps outside config['maps']: "
+                + ", ".join(sorted(unknown_selection_maps))
+            )
+        for map_name, assignment_ids in self._raw_assignment_ids_by_map.items():
+            if not assignment_ids:
+                raise ValueError(
+                    f"Assignment selection for {map_name!r} must not be empty"
+                )
+            if len(set(assignment_ids)) != len(assignment_ids):
+                raise ValueError(
+                    f"Assignment selection for {map_name!r} contains duplicates"
+                )
+            if any(item < 0 for item in assignment_ids):
+                raise ValueError(
+                    f"Assignment selection for {map_name!r} contains a negative raw id"
+                )
         if self._provided_planar_maps is not None:
-            configured_names = tuple(str(value) for value in self.config["maps"])
             provided_names = tuple(item.name for item in self._provided_planar_maps)
-            if configured_names != provided_names:
+            if configured_map_names != provided_names:
                 raise ValueError(
                     "Dynamic planar-map names must exactly match config['maps']"
                 )
@@ -143,7 +179,14 @@ class SolverRunner:
         )
         self.checkpoint_store = CheckpointStore(
             checkpoint_path,
-            fingerprint=search_fingerprint(self.config),
+            fingerprint=search_fingerprint(
+                self.config,
+                raw_assignment_ids_by_map=(
+                    self._raw_assignment_ids_by_map
+                    if self._raw_assignment_ids_by_map
+                    else None
+                ),
+            ),
             interval_seconds=float(checkpoint_config.get("interval_seconds", 60.0)),
             enabled=bool(checkpoint_config.get("enabled", True)),
             resume=bool(checkpoint_config.get("resume", True)),
@@ -427,7 +470,58 @@ class SolverRunner:
 
     def _event(self, name: str, amount: int = 1) -> None:
         self.stats.increment(name, amount)
-        self._maybe_progress()
+        # Every weak-order node emits placement_nodes before its filter events.
+        # Poll progress once there so adding diagnostic counters cannot multiply
+        # perf_counter calls in the hottest part of deterministic enumeration.
+        if name == "placement_nodes":
+            self._maybe_progress()
+
+    def _start_assignment_report(
+        self, *, map_name: str, raw_assignment_id: int
+    ) -> None:
+        if not self._collect_assignment_reports:
+            return
+        if self._active_assignment_report is not None:
+            raise RuntimeError("Previous assignment report was not finalized")
+        self._active_assignment_report = {
+            "map_name": str(map_name),
+            "raw_assignment_id": int(raw_assignment_id),
+            "canonical_assignment_id": None,
+            "counters_before": dict(self.stats.counters),
+        }
+
+    def _finish_assignment_report(
+        self, *, complete: bool, stop_reason: str
+    ) -> None:
+        active = self._active_assignment_report
+        if active is None:
+            return
+        before = dict(active["counters_before"])
+        delta = {
+            name: int(value) - int(before.get(name, 0))
+            for name, value in self.stats.counters.items()
+            if int(value) - int(before.get(name, 0))
+        }
+        self._assignment_reports.append(
+            AssignmentFilterEvaluation(
+                map_name=str(active["map_name"]),
+                raw_assignment_id=int(active["raw_assignment_id"]),
+                canonical_assignment_id=(
+                    None
+                    if active["canonical_assignment_id"] is None
+                    else int(active["canonical_assignment_id"])
+                ),
+                complete=bool(complete),
+                stop_reason=str(stop_reason),
+                counters=tuple(sorted(delta.items())),
+                filters=FilterReport.from_counters(delta),
+            )
+        )
+        self._active_assignment_report = None
+
+    @property
+    def assignment_reports(self) -> Tuple[AssignmentFilterEvaluation, ...]:
+        return tuple(self._assignment_reports)
 
     def _limit_reached(self, counter_name: str, config_name: str) -> bool:
         value = self.config["limits"].get(config_name)
@@ -605,16 +699,40 @@ class SolverRunner:
             # Always keep the assignment domain lazy. Checkpoints store the raw
             # mixed-radix slot; non-canonical slots are rejected by inexpensive
             # integer permutations without materializing the canonical domain.
-            raw_assignment_ids = (
+            domain_raw_assignment_ids = (
                 mapping_subdomain.assignment_ids(assignment_enumerator)
                 if mapping_subdomain is not None
                 else ()
             )
-            assignment_count = (
-                len(raw_assignment_ids)
+            assignment_count_before_api_selection = (
+                len(domain_raw_assignment_ids)
                 if mapping_subdomain is not None
                 else assignment_enumerator.raw_assignment_count()
             )
+            selected_raw_ids = self._raw_assignment_ids_by_map.get(planar_map.name)
+            if selected_raw_ids is not None:
+                raw_count = assignment_enumerator.raw_assignment_count()
+                invalid = tuple(item for item in selected_raw_ids if item >= raw_count)
+                if invalid:
+                    raise ValueError(
+                        f"Raw assignment ids outside [0, {raw_count}) for "
+                        f"{planar_map.name!r}: {invalid}"
+                    )
+                if mapping_subdomain is not None:
+                    domain_set = set(domain_raw_assignment_ids)
+                    outside_domain = tuple(
+                        item for item in selected_raw_ids if item not in domain_set
+                    )
+                    if outside_domain:
+                        raise ValueError(
+                            "Raw assignment ids are outside the configured mapping "
+                            f"subdomain for {planar_map.name!r}: {outside_domain}"
+                        )
+                raw_assignment_ids = selected_raw_ids
+                assignment_count = len(raw_assignment_ids)
+            else:
+                raw_assignment_ids = domain_raw_assignment_ids
+                assignment_count = assignment_count_before_api_selection
             first_assignment = (
                 assignment_enumerator.assignment_at(
                     raw_assignment_ids[0] if raw_assignment_ids else 0
@@ -692,6 +810,9 @@ class SolverRunner:
                     assignment_masses=assignment_masses,
                     raw_assignment_ids=raw_assignment_ids,
                     mapping_subdomain=mapping_subdomain,
+                    assignment_count_before_api_selection=(
+                        assignment_count_before_api_selection
+                    ),
                 )
             )
             if mapping_subdomain is not None:
@@ -798,6 +919,10 @@ class SolverRunner:
                 context.assignment_enumerator.raw_assignment_count()
                 for context in contexts
             )
+            subdomain_raw = sum(
+                context.assignment_count_before_api_selection for context in contexts
+            )
+            selected_raw = self.stats.get("raw_assignments_in_domain")
             self.stats.increment(
                 "unrestricted_raw_assignments_in_domain", unrestricted
             )
@@ -806,10 +931,15 @@ class SolverRunner:
                     "cyclic_equivariance_assignment_reduction",
                     unrestricted - enumerator_raw,
                 )
-            if enumerator_raw != self.stats.get("raw_assignments_in_domain"):
+            if enumerator_raw != subdomain_raw:
                 self.stats.increment(
                     "mapping_subdomain_assignment_reduction",
-                    enumerator_raw - self.stats.get("raw_assignments_in_domain"),
+                    enumerator_raw - subdomain_raw,
+                )
+            if subdomain_raw != selected_raw:
+                self.stats.increment(
+                    "api_assignment_selection_reduction",
+                    subdomain_raw - selected_raw,
                 )
         self.stats.counters["assignment_slots_in_domain"] = self._total_assignment_count
         self.stats.counters.pop("canonical_assignments_in_domain", None)
@@ -1001,13 +1131,26 @@ class SolverRunner:
                     if self._should_stop():
                         exhausted = False
                         break
+                    raw_assignment_id = context.raw_assignment_id_at(assignment_id)
+                    self._start_assignment_report(
+                        map_name=planar_map.name,
+                        raw_assignment_id=raw_assignment_id,
+                    )
                     assignment = context.assignment_at(assignment_id)
+                    if (
+                        assignment is not None
+                        and self._active_assignment_report is not None
+                    ):
+                        self._active_assignment_report["canonical_assignment_id"] = (
+                            assignment.assignment_id
+                        )
                     self._current_assignment = assignment
                     self._current_occurrence_names = assignment_enumerator.occurrence_names
                     self._set_stage(
                         "assignment_setup",
                         assignment_id=assignment_id,
                     )
+                    self.stats.increment("assignment_quotient_checks")
                     if assignment is None:
                         self.stats.increment("symmetry_pruned_assignments")
                         self._search_state["completed_leaf_mass"] = int(
@@ -1018,6 +1161,10 @@ class SolverRunner:
                         self._search_state["weak_order"] = {}
                         self._mark_top_level_safe()
                         self._save_checkpoint(force=False, completed=False)
+                        self._finish_assignment_report(
+                            complete=True,
+                            stop_reason="intrinsic_symmetry_quotient",
+                        )
                         continue
                     max_assignments = self.config["limits"].get("max_assignments")
                     if (
@@ -1028,6 +1175,10 @@ class SolverRunner:
                         self.stats.stop_reason = "max_assignments"
                         self._stop_requested = True
                         exhausted = False
+                        self._finish_assignment_report(
+                            complete=False,
+                            stop_reason="max_assignments",
+                        )
                         break
                     if not bool(self._search_state.get("assignment_started", False)):
                         self.stats.increment("assignments_processed")
@@ -1168,6 +1319,7 @@ class SolverRunner:
                         }
                         self._set_stage("word_compilation", **placement_context)
                         started = time.perf_counter()
+                        self.stats.increment("word_compilation_checks")
                         try:
                             compiled = compile_word_case(planar_map, placement)
                             self._current_compiled = compiled
@@ -1216,6 +1368,15 @@ class SolverRunner:
                                 # Pre-word pruning is an optimization. Unexpected
                                 # construction errors must never remove a formal case.
                                 self.stats.increment("preword_errors")
+                                failed_phase = str(
+                                    self.preword_pruning.progress_snapshot().get(
+                                        "phase", "unknown"
+                                    )
+                                )
+                                if failed_phase == "topology":
+                                    self.stats.increment("preword_topology_errors")
+                                elif failed_phase == "linear_invariants":
+                                    self.stats.increment("preword_metric_errors")
                                 self._record_unexpected_error(
                                     error_writer,
                                     stage="preword_pruning",
@@ -1235,6 +1396,12 @@ class SolverRunner:
                             if preword_result is not None:
                                 topology = preword_result.topology
                                 linear = preword_result.linear_invariants
+                                if bool(
+                                    preword_config.get("topology", {}).get(
+                                        "enabled", True
+                                    )
+                                ):
+                                    self.stats.increment("preword_topology_checks")
                                 self.stats.increment(
                                     "preword_unresolved_arc_images",
                                     topology.unresolved_images,
@@ -1251,6 +1418,25 @@ class SolverRunner:
                                     self.stats.increment("preword_topology_truncations")
                                 if linear is not None:
                                     self.stats.increment("preword_linear_checks")
+                                    self.stats.increment("preword_metric_checks")
+                                    if linear.point_angle_status == "not_run":
+                                        self.stats.increment(
+                                            "preword_metric_rejections"
+                                        )
+                                        self.stats.increment(
+                                            "preword_metric_rejection_infeasible"
+                                        )
+                                    else:
+                                        self.stats.increment(
+                                            "preword_point_angle_checks"
+                                        )
+                                        if not linear.feasible:
+                                            self.stats.increment(
+                                                "preword_point_angle_rejections"
+                                            )
+                                            self.stats.increment(
+                                                "preword_point_angle_rejection_infeasible"
+                                            )
                                     if linear.metric_exact_certificate_used:
                                         self.stats.increment("preword_metric_exact_certificates")
                                     if linear.point_angle_exact_certificate_used:
@@ -1265,6 +1451,18 @@ class SolverRunner:
                                 self.stats.increment("preword_rejections")
                                 if preword_result.linear_invariants is None:
                                     self.stats.increment("preword_topology_rejections")
+                                    topology_reason_key = (
+                                        preword_result.reason.lower()
+                                        .replace("same-radius ", "")
+                                        .replace("mapped ", "mapped_")
+                                        .replace(" ", "_")
+                                        .replace("/", "_")
+                                        .replace("-", "_")
+                                    )
+                                    self.stats.increment(
+                                        "preword_topology_rejection_"
+                                        + topology_reason_key
+                                    )
                                 else:
                                     self.stats.increment("preword_linear_rejections")
                                 reason_key = (
@@ -1341,6 +1539,7 @@ class SolverRunner:
                         self._set_stage("word_solver", **placement_context)
                         self.stats.increment("solver_cases")
                         families_before = self.stats.get("word_families")
+                        solver_failed = False
                         try:
                             family_iterator = iter(
                                 solver.solve(
@@ -1522,6 +1721,7 @@ class SolverRunner:
                                     exhausted = False
                                     break
                         except Exception as error:
+                            solver_failed = True
                             self.stats.increment("solver_errors")
                             self._record_unexpected_error(
                                 error_writer,
@@ -1536,6 +1736,10 @@ class SolverRunner:
                             )
 
                         summary = solver.last_summary
+                        if not solver_failed:
+                            self.stats.increment(
+                                f"word_solver_status_{summary.status}"
+                            )
                         self.stats.increment("residual_graph_nodes", summary.visited_states)
                         self.stats.increment("residual_graph_edges", summary.graph_edges)
                         self.stats.increment(
@@ -1664,6 +1868,10 @@ class SolverRunner:
                     self._current_word_solver = None
                     if self._should_stop():
                         exhausted = False
+                        self._finish_assignment_report(
+                            complete=False,
+                            stop_reason=self.stats.stop_reason,
+                        )
                         break
 
                     # The assignment iterator exhausted naturally. Its raw weak-order
@@ -1675,6 +1883,10 @@ class SolverRunner:
                     self._search_state["assignment_id"] = assignment_id + 1
                     self._search_state["assignment_started"] = False
                     self._search_state["weak_order"] = {}
+                    self._finish_assignment_report(
+                        complete=True,
+                        stop_reason="completed",
+                    )
                     self._mark_top_level_safe()
                     self._save_checkpoint(force=True, completed=False)
 
@@ -1699,6 +1911,10 @@ class SolverRunner:
                 flush=True,
             )
         finally:
+            self._finish_assignment_report(
+                complete=False,
+                stop_reason=self.stats.stop_reason,
+            )
             self._set_stage("finalizing")
             self._stop_heartbeat()
             if exhausted and not self._stop_requested:
@@ -1782,6 +1998,25 @@ class SolverRunner:
             "unexpected_errors_by_stage": self._unexpected_errors_by_stage(),
             "configuration": self.config,
             "statistics": self.stats.to_dict(),
+            "filter_report": FilterReport.from_counters(
+                self.stats.counters
+            ).to_dict(),
+            "api_input": {
+                "raw_assignment_ids_by_map": {
+                    map_name: list(assignment_ids)
+                    for map_name, assignment_ids in sorted(
+                        self._raw_assignment_ids_by_map.items()
+                    )
+                },
+                "assignment_id_semantics": (
+                    "raw mixed-radix contour-assignment ids before the intrinsic "
+                    "symmetry quotient"
+                ),
+                "collect_assignment_reports": self._collect_assignment_reports,
+            },
+            "assignment_evaluations": [
+                item.to_dict() for item in self._assignment_reports
+            ],
             "progress": {
                 "estimate_semantics": (
                     "Fraction of raw anchored weak cyclic orders accounted for by "
