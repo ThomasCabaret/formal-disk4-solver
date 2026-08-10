@@ -239,6 +239,11 @@ class GraphLabTests(unittest.TestCase):
                 .read_text(encoding="utf-8")
                 .splitlines()[0]
             )
+            coverage = json.loads(
+                (output / "rollout_coverage_metrics.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()[0]
+            )
         self.assertEqual(result.observations, 1)
         self.assertEqual(len(mapping_record["target_vector"]), 26)
         self.assertEqual(mapping_record["rollout_count"], 2)
@@ -256,6 +261,16 @@ class GraphLabTests(unittest.TestCase):
             ),
             2,
         )
+        self.assertTrue(coverage["semantics"]["graph_revisits_enabled"])
+        self.assertTrue(coverage["semantics"]["mapping_revisits_enabled"])
+        self.assertTrue(coverage["semantics"]["weak_order_revisits_enabled"])
+        self.assertEqual(coverage["levels"]["graph"]["permanently_closed"], 0)
+        self.assertEqual(coverage["levels"]["mapping"]["permanently_closed"], 0)
+        self.assertEqual(
+            coverage["levels"]["weak_order"]["permanently_closed"], 0
+        )
+        self.assertEqual(coverage["levels"]["mapping"]["proposals"]["count"], 2)
+        self.assertEqual(coverage["levels"]["mapping"]["rollouts"]["count"], 1)
 
     def test_dedicated_geometry_and_visualizer_configs_load(self) -> None:
         geometry = load_geometry_config(ROOT / "config/graph_lab/geometry.json")

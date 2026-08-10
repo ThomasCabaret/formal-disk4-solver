@@ -28,6 +28,7 @@ formal-disk4-mapping-dashboard = "formal_disk4.mapping_lab.dashboard:main"
 formal-disk4-graph-lab = "formal_disk4.graph_lab.cli:main"
 formal-disk4-graph-coverage = "formal_disk4.graph_lab.coverage:main"
 formal-disk4-graph-dashboard = "formal_disk4.graph_lab.dashboard:main"
+formal-disk4-rollout-audit = "formal_disk4.graph_lab.rollout_audit:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

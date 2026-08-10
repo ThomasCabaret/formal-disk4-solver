@@ -51,6 +51,8 @@ class WeakOrderDecisionObservation:
     predicted_conditional_probabilities: tuple[float, ...]
     predicted_reach_probabilities: tuple[float, ...]
     selection_score: float
+    legal_mask_count: int = 0
+    pooled_mask_count: int = 0
 
     def to_dict(self) -> dict[str, object]:
         state = self.state.to_dict()
@@ -61,6 +63,8 @@ class WeakOrderDecisionObservation:
             "state": state,
             "action": self.action.to_dict(),
             "candidate_count": self.candidate_count,
+            "legal_mask_count": self.legal_mask_count,
+            "pooled_mask_count": self.pooled_mask_count,
             "selection_mode": self.selection_mode,
             "selection_probability": self.selection_probability,
             "policy_entropy": self.policy_entropy,
@@ -87,6 +91,12 @@ class WeakOrderDecisionObservation:
                 for value in payload.get("predicted_reach_probabilities", ())  # type: ignore[union-attr]
             ),
             selection_score=float(payload.get("selection_score", 0.0)),
+            legal_mask_count=int(
+                payload.get("legal_mask_count", payload.get("candidate_count", 1))
+            ),
+            pooled_mask_count=int(
+                payload.get("pooled_mask_count", payload.get("candidate_count", 1))
+            ),
         )
 
 
@@ -713,6 +723,7 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         self.rng = random.Random(self.random_seed)
         self.decisions: list[WeakOrderDecisionObservation] = []
         self.prepared_mapping = self.model.prepare_mapping(self.proposal)
+        self._pool_sizes: dict[WeakOrderStateView, tuple[int, int]] = {}
 
     def propose_masks(
         self, state: WeakOrderStateView, masks: Sequence[int]
@@ -720,6 +731,7 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         values = tuple(int(mask) for mask in masks)
         limit = max(1, int(self.config.get("action_pool_size", 64)))
         if len(values) <= limit:
+            self._pool_sizes[state] = (len(values), len(values))
             return values
         # The control policy must genuinely be uniform over legal actions.
         # Hard-wiring the full mask and singleton masks into every bounded pool
@@ -727,7 +739,9 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         # made the learned/control comparison misleading. The learned policy
         # now ranks a uniformly sampled candidate pool; every legal action has
         # the same positive probability of entering it.
-        return tuple(self.rng.sample(values, limit))
+        pooled = tuple(self.rng.sample(values, limit))
+        self._pool_sizes[state] = (len(values), len(pooled))
+        return pooled
 
     @staticmethod
     def _distribution(scores: Sequence[float], temperature: float) -> np.ndarray:
@@ -793,6 +807,9 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         )[0]
         chosen = actions[chosen_index]
         prediction = predictions[chosen_index]
+        legal_mask_count, pooled_mask_count = self._pool_sizes.pop(
+            state, (len(actions), len(actions))
+        )
         entropy = -float(
             np.sum(probabilities * np.log(np.maximum(probabilities, 1e-12)))
         )
@@ -809,6 +826,8 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
                 ),
                 predicted_reach_probabilities=prediction.reach_probabilities,
                 selection_score=float(scores[chosen_index]),
+                legal_mask_count=legal_mask_count,
+                pooled_mask_count=pooled_mask_count,
             )
         )
         return (chosen.mask,)

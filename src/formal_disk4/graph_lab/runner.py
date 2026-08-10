@@ -16,6 +16,7 @@ from .isomorphism import IsomorphismIndex
 from .mapping import MappingEvaluation, MappingProposal
 from .mapping_model import MappingLearningModel
 from .model import GraphLearningModel
+from .rollout_audit import build_generation_coverage, weak_trajectory_id
 from .space import DualGraphCandidate, GraphSpace, graph_feature_payload
 from .weak_model import WeakOrderLearningModel, WeakOrderRolloutObservation
 
@@ -32,6 +33,7 @@ RESTART_FILES = (
     "deep_mapping_candidates.jsonl",
     "weak_order_rollouts.jsonl",
     "weak_order_training_metrics.jsonl",
+    "rollout_coverage_metrics.jsonl",
     "weak_order_model.pt",
     "deep_weak_order_candidates.jsonl",
     "state.json",
@@ -302,6 +304,7 @@ class GraphLabRunner:
         GraphEvaluation,
         list[tuple[MappingEvaluation, Mapping[str, object]]],
         list[WeakOrderRolloutObservation],
+        tuple[MappingProposal, ...],
     ]:
         amount = max(1, int(self.mapping_sampling.get("mappings_per_graph", 4)))
         pool_size = max(
@@ -367,6 +370,7 @@ class GraphLabRunner:
             self.evaluator.aggregate_mappings(candidate, evaluations),
             records,
             weak_records,
+            pool,
         )
 
     def _mapping_generation_metrics(
@@ -872,9 +876,21 @@ class GraphLabRunner:
         observations = self._load_observations()
         mapping_observations = self._load_mapping_observations()
         weak_order_rollouts = self._load_weak_order_rollouts()
-        seen = IsomorphismIndex()
+        seen_graph_ids = {
+            observation.candidate.graph_id for observation in observations
+        }
+        seen_mapping_ids = {
+            observation.proposal.mapping_id for observation in mapping_observations
+        }
+        seen_trajectory_ids = {
+            weak_trajectory_id(observation) for observation in weak_order_rollouts
+        }
+        # This index is consulted only once below to avoid re-running pending
+        # explicit control seeds after resume. It is not passed to the proposal
+        # generator and therefore never closes a sampled graph neighbourhood.
+        evaluated_graph_index = IsomorphismIndex()
         for observation in observations:
-            seen.add(observation.candidate)
+            evaluated_graph_index.add(observation.candidate)
         archive = DiversityArchive(observations)
         model = GraphLearningModel.load_or_create(
             self.output / "model.pt", self.learning
@@ -929,7 +945,7 @@ class GraphLabRunner:
         pending_known = [
             candidate
             for candidate in self.space.known_seeds
-            if seen.equivalent(candidate) is None
+            if evaluated_graph_index.equivalent(candidate) is None
         ]
         if self.max_training_bytes is None:
             disk_limit = "off"
@@ -982,6 +998,7 @@ class GraphLabRunner:
                     )
                     for _ in range(known_quota)
                 ]
+                generation_graph_pool: list[DualGraphCandidate] = []
                 remaining = target_batch - len(selected)
                 if remaining:
                     pool = self._candidate_pool(
@@ -992,12 +1009,14 @@ class GraphLabRunner:
                             remaining * max(1, int(self.sampling.get("pool_multiplier", 6))),
                         ),
                     )
+                    generation_graph_pool.extend(pool)
                     selected.extend(self._select(pool, model, archive, rng, remaining))
 
                 generation_evaluations = []
                 generation_mapping_records: list[
                     tuple[MappingEvaluation, Mapping[str, object]]
                 ] = []
+                generation_mapping_pool: list[MappingProposal] = []
                 generation_weak_order_records: list[
                     WeakOrderRolloutObservation
                 ] = []
@@ -1013,6 +1032,7 @@ class GraphLabRunner:
                             evaluation,
                             new_mapping_records,
                             new_weak_order_records,
+                            new_mapping_pool,
                         ) = (
                             self._evaluate_with_mapping_ranker(
                                 candidate,
@@ -1026,6 +1046,7 @@ class GraphLabRunner:
                             item for item, _metadata in new_mapping_records
                         ]
                         generation_mapping_records.extend(new_mapping_records)
+                        generation_mapping_pool.extend(new_mapping_pool)
                         generation_weak_order_records.extend(
                             new_weak_order_records
                         )
@@ -1040,7 +1061,6 @@ class GraphLabRunner:
                     observation["selection"] = dict(selection)
                     observation["graph_features"] = graph_feature_payload(candidate)
                     _append_jsonl(self.output / "observations.jsonl", observation)
-                    seen.add(candidate)
                     archive.add(evaluation)
                     observations.append(evaluation)
                     generation_evaluations.append(evaluation)
@@ -1126,6 +1146,32 @@ class GraphLabRunner:
                     self._generation_metrics(
                         generation, generation_records, metrics
                     ),
+                )
+                coverage = build_generation_coverage(
+                    generation,
+                    graph_pool=generation_graph_pool,
+                    graph_records=generation_records,
+                    mapping_pool=generation_mapping_pool,
+                    mapping_records=generation_mapping_records,
+                    weak_rollouts=generation_weak_order_records,
+                    seen_graph_ids=seen_graph_ids,
+                    seen_mapping_ids=seen_mapping_ids,
+                    seen_trajectory_ids=seen_trajectory_ids,
+                )
+                _append_jsonl(
+                    self.output / "rollout_coverage_metrics.jsonl", coverage
+                )
+                seen_graph_ids.update(
+                    evaluation.candidate.graph_id
+                    for evaluation, _selection in generation_records
+                )
+                seen_mapping_ids.update(
+                    evaluation.proposal.mapping_id
+                    for evaluation, _selection in generation_mapping_records
+                )
+                seen_trajectory_ids.update(
+                    weak_trajectory_id(rollout)
+                    for rollout in generation_weak_order_records
                 )
                 if self._output_budget_reached():
                     stop_reason = "max_training_output_bytes"

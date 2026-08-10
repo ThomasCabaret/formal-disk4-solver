@@ -81,6 +81,26 @@ $env:PYTHONPATH="$PWD\src"
 py.exe -m formal_disk4.graph_lab.dashboard --input output\graph_lab\up-to-13\weak_order_training_metrics.jsonl
 ```
 
+## Rollout coverage audit
+
+The compact coverage journal distinguishes the proposal pool from the selected
+rollouts at the graph and mapping levels. For weak orders it records the funnel
+from enumerated masks, through the bounded uniform pool and prefix filters, to
+the single policy choice. It retains selected identifiers only, which is enough
+to compare historical and recent concentration without duplicating the large
+observation files.
+
+```powershell
+$env:PYTHONPATH="$PWD\src"
+py.exe -m formal_disk4.graph_lab.rollout_audit --input output\graph_lab\up-to-13\rollout_coverage_metrics.jsonl --window-generations 50
+```
+
+The report prints unique trajectories, historical revisits, top-choice share,
+effective number of visited identifiers, proposal/rollout structure bins and
+the weak-order decision funnel. `locally-not-selected` always means eligible to
+be sampled again. Graphs, mappings, and weak-order trajectories have no global
+closed set; `permanently-closed` must remain zero at all three levels.
+
 Important durable outputs are:
 
 - `mapping_observations.jsonl`: every fixed mapping, target vector, counters,
@@ -93,6 +113,9 @@ Important durable outputs are:
   state/action decisions and its terminal filter vector;
 - `weak_order_training_metrics.jsonl`: per-filter learned-versus-uniform
   rollout rates and graph-held-out validation metrics;
+- `rollout_coverage_metrics.jsonl`: compact historical/recent coverage,
+  concentration, revisit, and local-nonselection telemetry for all three
+  policy levels;
 - `weak_order_model.pt`: resumable state/action ranker and optimizer;
 - `deep_weak_order_candidates.jsonl`: complete trajectories that reached the
   configured deep-filter threshold;
