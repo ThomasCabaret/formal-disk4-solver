@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations, product
@@ -14,6 +15,11 @@ from .assignments import AssignmentTransform, ContourAssignment, rotate
 from .mapping_subdomain import MappingSubdomain
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 from .symmetry import MappingSymmetryQuotient
+from .weak_policy import (
+    WeakOrderActionView,
+    WeakOrderBranchPolicy,
+    WeakOrderStateView,
+)
 
 if TYPE_CHECKING:
     from formal_disk4.preword.prefix_topology import PrefixRadiusArcTopologyFilter
@@ -87,6 +93,8 @@ class WeakOrderEnumerator:
         mapping_symmetry: MappingSymmetryQuotient | None = None,
         prefix_topology_filter: "PrefixRadiusArcTopologyFilter | None" = None,
         mapping_subdomain: MappingSubdomain | None = None,
+        branch_random_seed: int | None = None,
+        branch_policy: WeakOrderBranchPolicy | None = None,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -112,6 +120,14 @@ class WeakOrderEnumerator:
             )
         self.prefix_topology_filter = prefix_topology_filter
         self.mapping_subdomain = mapping_subdomain
+        self.branch_random_seed = (
+            None if branch_random_seed is None else int(branch_random_seed)
+        )
+        self.branch_policy = branch_policy
+        if self.branch_policy is not None and self.branch_random_seed is not None:
+            raise ValueError(
+                "branch_policy and branch_random_seed are mutually exclusive"
+            )
         self.mapping_symmetry = (
             mapping_symmetry
             if mapping_symmetry is not None or symmetry_mode == "off"
@@ -500,6 +516,93 @@ class WeakOrderEnumerator:
             )
         return tuple(masks)
 
+    def _branch_random_key(
+        self, path: Sequence[int], mask: int
+    ) -> int:
+        if self.branch_random_seed is None:
+            return 0
+        payload = (
+            f"{self.branch_random_seed}:{self.assignment.assignment_id}:"
+            f"{','.join(str(item) for item in path)}:{int(mask)}"
+        ).encode("ascii")
+        return int.from_bytes(
+            hashlib.blake2b(payload, digest_size=8).digest(), "big"
+        )
+
+    def _ordered_masks(
+        self, masks: Sequence[int], path: Sequence[int]
+    ) -> Tuple[int, ...]:
+        values = tuple(int(mask) for mask in masks)
+        if self.branch_random_seed is None:
+            return values
+        return tuple(
+            sorted(values, key=lambda mask: self._branch_random_key(path, mask))
+        )
+
+    def _policy_state(
+        self,
+        *,
+        path: Sequence[int],
+        counters: Sequence[int],
+        targets: Sequence[int],
+        block_count: int,
+        resolved_length_equations: int,
+        resolved_angle_equations: int,
+        available_mask: int,
+        cyclic_shift_half: bool = False,
+    ) -> WeakOrderStateView:
+        return WeakOrderStateView(
+            assignment_id=self.assignment.assignment_id,
+            path=tuple(int(value) for value in path),
+            counters=tuple(int(value) for value in counters),
+            targets=tuple(int(value) for value in targets),
+            block_count=int(block_count),
+            resolved_length_equations=int(resolved_length_equations),
+            resolved_angle_equations=int(resolved_angle_equations),
+            available_mask=int(available_mask),
+            reference_index=self.reference_index,
+            cyclic_shift_half=bool(cyclic_shift_half),
+        )
+
+    def _policy_propose_masks(
+        self,
+        state: WeakOrderStateView,
+        masks: Sequence[int],
+    ) -> Tuple[int, ...]:
+        values = tuple(int(mask) for mask in masks)
+        if self.branch_policy is None:
+            return values
+        available = set(values)
+        proposed = tuple(
+            int(mask) for mask in self.branch_policy.propose_masks(state, values)
+        )
+        if not proposed:
+            raise ValueError("A weak-order policy proposed an empty action pool")
+        if len(set(proposed)) != len(proposed) or any(
+            mask not in available for mask in proposed
+        ):
+            raise ValueError("A weak-order policy proposed an illegal or duplicate mask")
+        return proposed
+
+    def _policy_select_actions(
+        self,
+        state: WeakOrderStateView,
+        actions: Sequence[WeakOrderActionView],
+    ) -> Tuple[int, ...]:
+        if self.branch_policy is None:
+            return tuple(action.mask for action in actions)
+        available = {action.mask for action in actions}
+        selected = tuple(
+            int(mask) for mask in self.branch_policy.select_actions(state, actions)
+        )
+        if not selected:
+            raise ValueError("A weak-order policy selected no action")
+        if len(set(selected)) != len(selected) or any(
+            mask not in available for mask in selected
+        ):
+            raise ValueError("A weak-order policy selected an illegal or duplicate action")
+        return selected
+
     @staticmethod
     def _permutation_order(permutation: Sequence[int]) -> int:
         """Return the order of a finite permutation."""
@@ -762,6 +865,11 @@ class WeakOrderEnumerator:
                         else "prefix_topology_checks",
                         1,
                     )
+                    self._record_topology_micro_outcome(
+                        "prefix_topology",
+                        prefix_topology.feasible,
+                        prefix_topology.reason,
+                    )
                 # FILTER JUSTIFICATION: RadiusArcTopologyFilter documents each
                 # sound interval contradiction used here.
                 if not prefix_topology.feasible:
@@ -790,6 +898,7 @@ class WeakOrderEnumerator:
         length_rows = self._resolved_length_rows(positions, block_count)
         if self.enable_length_filter:
             self.event_sink("length_checks", 1)
+            self.event_sink("complete_length_checks", 1)
         length_result = (
             self.length_oracle.analyze(block_count, length_rows, need_witness=True)
             if self.enable_length_filter
@@ -799,11 +908,13 @@ class WeakOrderEnumerator:
         # exact positive-length contradiction.
         if length_result is not None and not length_result.feasible:
             self.event_sink("length_pruned_nodes", 1)
+            self.event_sink("complete_length_rejections", 1)
             self._mark_subtree_complete(path, 1)
             return
         angle_equations = self._resolved_angle_equations(positions, block_count)
         if self.enable_angle_filter:
             self.event_sink("angle_checks", 1)
+            self.event_sink("complete_angle_checks", 1)
         angle_result = (
             self.angle_oracle.analyze(block_count, angle_equations, need_witness=True)
             if self.enable_angle_filter
@@ -813,6 +924,7 @@ class WeakOrderEnumerator:
         # exact rational inconsistency of necessary angle equations.
         if angle_result is not None and not angle_result.feasible:
             self.event_sink("angle_pruned_nodes", 1)
+            self.event_sink("complete_angle_rejections", 1)
             self._mark_subtree_complete(path, 1)
             return
         if not self._complete_topology_is_feasible(positions, block_count):
@@ -864,6 +976,9 @@ class WeakOrderEnumerator:
                 else "complete_topology_checks",
                 1,
             )
+            self._record_topology_micro_outcome(
+                "complete_topology", result.feasible, result.reason
+            )
         if result.feasible:
             return True
         self.event_sink("complete_topology_pruned_placements", 1)
@@ -884,6 +999,27 @@ class WeakOrderEnumerator:
                     1,
                 )
         return False
+
+    def _record_topology_micro_outcome(
+        self, prefix: str, feasible: bool, reason: str
+    ) -> None:
+        """Expose ordered topology subfilters without changing their verdict."""
+
+        normalized = str(reason).lower()
+        hard_endpoint = "hard outer endpoint" in normalized
+        opposite_sign = (
+            "opposite circular sign" in normalized
+            or "both convex and concave" in normalized
+        )
+        if feasible:
+            self.event_sink(f"{prefix}_hard_outer_endpoint_passes", 1)
+            self.event_sink(f"{prefix}_opposite_circular_sign_passes", 1)
+        elif hard_endpoint:
+            self.event_sink(f"{prefix}_hard_outer_endpoint_rejections", 1)
+        elif opposite_sign:
+            # Endpoint crossing is checked before overlap/sign contradictions.
+            self.event_sink(f"{prefix}_hard_outer_endpoint_passes", 1)
+            self.event_sink(f"{prefix}_opposite_circular_sign_rejections", 1)
 
     def _search_cyclic_shift_half(
         self,
@@ -922,8 +1058,30 @@ class WeakOrderEnumerator:
         for piece_index, (counter, sequence) in enumerate(zip(counters, prefixes)):
             if counter < len(sequence):
                 available_mask |= 1 << piece_index
+        decision_state = None
+        if self.branch_policy is None:
+            candidate_masks: Iterable[int] = range(1, available_mask + 1)
+        else:
+            raw_masks = tuple(
+                mask
+                for mask in range(1, available_mask + 1)
+                if not (mask & ~available_mask)
+            )
+            decision_state = self._policy_state(
+                path=path,
+                counters=counters,
+                targets=target,
+                block_count=len(half_blocks),
+                resolved_length_equations=0,
+                resolved_angle_equations=0,
+                available_mask=available_mask,
+                cyclic_shift_half=True,
+            )
+            candidate_masks = self._policy_propose_masks(
+                decision_state, raw_masks
+            )
         candidates = []
-        for mask in range(1, available_mask + 1):
+        for mask in candidate_masks:
             if mask & ~available_mask:
                 continue
             if self.mapping_subdomain is not None:
@@ -947,6 +1105,25 @@ class WeakOrderEnumerator:
             next_blocks, next_counters = appended
             candidates.append((mask.bit_count(), -mask, mask, next_blocks, next_counters))
         candidates.sort(reverse=True)
+        if self.branch_random_seed is not None:
+            candidates.sort(
+                key=lambda item: self._branch_random_key(path, item[2])
+            )
+        if self.branch_policy is not None and candidates:
+            assert decision_state is not None
+            actions = tuple(
+                WeakOrderActionView(
+                    mask=mask,
+                    next_counters=next_counters,
+                    selected_count=mask.bit_count(),
+                    new_length_equations=0,
+                    new_angle_equations=0,
+                )
+                for _width, _negative, mask, _blocks, next_counters in candidates
+            )
+            selected_masks = self._policy_select_actions(decision_state, actions)
+            by_mask = {item[2]: item for item in candidates}
+            candidates = [by_mask[mask] for mask in selected_masks]
         for _width, _negative_mask, mask, next_blocks, next_counters in candidates:
             if self.stop_predicate():
                 return
@@ -967,7 +1144,38 @@ class WeakOrderEnumerator:
             self.event_sink("cyclic_shift_pruned_assignments", 1)
             self._mark_subtree_complete((), 0)
             return
-        for split_index, split in enumerate(self._cyclic_shift_splits):
+        split_entries = list(enumerate(self._cyclic_shift_splits))
+        if self.branch_policy is not None:
+            zero_counters = tuple(0 for _ in self.target_counters)
+            split_state = self._policy_state(
+                path=(),
+                counters=zero_counters,
+                targets=self.target_counters,
+                block_count=0,
+                resolved_length_equations=0,
+                resolved_angle_equations=0,
+                available_mask=0,
+                cyclic_shift_half=True,
+            )
+            split_actions = tuple(
+                WeakOrderActionView(
+                    mask=-(split_index + 1),
+                    next_counters=tuple(split),
+                    selected_count=sum(split),
+                    new_length_equations=0,
+                    new_angle_equations=0,
+                )
+                for split_index, split in split_entries
+            )
+            selected_markers = self._policy_select_actions(
+                split_state, split_actions
+            )
+            by_marker = {
+                -(split_index + 1): (split_index, split)
+                for split_index, split in split_entries
+            }
+            split_entries = [by_marker[marker] for marker in selected_markers]
+        for split_index, split in split_entries:
             if self.stop_predicate():
                 return
             marker = -(split_index + 1)
@@ -1000,7 +1208,75 @@ class WeakOrderEnumerator:
                     key=lambda item: (-item.bit_count(), item),
                 )
             )
+            first_masks = self._ordered_masks(first_masks, root_path)
             counters = tuple(0 for _ in prefixes)
+            if self.branch_policy is not None:
+                decision_state = self._policy_state(
+                    path=root_path,
+                    counters=counters,
+                    targets=split,
+                    block_count=0,
+                    resolved_length_equations=0,
+                    resolved_angle_equations=0,
+                    available_mask=available_mask,
+                    cyclic_shift_half=True,
+                )
+                first_masks = self._policy_propose_masks(
+                    decision_state, first_masks
+                )
+                policy_candidates = []
+                for mask in first_masks:
+                    if self.mapping_subdomain is not None:
+                        self.event_sink("mapping_subdomain_prefix_checks", 1)
+                    if (
+                        self.mapping_subdomain is not None
+                        and not self.mapping_subdomain.allows_next_block(
+                            counters,
+                            mask,
+                            self.assignment.sequences,
+                            split,
+                        )
+                    ):
+                        self.event_sink("mapping_subdomain_pruned_nodes", 1)
+                        continue
+                    appended = self._append_cyclic_half_block(
+                        prefixes, (), counters, mask
+                    )
+                    if appended is None:
+                        continue
+                    blocks, next_counters = appended
+                    policy_candidates.append((mask, blocks, next_counters))
+                actions = tuple(
+                    WeakOrderActionView(
+                        mask=mask,
+                        next_counters=next_counters,
+                        selected_count=mask.bit_count(),
+                        new_length_equations=0,
+                        new_angle_equations=0,
+                    )
+                    for mask, _blocks, next_counters in policy_candidates
+                )
+                if actions:
+                    selected_masks = self._policy_select_actions(
+                        decision_state, actions
+                    )
+                    by_mask = {item[0]: item for item in policy_candidates}
+                    policy_candidates = [
+                        by_mask[mask] for mask in selected_masks
+                    ]
+                for mask, blocks, next_counters in policy_candidates:
+                    if self.stop_predicate():
+                        return
+                    yield from self._search_cyclic_shift_half(
+                        prefixes,
+                        split,
+                        blocks,
+                        next_counters,
+                        root_path + (mask,),
+                    )
+                if not self.stop_predicate():
+                    self._mark_subtree_complete(root_path, 0)
+                continue
             for mask in first_masks:
                 if self.stop_predicate():
                     return
@@ -1055,11 +1331,48 @@ class WeakOrderEnumerator:
                 key=lambda item: (-item.bit_count(), item),
             )
         )
+        first_masks = self._ordered_masks(first_masks, ())
+        if self.branch_policy is None:
+            for mask in first_masks:
+                if self.stop_predicate():
+                    return
+                if self._resuming and mask != self._resume_path[0]:
+                    continue
+                if self.mapping_subdomain is not None:
+                    self.event_sink("mapping_subdomain_prefix_checks", 1)
+                if (
+                    self.mapping_subdomain is not None
+                    and not self.mapping_subdomain.allows_next_block(
+                        counters, mask, self.assignment.sequences
+                    )
+                ):
+                    self.event_sink("mapping_subdomain_pruned_nodes", 1)
+                    continue
+                result = self._append_block((), counters, positions, mask)
+                if result is None:
+                    continue
+                blocks, new_counters, new_positions = result
+                yield from self._search(
+                    blocks,
+                    new_counters,
+                    new_positions,
+                    previous_length_equation_count=0,
+                    previous_angle_equation_count=0,
+                    path=(mask,),
+                )
+            return
+        decision_state = self._policy_state(
+            path=(),
+            counters=counters,
+            targets=self.target_counters,
+            block_count=0,
+            resolved_length_equations=0,
+            resolved_angle_equations=0,
+            available_mask=available_mask,
+        )
+        first_masks = self._policy_propose_masks(decision_state, first_masks)
+        candidates = []
         for mask in first_masks:
-            if self.stop_predicate():
-                return
-            if self._resuming and mask != self._resume_path[0]:
-                continue
             if self.mapping_subdomain is not None:
                 self.event_sink("mapping_subdomain_prefix_checks", 1)
             if (
@@ -1074,6 +1387,48 @@ class WeakOrderEnumerator:
             if result is None:
                 continue
             blocks, new_counters, new_positions = result
+            next_length_count = len(
+                self._resolved_length_rows(new_positions, len(blocks))
+            )
+            next_angle_count = len(
+                self._resolved_angle_equations(new_positions, len(blocks))
+            )
+            candidates.append(
+                (
+                    mask,
+                    blocks,
+                    new_counters,
+                    new_positions,
+                    next_length_count,
+                    next_angle_count,
+                )
+            )
+        if self.branch_policy is not None and candidates:
+            actions = tuple(
+                WeakOrderActionView(
+                    mask=mask,
+                    next_counters=new_counters,
+                    selected_count=mask.bit_count(),
+                    new_length_equations=next_length_count,
+                    new_angle_equations=next_angle_count,
+                )
+                for (
+                    mask,
+                    _blocks,
+                    new_counters,
+                    _positions,
+                    next_length_count,
+                    next_angle_count,
+                ) in candidates
+            )
+            selected_masks = self._policy_select_actions(decision_state, actions)
+            by_mask = {item[0]: item for item in candidates}
+            candidates = [by_mask[mask] for mask in selected_masks]
+        for mask, blocks, new_counters, new_positions, _lengths, _angles in candidates:
+            if self.stop_predicate():
+                return
+            if self._resuming and mask != self._resume_path[0]:
+                continue
             yield from self._search(
                 blocks,
                 new_counters,
@@ -1213,6 +1568,11 @@ class WeakOrderEnumerator:
                         else "prefix_topology_checks",
                         1,
                     )
+                    self._record_topology_micro_outcome(
+                        "prefix_topology",
+                        prefix_topology.feasible,
+                        prefix_topology.reason,
+                    )
                 # FILTER JUSTIFICATION: RadiusArcTopologyFilter documents each
                 # sound interval contradiction used here.
                 if not prefix_topology.feasible:
@@ -1313,6 +1673,10 @@ class WeakOrderEnumerator:
                 return
 
         if complete:
+            if self.enable_length_filter:
+                self.event_sink("complete_length_checks", 1)
+            if self.enable_angle_filter:
+                self.event_sink("complete_angle_checks", 1)
             length_result = self.length_oracle.analyze(
                 block_count, length_rows, need_witness=True
             ) if self.enable_length_filter else None
@@ -1320,9 +1684,11 @@ class WeakOrderEnumerator:
                 block_count, angle_equations, need_witness=True
             ) if self.enable_angle_filter else None
             if length_result is not None and not length_result.feasible:
+                self.event_sink("complete_length_rejections", 1)
                 self._mark_subtree_complete(path, 1)
                 return
             if angle_result is not None and not angle_result.feasible:
+                self.event_sink("complete_angle_rejections", 1)
                 self._mark_subtree_complete(path, 1)
                 return
             if not self._complete_topology_is_feasible(
@@ -1360,8 +1726,26 @@ class WeakOrderEnumerator:
             block_count=block_count,
             positions=positions,
         )
+        raw_candidate_masks = self._candidate_masks(available_mask)
+        decision_state = None
+        if self.branch_policy is None:
+            candidate_masks = raw_candidate_masks
+        else:
+            decision_state = self._policy_state(
+                path=path,
+                counters=counters,
+                targets=self.target_counters,
+                block_count=block_count,
+                resolved_length_equations=len(length_rows),
+                resolved_angle_equations=len(angle_equations),
+                available_mask=available_mask,
+            )
+            candidate_masks = self._policy_propose_masks(
+                decision_state,
+                raw_candidate_masks,
+            )
         candidates = []
-        for mask in self._candidate_masks(available_mask):
+        for mask in candidate_masks:
             if self.mapping_subdomain is not None:
                 self.event_sink("mapping_subdomain_prefix_checks", 1)
             if (
@@ -1392,6 +1776,25 @@ class WeakOrderEnumerator:
             candidates.append((score, mask, next_blocks, next_counters, next_positions))
 
         candidates.sort(key=lambda item: item[0], reverse=True)
+        if self.branch_random_seed is not None:
+            candidates.sort(
+                key=lambda item: self._branch_random_key(path, item[1])
+            )
+        if self.branch_policy is not None and candidates:
+            assert decision_state is not None
+            actions = tuple(
+                WeakOrderActionView(
+                    mask=mask,
+                    next_counters=next_counters,
+                    selected_count=mask.bit_count(),
+                    new_length_equations=max(0, score[0]),
+                    new_angle_equations=max(0, score[1]),
+                )
+                for score, mask, _blocks, next_counters, _positions in candidates
+            )
+            selected_masks = self._policy_select_actions(decision_state, actions)
+            by_mask = {item[1]: item for item in candidates}
+            candidates = [by_mask[mask] for mask in selected_masks]
         for _score, mask, next_blocks, next_counters, next_positions in candidates:
             if self.stop_predicate():
                 return

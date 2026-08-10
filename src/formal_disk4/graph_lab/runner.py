@@ -9,10 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
+
 from .evaluator import GRAPH_STAGES, GraphEvaluation, GraphFormalEvaluator
 from .isomorphism import IsomorphismIndex
+from .mapping import MappingEvaluation, MappingProposal
+from .mapping_model import MappingLearningModel
 from .model import GraphLearningModel
 from .space import DualGraphCandidate, GraphSpace, graph_feature_payload
+from .weak_model import WeakOrderLearningModel, WeakOrderRolloutObservation
 
 
 RESTART_FILES = (
@@ -21,6 +26,14 @@ RESTART_FILES = (
     "geometry_candidates.jsonl",
     "geometry_graphs.jsonl",
     "model.pt",
+    "mapping_observations.jsonl",
+    "mapping_training_metrics.jsonl",
+    "mapping_model.pt",
+    "deep_mapping_candidates.jsonl",
+    "weak_order_rollouts.jsonl",
+    "weak_order_training_metrics.jsonl",
+    "weak_order_model.pt",
+    "deep_weak_order_candidates.jsonl",
     "state.json",
     "report.json",
     "report.md",
@@ -84,6 +97,14 @@ class DiversityArchive:
     def add(self, observation: GraphEvaluation) -> None:
         cell = _diversity_cell(observation.candidate, observation.stage_index)
         values = self.cells[cell]
+        # Repeated visits to one graph are useful because they sample new
+        # mappings and weak-order trajectories, but they must not evict all
+        # structurally different parents from the diversity archive.
+        values[:] = [
+            item
+            for item in values
+            if item.candidate.graph_id != observation.candidate.graph_id
+        ]
         values.append(observation)
         values.sort(key=lambda item: (-self.reward(item), item.candidate.graph_id))
         del values[8:]
@@ -138,6 +159,17 @@ class GraphLabRunner:
         self.space = GraphSpace.from_config(dict(config.get("space", {})))
         self.sampling = dict(config.get("sampling", {}))
         self.learning = dict(config.get("learning", {}))
+        self.mapping_sampling = dict(config.get("mapping_sampling", {}))
+        self.mapping_learning = dict(config.get("mapping_learning", {}))
+        self.mapping_learning_enabled = bool(
+            self.mapping_sampling.get("enabled", False)
+        )
+        self.weak_order_sampling = dict(config.get("weak_order_sampling", {}))
+        self.weak_order_learning = dict(config.get("weak_order_learning", {}))
+        self.weak_order_learning_enabled = bool(
+            self.mapping_learning_enabled
+            and self.weak_order_sampling.get("enabled", False)
+        )
         self.evaluator = GraphFormalEvaluator(
             self.root, dict(config.get("evaluation", {}))
         )
@@ -168,6 +200,302 @@ class GraphLabRunner:
             for value in _load_jsonl(self.output / "observations.jsonl")
         ]
 
+    def _load_mapping_observations(self) -> list[MappingEvaluation]:
+        return [
+            MappingEvaluation.from_dict(value)
+            for value in _load_jsonl(self.output / "mapping_observations.jsonl")
+        ]
+
+    def _load_weak_order_rollouts(self) -> list[WeakOrderRolloutObservation]:
+        return [
+            WeakOrderRolloutObservation.from_dict(value)
+            for value in _load_jsonl(self.output / "weak_order_rollouts.jsonl")
+        ]
+
+    def _select_mappings(
+        self,
+        pool: Sequence[MappingProposal],
+        model: MappingLearningModel,
+        rng: random.Random,
+        amount: int,
+    ) -> list[tuple[MappingProposal, Mapping[str, object]]]:
+        amount = min(max(1, int(amount)), len(pool))
+        exploration = min(
+            amount,
+            max(
+                1,
+                int(
+                    round(
+                        amount
+                        * float(
+                            self.mapping_sampling.get("exploration_fraction", 0.25)
+                        )
+                    )
+                ),
+            ),
+        )
+        scored = []
+        active_heads = [
+            index for index, active in enumerate(model.active_heads) if active
+        ]
+        for proposal in pool:
+            prediction = model.predict(proposal)
+            utility = (
+                math.log(
+                    max(
+                        1e-12,
+                        prediction.reach_probabilities[active_heads[-1]],
+                    )
+                )
+                if active_heads
+                else 0.0
+            ) - float(
+                self.mapping_sampling.get("cost_weight", 0.02)
+            ) * math.log1p(prediction.expected_seconds)
+            scored.append((utility, proposal, prediction))
+        scored.sort(key=lambda item: (-item[0], item[1].mapping_id))
+        if not active_heads:
+            selected = [
+                (item, "exploration") for item in rng.sample(scored, amount)
+            ]
+        else:
+            random_control = (
+                rng.sample(scored, exploration) if exploration else []
+            )
+            control_ids = {item[1].mapping_id for item in random_control}
+            learned = [
+                item for item in scored if item[1].mapping_id not in control_ids
+            ][: amount - exploration]
+            selected = [(item, "learned") for item in learned]
+            selected.extend((item, "exploration") for item in random_control)
+        return [
+            (
+                proposal,
+                {
+                    "selection_mode": mode,
+                    "selection_score": score,
+                    "predicted_conditional_probabilities": list(
+                        prediction.conditional_probabilities
+                    ),
+                    "predicted_reach_probabilities": list(
+                        prediction.reach_probabilities
+                    ),
+                    "predicted_seconds": prediction.expected_seconds,
+                    "frontier_filter": (
+                        LEARNING_FILTER_IDS[active_heads[-1]]
+                        if active_heads
+                        else None
+                    ),
+                },
+            )
+            for (score, proposal, prediction), mode in selected
+        ]
+
+    def _evaluate_with_mapping_ranker(
+        self,
+        candidate: DualGraphCandidate,
+        model: MappingLearningModel,
+        weak_model: WeakOrderLearningModel,
+        rng: random.Random,
+        generation: int,
+    ) -> tuple[
+        GraphEvaluation,
+        list[tuple[MappingEvaluation, Mapping[str, object]]],
+        list[WeakOrderRolloutObservation],
+    ]:
+        amount = max(1, int(self.mapping_sampling.get("mappings_per_graph", 4)))
+        pool_size = max(
+            amount,
+            amount * max(1, int(self.mapping_sampling.get("pool_multiplier", 8))),
+        )
+        pool = self.evaluator.mapping_pool(candidate, rng, pool_size)
+        selected = self._select_mappings(pool, model, rng, amount)
+        rollouts = max(
+            1,
+            int(
+                self.weak_order_sampling.get(
+                    "rollouts_per_mapping",
+                    self.mapping_sampling.get("rollouts_per_mapping", 2),
+                )
+            ),
+        )
+        seed = int(self.mapping_sampling.get("rollout_seed", 20260810))
+        records: list[tuple[MappingEvaluation, Mapping[str, object]]] = []
+        weak_records: list[WeakOrderRolloutObservation] = []
+
+        def preserve_rollout(observation: WeakOrderRolloutObservation) -> None:
+            payload = observation.to_dict()
+            payload["generation"] = generation
+            _append_jsonl(self.output / "weak_order_rollouts.jsonl", payload)
+            if observation.deepest_filter_index >= int(
+                self.weak_order_sampling.get("preserve_from_filter_index", 21)
+            ):
+                _append_jsonl(
+                    self.output / "deep_weak_order_candidates.jsonl", payload
+                )
+            weak_records.append(observation)
+
+        for selection_index, (proposal, metadata) in enumerate(selected):
+            evaluation = self.evaluator.evaluate_mapping(
+                proposal,
+                rollouts=rollouts,
+                random_seed=(
+                    seed
+                    + generation * 10000019
+                    + selection_index * 100003
+                    + rng.randrange(100003)
+                ),
+                weak_model=(
+                    weak_model if self.weak_order_learning_enabled else None
+                ),
+                weak_sampling=self.weak_order_sampling,
+                rollout_sink=(
+                    preserve_rollout if self.weak_order_learning_enabled else None
+                ),
+            )
+            payload = evaluation.to_dict()
+            payload["generation"] = generation
+            payload["selection"] = dict(metadata)
+            _append_jsonl(self.output / "mapping_observations.jsonl", payload)
+            if evaluation.deepest_filter_index >= int(
+                self.mapping_sampling.get("preserve_from_filter_index", 21)
+            ):
+                _append_jsonl(self.output / "deep_mapping_candidates.jsonl", payload)
+            records.append((evaluation, metadata))
+        evaluations = [evaluation for evaluation, _metadata in records]
+        return (
+            self.evaluator.aggregate_mappings(candidate, evaluations),
+            records,
+            weak_records,
+        )
+
+    def _mapping_generation_metrics(
+        self,
+        generation: int,
+        records: Sequence[
+            tuple[MappingEvaluation, Mapping[str, object]]
+        ],
+        model_metrics: Mapping[str, object],
+    ) -> dict[str, object]:
+        modes: dict[str, dict[str, object]] = {}
+        for evaluation, selection in records:
+            mode = str(selection.get("selection_mode", "unknown"))
+            bucket = modes.setdefault(
+                mode,
+                {
+                    "count": 0,
+                    "filters": {
+                        filter_id: {
+                            "eligible": 0,
+                            "passed": 0,
+                            "prediction_sum": 0.0,
+                            "prediction_count": 0,
+                        }
+                        for filter_id in LEARNING_FILTER_IDS
+                    },
+                },
+            )
+            bucket["count"] = int(bucket["count"]) + 1
+            raw_predictions = selection.get(
+                "predicted_conditional_probabilities", ()
+            )
+            predictions = (
+                raw_predictions
+                if isinstance(raw_predictions, Sequence)
+                and not isinstance(raw_predictions, (str, bytes))
+                else ()
+            )
+            filters = bucket["filters"]
+            assert isinstance(filters, dict)
+            for head, observation in enumerate(evaluation.filters.observations):
+                target = filters[observation.filter_id]
+                assert isinstance(target, dict)
+                target["eligible"] = int(target["eligible"]) + observation.decided
+                target["passed"] = int(target["passed"]) + observation.passed
+                if head < len(predictions) and observation.decided:
+                    target["prediction_sum"] = float(
+                        target["prediction_sum"]
+                    ) + float(predictions[head])
+                    target["prediction_count"] = int(
+                        target["prediction_count"]
+                    ) + 1
+        return {
+            "schema_version": "graph-lab-mapping-generation-metrics-v1",
+            "generation": generation,
+            "evaluated": len(records),
+            "geometry_ready": sum(
+                bool(evaluation.profiles) for evaluation, _selection in records
+            ),
+            "filter_order": list(LEARNING_FILTER_IDS),
+            "selection_modes": modes,
+            "model": dict(model_metrics),
+        }
+
+    def _weak_order_generation_metrics(
+        self,
+        generation: int,
+        records: Sequence[WeakOrderRolloutObservation],
+        model_metrics: Mapping[str, object],
+    ) -> dict[str, object]:
+        modes: dict[str, dict[str, object]] = {}
+        for rollout in records:
+            bucket = modes.setdefault(
+                rollout.selection_mode,
+                {
+                    "count": 0,
+                    "decision_count": 0,
+                    "candidate_count_sum": 0,
+                    "entropy_sum": 0.0,
+                    "filters": {
+                        filter_id: {
+                            "eligible": 0,
+                            "passed": 0,
+                            "prediction_sum": 0.0,
+                            "prediction_count": 0,
+                        }
+                        for filter_id in LEARNING_FILTER_IDS
+                    },
+                },
+            )
+            bucket["count"] = int(bucket["count"]) + 1
+            bucket["decision_count"] = int(bucket["decision_count"]) + len(
+                rollout.decisions
+            )
+            bucket["candidate_count_sum"] = int(
+                bucket["candidate_count_sum"]
+            ) + sum(decision.candidate_count for decision in rollout.decisions)
+            bucket["entropy_sum"] = float(bucket["entropy_sum"]) + sum(
+                decision.policy_entropy for decision in rollout.decisions
+            )
+            filters = bucket["filters"]
+            assert isinstance(filters, dict)
+            for head, observation in enumerate(rollout.filters.observations):
+                target = filters[observation.filter_id]
+                assert isinstance(target, dict)
+                target["eligible"] = int(target["eligible"]) + observation.decided
+                target["passed"] = int(target["passed"]) + observation.passed
+                for decision in rollout.decisions:
+                    if (
+                        observation.decided
+                        and head
+                        < len(decision.predicted_conditional_probabilities)
+                    ):
+                        target["prediction_sum"] = float(
+                            target["prediction_sum"]
+                        ) + decision.predicted_conditional_probabilities[head]
+                        target["prediction_count"] = int(
+                            target["prediction_count"]
+                        ) + 1
+        return {
+            "schema_version": "graph-lab-weak-order-generation-metrics-v1",
+            "generation": generation,
+            "evaluated": len(records),
+            "geometry_ready": sum(item.profile_count > 0 for item in records),
+            "filter_order": list(LEARNING_FILTER_IDS),
+            "selection_modes": modes,
+            "model": dict(model_metrics),
+        }
+
     def _training_output_bytes(self) -> int:
         if not self.output.exists():
             return 0
@@ -196,7 +524,6 @@ class GraphLabRunner:
         self,
         rng: random.Random,
         archive: DiversityArchive,
-        seen: IsomorphismIndex,
         target: int,
     ) -> list[DualGraphCandidate]:
         pool: list[DualGraphCandidate] = []
@@ -213,7 +540,7 @@ class GraphLabRunner:
                 if parent is not None
                 else self.space.sample_prior(rng)
             )
-            if candidate is None or seen.equivalent(candidate) is not None:
+            if candidate is None:
                 continue
             if local.add(candidate):
                 pool.append(candidate)
@@ -247,6 +574,28 @@ class GraphLabRunner:
             )
             scored.append((score, candidate, prediction, novelty))
         scored.sort(key=lambda item: (-item[0], item[1].graph_id))
+        if not any(bool(value) for value in model.active_heads):
+            return [
+                (
+                    candidate,
+                    {
+                        "selection_mode": "exploration",
+                        "selection_score": score,
+                        "novelty": novelty,
+                        "predicted_stage": prediction.expected_stage,
+                        "predicted_geometry_probability": (
+                            prediction.geometry_probability
+                        ),
+                        "predicted_transition_probabilities": list(
+                            prediction.conditional_probabilities
+                        ),
+                        "predicted_seconds": prediction.expected_seconds,
+                    },
+                )
+                for score, candidate, prediction, novelty in rng.sample(
+                    scored, amount
+                )
+            ]
         exploit = amount - exploration
         # Draw the control uniformly from the complete pool first. Sampling it
         # only from the tail left by the ranker would make the control
@@ -419,12 +768,19 @@ class GraphLabRunner:
             for item in observations
             if item.stage_index >= len(GRAPH_STAGES) - 1
         ]
+        unique_graph_count = len(
+            {item.candidate.graph_id for item in observations}
+        )
+        unique_geometry_count = len(
+            {item["graph_id"] for item in geometry}
+        )
         diversity_archive = DiversityArchive(observations)
         report = {
             "schema_version": "graph-lab-report-v1",
             "generation": generation,
             "stop_reason": stop_reason,
             "observations": len(observations),
+            "unique_graphs_evaluated": unique_graph_count,
             "training_output_bytes": self._training_output_bytes(),
             "max_training_bytes": self.max_training_bytes,
             "stage_histogram": dict(stage_histogram),
@@ -439,6 +795,8 @@ class GraphLabRunner:
             },
             "known_seed_results": known,
             "geometry_ready": geometry,
+            "geometry_ready_evaluations": len(geometry),
+            "geometry_ready_unique_graphs": unique_geometry_count,
             "model": model.metrics(observations),
         }
         _atomic_json(self.output / "report.json", report)
@@ -448,7 +806,9 @@ class GraphLabRunner:
             f"Generation: {generation}",
             f"Stop reason: {stop_reason}",
             f"Evaluated graph structures: {len(observations)}",
-            f"Geometry-ready graph structures: {len(geometry)}",
+            f"Distinct evaluated graph structures: {unique_graph_count}",
+            f"Geometry-ready evaluations: {len(geometry)}",
+            f"Distinct geometry-ready graph structures: {unique_geometry_count}",
             f"Training output: {self._training_output_bytes() / (1024 * 1024):.2f} MiB",
             (
                 f"Training output limit: {self.max_training_bytes / (1024 * 1024):.2f} MiB"
@@ -510,6 +870,8 @@ class GraphLabRunner:
         self.output.mkdir(parents=True, exist_ok=True)
         _atomic_json(self.output / "effective_config.json", self.config)
         observations = self._load_observations()
+        mapping_observations = self._load_mapping_observations()
+        weak_order_rollouts = self._load_weak_order_rollouts()
         seen = IsomorphismIndex()
         for observation in observations:
             seen.add(observation.candidate)
@@ -517,11 +879,33 @@ class GraphLabRunner:
         model = GraphLearningModel.load_or_create(
             self.output / "model.pt", self.learning
         )
+        mapping_model = MappingLearningModel.load_or_create(
+            self.output / "mapping_model.pt", self.mapping_learning
+        )
+        weak_order_model = WeakOrderLearningModel.load_or_create(
+            self.output / "weak_order_model.pt", self.weak_order_learning
+        )
         if observations and not (self.output / "model.pt").exists():
             model.train(
                 observations,
                 steps=int(self.learning.get("bootstrap_steps", 100)),
                 batch_size=int(self.learning.get("batch_size", 16)),
+                generation=-1,
+            )
+        if mapping_observations and not (self.output / "mapping_model.pt").exists():
+            mapping_model.train(
+                mapping_observations,
+                steps=int(self.mapping_learning.get("bootstrap_steps", 100)),
+                batch_size=int(self.mapping_learning.get("batch_size", 16)),
+                generation=-1,
+            )
+        if weak_order_rollouts and not (
+            self.output / "weak_order_model.pt"
+        ).exists():
+            weak_order_model.train(
+                weak_order_rollouts,
+                steps=int(self.weak_order_learning.get("bootstrap_steps", 100)),
+                batch_size=int(self.weak_order_learning.get("batch_size", 16)),
                 generation=-1,
             )
 
@@ -603,7 +987,6 @@ class GraphLabRunner:
                     pool = self._candidate_pool(
                         rng,
                         archive,
-                        seen,
                         max(
                             remaining,
                             remaining * max(1, int(self.sampling.get("pool_multiplier", 6))),
@@ -612,6 +995,12 @@ class GraphLabRunner:
                     selected.extend(self._select(pool, model, archive, rng, remaining))
 
                 generation_evaluations = []
+                generation_mapping_records: list[
+                    tuple[MappingEvaluation, Mapping[str, object]]
+                ] = []
+                generation_weak_order_records: list[
+                    WeakOrderRolloutObservation
+                ] = []
                 generation_records: list[
                     tuple[GraphEvaluation, Mapping[str, object]]
                 ] = []
@@ -619,9 +1008,33 @@ class GraphLabRunner:
                     if self._output_budget_reached():
                         stop_reason = "max_training_output_bytes"
                         break
-                    if seen.equivalent(candidate) is not None:
-                        continue
-                    evaluation = self.evaluator.evaluate(candidate)
+                    if self.mapping_learning_enabled:
+                        (
+                            evaluation,
+                            new_mapping_records,
+                            new_weak_order_records,
+                        ) = (
+                            self._evaluate_with_mapping_ranker(
+                                candidate,
+                                mapping_model,
+                                weak_order_model,
+                                rng,
+                                generation,
+                            )
+                        )
+                        new_mapping_observations = [
+                            item for item, _metadata in new_mapping_records
+                        ]
+                        generation_mapping_records.extend(new_mapping_records)
+                        generation_weak_order_records.extend(
+                            new_weak_order_records
+                        )
+                    else:
+                        evaluation = self.evaluator.evaluate(candidate)
+                        new_mapping_observations = []
+                        new_weak_order_records = []
+                    mapping_observations.extend(new_mapping_observations)
+                    weak_order_rollouts.extend(new_weak_order_records)
                     observation = evaluation.to_dict()
                     observation["generation"] = generation
                     observation["selection"] = dict(selection)
@@ -660,6 +1073,54 @@ class GraphLabRunner:
                     generation=generation,
                 )
                 model.save(self.output / "model.pt")
+                if self.mapping_learning_enabled:
+                    mapping_metrics = mapping_model.train(
+                        mapping_observations,
+                        steps=int(
+                            self.mapping_learning.get("steps_per_generation", 8)
+                        ),
+                        batch_size=int(self.mapping_learning.get("batch_size", 16)),
+                        generation=generation,
+                    )
+                    mapping_model.save(self.output / "mapping_model.pt")
+                    _append_jsonl(
+                        self.output / "mapping_training_metrics.jsonl",
+                        self._mapping_generation_metrics(
+                            generation,
+                            generation_mapping_records,
+                            mapping_metrics,
+                        ),
+                    )
+                else:
+                    mapping_metrics = mapping_model.metrics(mapping_observations)
+                if self.weak_order_learning_enabled:
+                    weak_order_metrics = weak_order_model.train(
+                        weak_order_rollouts,
+                        steps=int(
+                            self.weak_order_learning.get(
+                                "steps_per_generation", 8
+                            )
+                        ),
+                        batch_size=int(
+                            self.weak_order_learning.get("batch_size", 16)
+                        ),
+                        generation=generation,
+                    )
+                    weak_order_model.save(
+                        self.output / "weak_order_model.pt"
+                    )
+                    _append_jsonl(
+                        self.output / "weak_order_training_metrics.jsonl",
+                        self._weak_order_generation_metrics(
+                            generation,
+                            generation_weak_order_records,
+                            weak_order_metrics,
+                        ),
+                    )
+                else:
+                    weak_order_metrics = weak_order_model.metrics(
+                        weak_order_rollouts
+                    )
                 _append_jsonl(
                     self.output / "training_metrics.jsonl",
                     self._generation_metrics(
@@ -675,6 +1136,8 @@ class GraphLabRunner:
                         "fingerprint": self.fingerprint,
                         "next_generation": generation + 1,
                         "observations": len(observations),
+                        "mapping_observations": len(mapping_observations),
+                        "weak_order_rollouts": len(weak_order_rollouts),
                     },
                 )
                 report = self._report(
@@ -694,8 +1157,13 @@ class GraphLabRunner:
                 last_generation = generation
                 print(
                     f"generation {generation} complete: evaluated={len(generation_evaluations)} "
-                    f"total={len(observations)} geometry={len(report['geometry_ready'])} "
-                    f"model_examples={metrics['examples']}",
+                    f"total-visits={len(observations)} "
+                    f"unique-graphs={report['unique_graphs_evaluated']} "
+                    f"geometry-visits={report['geometry_ready_evaluations']} "
+                    f"geometry-graphs={report['geometry_ready_unique_graphs']} "
+                    f"graph_examples={metrics['examples']} "
+                    f"mapping_examples={mapping_metrics['examples']}",
+                    f" weak_rollouts={weak_order_metrics.get('rollouts', 0)}",
                     flush=True,
                 )
                 if stop_reason == "max_training_output_bytes":
@@ -709,6 +1177,10 @@ class GraphLabRunner:
             stop_reason = "keyboard_interrupt"
             print("Graph Lab interrupted; completed observations are already durable.", flush=True)
             model.save(self.output / "model.pt")
+            if self.mapping_learning_enabled:
+                mapping_model.save(self.output / "mapping_model.pt")
+            if self.weak_order_learning_enabled:
+                weak_order_model.save(self.output / "weak_order_model.pt")
             self._report(
                 observations,
                 model,
@@ -716,7 +1188,13 @@ class GraphLabRunner:
                 stop_reason=stop_reason,
             )
 
-        geometry_graphs = sum(item.stage_index >= len(GRAPH_STAGES) - 1 for item in observations)
+        geometry_graphs = len(
+            {
+                item.candidate.graph_id
+                for item in observations
+                if item.stage_index >= len(GRAPH_STAGES) - 1
+            }
+        )
         return GraphLabResult(
             output_directory=self.output,
             generations_completed=max(0, last_generation + 1),

@@ -20,6 +20,7 @@ from formal_disk4.enumeration.weak_orders import (
     WeakOrderEnumerator,
     count_weak_orders_for_lengths,
 )
+from formal_disk4.enumeration.weak_policy import WeakOrderBranchPolicy
 from formal_disk4.maps.base import PlanarMap
 from formal_disk4.maps.registry import iterate_maps
 from formal_disk4.profiles.build import build_formal_profile
@@ -86,6 +87,9 @@ class SolverRunner:
         planar_maps: Sequence[PlanarMap] | None = None,
         raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
         collect_assignment_reports: bool = False,
+        collect_learning_diagnostics: bool = False,
+        weak_order_random_seed: int | None = None,
+        weak_order_branch_policy: WeakOrderBranchPolicy | None = None,
     ) -> None:
         self.config = dict(config)
         self._provided_planar_maps = (
@@ -96,6 +100,19 @@ class SolverRunner:
             for map_name, assignment_ids in (raw_assignment_ids_by_map or {}).items()
         }
         self._collect_assignment_reports = bool(collect_assignment_reports)
+        self._collect_learning_diagnostics = bool(collect_learning_diagnostics)
+        self._weak_order_random_seed = (
+            None if weak_order_random_seed is None else int(weak_order_random_seed)
+        )
+        self._weak_order_branch_policy = weak_order_branch_policy
+        if (
+            self._weak_order_random_seed is not None
+            and self._weak_order_branch_policy is not None
+        ):
+            raise ValueError(
+                "weak_order_random_seed and weak_order_branch_policy are "
+                "mutually exclusive"
+            )
         self._assignment_reports: list[AssignmentFilterEvaluation] = []
         self._active_assignment_report: Dict[str, object] | None = None
         configured_map_names = tuple(str(value) for value in self.config["maps"])
@@ -174,6 +191,15 @@ class SolverRunner:
         save_config(self.config, self.output_directory / "effective_config.json")
 
         checkpoint_config = self.config.get("checkpoint", {})
+        if (
+            self._weak_order_random_seed is not None
+            or self._weak_order_branch_policy is not None
+        ) and bool(
+            checkpoint_config.get("enabled", True)
+        ):
+            raise ValueError(
+                "Stochastic weak-order traversal requires checkpoint.enabled=false"
+            )
         checkpoint_path = self.output_directory / str(
             checkpoint_config.get("file", "checkpoint.sqlite3")
         )
@@ -475,6 +501,28 @@ class SolverRunner:
         # perf_counter calls in the hottest part of deterministic enumeration.
         if name == "placement_nodes":
             self._maybe_progress()
+
+    def _record_preword_topology_micro_outcome(
+        self, *, feasible: bool, reason: str
+    ) -> None:
+        normalized = str(reason).lower()
+        hard_endpoint = "hard outer endpoint" in normalized
+        opposite_sign = (
+            "opposite circular sign" in normalized
+            or "both convex and concave" in normalized
+        )
+        if feasible:
+            self.stats.increment("preword_topology_hard_outer_endpoint_passes")
+            self.stats.increment("preword_topology_opposite_circular_sign_passes")
+        elif hard_endpoint:
+            self.stats.increment(
+                "preword_topology_hard_outer_endpoint_rejections"
+            )
+        elif opposite_sign:
+            self.stats.increment("preword_topology_hard_outer_endpoint_passes")
+            self.stats.increment(
+                "preword_topology_opposite_circular_sign_rejections"
+            )
 
     def _start_assignment_report(
         self, *, map_name: str, raw_assignment_id: int
@@ -1281,6 +1329,8 @@ class SolverRunner:
                         ),
                         prefix_topology_filter=prefix_topology_filter,
                         mapping_subdomain=context.mapping_subdomain,
+                        branch_random_seed=self._weak_order_random_seed,
+                        branch_policy=self._weak_order_branch_policy,
                     )
                     self._current_weak_orders = weak_orders
                     self._current_placement = None
@@ -1402,6 +1452,10 @@ class SolverRunner:
                                     )
                                 ):
                                     self.stats.increment("preword_topology_checks")
+                                    self._record_preword_topology_micro_outcome(
+                                        feasible=topology.feasible,
+                                        reason=topology.reason,
+                                    )
                                 self.stats.increment(
                                     "preword_unresolved_arc_images",
                                     topology.unresolved_images,
@@ -1447,6 +1501,40 @@ class SolverRunner:
                                         self.stats.increment("preword_smooth_turn_balance_derived")
                                     if linear.point_turn_balance_derived:
                                         self.stats.increment("preword_point_turn_balance_derived")
+                                    if self._collect_learning_diagnostics:
+                                        try:
+                                            curriculum = self.preword_pruning.linear_filter.metric_curriculum(
+                                                planar_map,
+                                                placement,
+                                                compiled,
+                                                topology,
+                                            )
+                                        except Exception:
+                                            # Learning-only diagnostics must never
+                                            # alter the production verdict.
+                                            self.stats.increment(
+                                                "preword_curriculum_errors"
+                                            )
+                                        else:
+                                            for step in curriculum.steps:
+                                                if step.status in {
+                                                    "blocked_by_prior_failure",
+                                                    "not_applicable",
+                                                }:
+                                                    continue
+                                                prefix = (
+                                                    "preword_curriculum_"
+                                                    + step.name
+                                                )
+                                                self.stats.increment(prefix + "_checks")
+                                                self.stats.increment(
+                                                    prefix
+                                                    + (
+                                                        "_passes"
+                                                        if step.feasible
+                                                        else "_rejections"
+                                                    )
+                                                )
                             if preword_result is not None and not preword_result.feasible:
                                 self.stats.increment("preword_rejections")
                                 if preword_result.linear_invariants is None:
@@ -1597,6 +1685,7 @@ class SolverRunner:
                                 for specialization in expand_family(family, expansion_policy):
                                     specialization_count += 1
                                     self.stats.increment("family_specializations")
+                                    self.stats.increment("profile_emission_checks")
                                     self._set_stage(
                                         "profile_decoration",
                                         **placement_context,
@@ -1615,12 +1704,14 @@ class SolverRunner:
                                         )
                                     except DecorationInfeasible as error:
                                         self.stats.increment("decoration_rejections")
+                                        self.stats.increment("profile_emission_rejections")
                                         self.stats.increment(
                                             f"decoration_rejection_{error.stage}"
                                         )
                                         continue
                                     except Exception as error:
                                         self.stats.increment("profile_build_errors")
+                                        self.stats.increment("profile_emission_errors")
                                         self._record_unexpected_error(
                                             error_writer,
                                             stage="profile_build",
@@ -1648,6 +1739,7 @@ class SolverRunner:
                                     )
                                     if filtered_profile is None:
                                         self.stats.increment("profile_filter_rejections")
+                                        self.stats.increment("profile_emission_rejections")
                                         if statuses:
                                             self.stats.increment(
                                                 f"profile_filter_rejection_{statuses[-1][0]}"
@@ -1810,7 +1902,35 @@ class SolverRunner:
                                 file=sys.stderr,
                                 flush=True,
                             )
-                        if self.stats.get("word_families") == families_before:
+                        families_emitted = (
+                            self.stats.get("word_families") - families_before
+                        )
+                        if not solver_failed:
+                            self.stats.increment("word_exact_contradiction_checks")
+                            if summary.status != "exact_unsat" and deferred_reason is None:
+                                self.stats.increment("word_exact_contradiction_passes")
+
+                            if summary.status != "exact_unsat":
+                                self.stats.increment("word_unsupported_cycle_checks")
+                                if summary.status == "exact_supported":
+                                    self.stats.increment("word_unsupported_cycle_passes")
+
+                            self.stats.increment("word_resource_limit_checks")
+                            if deferred_reason is None:
+                                self.stats.increment("word_resource_limit_passes")
+
+                            if families_emitted > 0 or summary.status == "exact_supported":
+                                self.stats.increment("word_family_emission_checks")
+                                if families_emitted > 0:
+                                    self.stats.increment(
+                                        "word_cases_with_supported_family"
+                                    )
+                                else:
+                                    self.stats.increment(
+                                        "word_family_emission_rejections"
+                                    )
+
+                        if families_emitted == 0:
                             self.stats.increment("word_cases_without_supported_family")
 
                         if bool(output_config.get("write_word_cases", False)):
@@ -2013,6 +2133,13 @@ class SolverRunner:
                     "symmetry quotient"
                 ),
                 "collect_assignment_reports": self._collect_assignment_reports,
+                "collect_learning_diagnostics": self._collect_learning_diagnostics,
+                "weak_order_random_seed": self._weak_order_random_seed,
+                "weak_order_branch_policy": (
+                    type(self._weak_order_branch_policy).__name__
+                    if self._weak_order_branch_policy is not None
+                    else None
+                ),
             },
             "assignment_evaluations": [
                 item.to_dict() for item in self._assignment_reports

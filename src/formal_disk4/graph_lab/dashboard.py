@@ -43,9 +43,12 @@ def _blank_transition() -> dict[str, float | int | None]:
 
 
 def _aggregate(
-    rows: Sequence[Mapping[str, Any]], mode: str
+    rows: Sequence[Mapping[str, Any]],
+    mode: str,
+    transition_ids: Sequence[str],
+    collection_key: str,
 ) -> list[dict[str, float | int | None]]:
-    totals = [_blank_transition() for _stage in GRAPH_STAGES[1:]]
+    totals = [_blank_transition() for _stage in transition_ids]
     for row in rows:
         modes = row.get("selection_modes", {})
         if not isinstance(modes, Mapping):
@@ -53,10 +56,10 @@ def _aggregate(
         mode_data = modes.get(mode, {})
         if not isinstance(mode_data, Mapping):
             continue
-        transitions = mode_data.get("transitions", {})
+        transitions = mode_data.get(collection_key, {})
         if not isinstance(transitions, Mapping):
             continue
-        for index, stage in enumerate(GRAPH_STAGES[1:]):
+        for index, stage in enumerate(transition_ids):
             source = transitions.get(stage, {})
             if not isinstance(source, Mapping):
                 continue
@@ -137,28 +140,52 @@ def build_dashboard_data(
             "summary": {},
         }
 
+    mapping_mode = isinstance(rows[-1].get("filter_order"), Sequence)
+    weak_order_mode = str(rows[-1].get("schema_version", "")).startswith(
+        "graph-lab-weak-order-"
+    )
+    transition_ids = (
+        tuple(str(value) for value in rows[-1].get("filter_order", ()))
+        if mapping_mode
+        else GRAPH_STAGES[1:]
+    )
+    stage_labels = (
+        (
+            "weak_order.state" if weak_order_mode else "mapping.sampled",
+            *transition_ids,
+        )
+        if mapping_mode
+        else GRAPH_STAGES
+    )
+    collection_key = "filters" if mapping_mode else "transitions"
     baseline_rows = rows[:window]
     recent_rows = rows[-window:]
-    baseline = _aggregate(baseline_rows, "exploration")
-    recent_random = _aggregate(recent_rows, "exploration")
-    recent_learned = _aggregate(recent_rows, "learned")
+    baseline = _aggregate(
+        baseline_rows, "exploration", transition_ids, collection_key
+    )
+    recent_random = _aggregate(
+        recent_rows, "exploration", transition_ids, collection_key
+    )
+    recent_learned = _aggregate(
+        recent_rows, "learned", transition_ids, collection_key
+    )
 
     latest_model = rows[-1].get("model", {})
     if not isinstance(latest_model, Mapping):
         latest_model = {}
-    model_transitions = latest_model.get("transitions", {})
+    model_transitions = latest_model.get(collection_key, {})
     if not isinstance(model_transitions, Mapping):
         model_transitions = {}
 
     transitions = []
-    for index, stage in enumerate(GRAPH_STAGES[1:]):
+    for index, stage in enumerate(transition_ids):
         model = model_transitions.get(stage, {})
         if not isinstance(model, Mapping):
             model = {}
         transitions.append(
             {
                 "index": index,
-                "from": GRAPH_STAGES[index],
+                "from": stage_labels[index],
                 "to": stage,
                 "baseline": baseline[index],
                 "recent_random": recent_random[index],
@@ -169,7 +196,9 @@ def build_dashboard_data(
                 "learned_vs_random_pp": _percentage_point_delta(
                     recent_learned[index]["rate"], recent_random[index]["rate"]
                 ),
-                "model_auc": model.get("auc"),
+                "model_auc": model.get(
+                    "binary_auc" if mapping_mode else "auc"
+                ),
                 "model_active": bool(model.get("active", False)),
                 "diagnosis": _diagnosis(
                     baseline[index], recent_random[index], recent_learned[index]
@@ -184,8 +213,12 @@ def build_dashboard_data(
     points = []
     for end in endpoints:
         rolling_rows = rows[max(0, end - window + 1) : end + 1]
-        random_stats = _aggregate(rolling_rows, "exploration")
-        learned_stats = _aggregate(rolling_rows, "learned")
+        random_stats = _aggregate(
+            rolling_rows, "exploration", transition_ids, collection_key
+        )
+        learned_stats = _aggregate(
+            rolling_rows, "learned", transition_ids, collection_key
+        )
         points.append(
             {
                 "generation": int(rows[end].get("generation", end)),
@@ -198,7 +231,12 @@ def build_dashboard_data(
     total_geometry = sum(int(row.get("geometry_ready", 0) or 0) for row in rows)
     return {
         "source": str(path.resolve()),
-        "stages": list(GRAPH_STAGES),
+        "stages": list(stage_labels),
+        "kind": (
+            "weak_order"
+            if weak_order_mode
+            else ("mapping" if mapping_mode else "graph")
+        ),
         "window_generations": window,
         "points": points,
         "transitions": transitions,
@@ -246,7 +284,7 @@ th{color:var(--muted);font-weight:650}.note{white-space:normal;min-width:190px}.
 <div id="status" class="status">Chargement…</div>
 <section class="cards">
  <div class="card"><span>Dernière génération</span><strong id="generation">—</strong></div>
- <div class="card"><span>Graphes évalués</span><strong id="evaluated">—</strong></div>
+ <div class="card"><span>Candidats évalués</span><strong id="evaluated">—</strong></div>
  <div class="card"><span>Geometry ready</span><strong id="geometry">—</strong></div>
  <div class="card"><span>Disque d'entraînement</span><strong id="disk">—</strong></div>
  <div class="card"><span>Loss récente</span><strong id="loss">—</strong></div>
@@ -266,7 +304,7 @@ th{color:var(--muted);font-weight:650}.note{white-space:normal;min-width:190px}.
 <section class="panel help"><h2>Comment lire ces nombres</h2>
  <p><strong>Vert au-dessus de l'orange :</strong> le ranking appris enrichit réellement le pool actuel. Orange en baisse par rapport au bleu : le pool restant est devenu plus difficile, ce qui peut venir de la mémoire anti-doublons ou de l'évolution des mutations.</p>
  <p><strong>Zéro positif avec beaucoup d'éligibles :</strong> aucun signal supervisé n'existe encore pour ce palier. Peu d'éligibles : le goulet se situe avant. Une AUC élevée dit que la tête sait classer ; elle ne garantit pas que la sélection produit un taux élevé.</p>
- <p>Le seul tirage directement biaisé par le réseau est la sélection des graphes dans le pool. Une fois un graphe choisi, le pipeline formel reste déterministe et borné ; les colonnes mesurent ses passages observés, filtre par filtre.</p>
+ <p>Avec <code>training_metrics.jsonl</code>, les courbes décrivent le ranker de graphes. Avec <code>mapping_training_metrics.jsonl</code>, elles décrivent le ranker de mappings complets. Avec <code>weak_order_training_metrics.jsonl</code>, elles comparent les trajectoires dont chaque bloc d'ordre faible est tiré par le ranker aux trajectoires uniformes. Dans les trois cas, l'orange est le témoin stochastique du même niveau.</p>
 </section></main>
 <script>
 const ns='http://www.w3.org/2000/svg';let data=null,timer=null;
@@ -342,8 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("output/graph_lab/up-to-13/training_metrics.jsonl"),
-        help="compact training_metrics.jsonl to follow",
+        default=Path("output/graph_lab/up-to-13/mapping_training_metrics.jsonl"),
+        help="graph or mapping compact metrics JSONL to follow",
     )
     parser.add_argument("--window-generations", type=int, default=50)
     parser.add_argument("--max-points", type=int, default=400)

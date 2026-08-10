@@ -180,8 +180,12 @@ class PrewordCircularArcTests(unittest.TestCase):
         self.assertTrue(
             all(
                 step.status == "blocked_by_prior_failure"
-                for step in curriculum.steps[1:]
+                for step in curriculum.steps[1:-1]
             )
+        )
+        self.assertEqual(curriculum.steps[-1].name, "point_turns")
+        self.assertNotEqual(
+            curriculum.steps[-1].status, "blocked_by_prior_failure"
         )
 
     def test_mapped_circular_arc_cannot_cross_hard_outer_endpoint(self) -> None:

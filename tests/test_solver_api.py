@@ -10,6 +10,19 @@ from formal_disk4.pipeline import (
     FormalSolverAPI,
     SolverAPIRequest,
 )
+from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
+
+
+class _FirstWeakOrderPolicy:
+    def __init__(self) -> None:
+        self.decisions = 0
+
+    def propose_masks(self, _state, masks):
+        return tuple(masks[:8])
+
+    def select_actions(self, _state, actions):
+        self.decisions += 1
+        return (actions[0].mask,)
 
 
 class FilterReportTests(unittest.TestCase):
@@ -18,21 +31,21 @@ class FilterReportTests(unittest.TestCase):
             {
                 "prefix_topology_checks": 8,
                 "prefix_topology_cache_hits": 2,
-                "prefix_topology_pruned_nodes": 3,
-                "prefix_topology_rejection_crossing": 3,
+                "prefix_topology_hard_outer_endpoint_passes": 7,
+                "prefix_topology_hard_outer_endpoint_rejections": 3,
                 "prefix_topology_rejection_witness_detail": 3,
             }
         )
 
-        observation = report.by_id("weak.prefix_topology")
+        observation = report.by_id("weak.prefix_topology.hard_outer_endpoint")
         self.assertEqual(observation.entered, 10)
         self.assertEqual(observation.passed, 7)
         self.assertEqual(observation.rejected, 3)
         self.assertEqual(observation.conditional_pass_rate, 0.7)
-        self.assertEqual(dict(observation.rejection_reasons), {"crossing": 3})
+        self.assertEqual(dict(observation.rejection_reasons), {})
         self.assertEqual(
-            len(report.target_vector()),
-            len(report.to_dict()["target_order"]),
+            tuple(report.to_dict()["target_order"]),
+            LEARNING_FILTER_IDS,
         )
 
 
@@ -72,11 +85,11 @@ class SolverAPITests(unittest.TestCase):
         )
         self.assertEqual(
             result.summary["filter_report"]["schema_version"],
-            "formal-filter-report-v1",
+            "formal-filter-report-v2",
         )
         self.assertEqual(
             result.filters.by_id(
-                "assignment.intrinsic_symmetry_quotient"
+                "assignment.canonical"
             ).entered,
             1,
         )
@@ -84,7 +97,7 @@ class SolverAPITests(unittest.TestCase):
         self.assertEqual(result.assignments[0].raw_assignment_id, 0)
         self.assertEqual(
             result.assignments[0].filters.by_id(
-                "assignment.intrinsic_symmetry_quotient"
+                "assignment.canonical"
             ).entered,
             1,
         )
@@ -97,6 +110,29 @@ class SolverAPITests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "outside"):
                 FormalSolverAPI.evaluate(request)
+
+    def test_optional_weak_order_policy_drives_one_branch_through_same_api(self) -> None:
+        policy = _FirstWeakOrderPolicy()
+        with tempfile.TemporaryDirectory() as directory:
+            request = SolverAPIRequest(
+                config=self._small_config(directory),
+                assignments=(AssignmentSelection("c3", (0,)),),
+                weak_order_branch_policy=policy,
+                collect_learning_diagnostics=True,
+            )
+            result = FormalSolverAPI.evaluate(request)
+
+        self.assertGreater(policy.decisions, 0)
+        self.assertEqual(
+            result.summary["api_input"]["weak_order_branch_policy"],
+            "_FirstWeakOrderPolicy",
+        )
+        self.assertLessEqual(
+            result.summary["statistics"]["counters"].get(
+                "surviving_placements", 0
+            ),
+            1,
+        )
 
 
 if __name__ == "__main__":

@@ -250,9 +250,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path = root / config_path
     config = json.loads(config_path.read_text(encoding="utf-8"))
     space_config = dict(config.get("space", {}))
-    # This diagnostic measures the constructive prior only. Known controls and
-    # the learned/archive proposal mechanisms are deliberately absent.
-    space_config["known_seeds"] = []
+    # This measures the complete unlearned prior, including its stochastic
+    # neighbourhood bias around known structural templates. It still performs
+    # no direct known-control injection and uses no learned/archive proposal.
     space = GraphSpace.from_config(space_config)
     domain = collect_catalog_graph_classes(
         root, maximum_tiles=space.maximum_tiles

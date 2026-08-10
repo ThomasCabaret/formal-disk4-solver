@@ -11,8 +11,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="formal-disk4-graph-lab",
         description=(
-            "Explore valid planar dual graphs with a shared GNN and bounded "
-            "production-solver evaluations."
+            "Explore valid planar dual graphs and complete contour mappings "
+            "with shared graph, mapping, and weak-order rankers driving "
+            "bounded production-solver rollouts."
         ),
     )
     parser.add_argument(

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Mapping, Sequence, Tuple
 
 
-FILTER_REPORT_SCHEMA_VERSION = "formal-filter-report-v1"
+FILTER_REPORT_SCHEMA_VERSION = "formal-filter-report-v2"
 
 
 @dataclass(frozen=True)
@@ -58,143 +58,254 @@ class FilterObservation:
             "rejection_reasons": dict(self.rejection_reasons),
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "FilterObservation":
+        raw_reasons = payload.get("rejection_reasons", {})
+        reasons = (
+            tuple(
+                sorted(
+                    (str(name), int(value))
+                    for name, value in raw_reasons.items()
+                )
+            )
+            if isinstance(raw_reasons, Mapping)
+            else ()
+        )
+        return cls(
+            filter_id=str(payload["filter_id"]),
+            block=str(payload["block"]),
+            label=str(payload["label"]),
+            entered=int(payload.get("entered", 0)),
+            passed=int(payload.get("passed", 0)),
+            rejected=int(payload.get("rejected", 0)),
+            deferred=int(payload.get("deferred", 0)),
+            errors=int(payload.get("errors", 0)),
+            unaccounted=int(payload.get("unaccounted", 0)),
+            rejection_reasons=reasons,
+        )
+
 
 # This order is part of the public API.  A learning client can therefore use the
 # report as a fixed target vector without depending on internal counter names.
 FILTER_SPECS: Tuple[FilterSpec, ...] = (
     FilterSpec(
-        "assignment.intrinsic_symmetry_quotient",
+        "assignment.canonical",
         "assignment",
         "Contour assignment is canonical under intrinsic map symmetries",
         ("assignment_quotient_checks",),
         ("symmetry_pruned_assignments",),
     ),
     FilterSpec(
-        "weak.mapping_subdomain_prefix",
+        "weak.exterior_arc_repetition",
         "weak_order",
-        "Weak-order prefix remains inside the requested search shard",
-        ("mapping_subdomain_prefix_checks",),
-        ("mapping_subdomain_pruned_nodes",),
+        "Repeated exterior circular arcs can still coincide",
+        (
+            "exterior_arc_repetition_assignment_checks",
+            "exterior_arc_repetition_checks",
+        ),
+        (
+            "exterior_arc_repetition_pruned_assignments",
+            "exterior_arc_repetition_pruned_nodes",
+        ),
     ),
     FilterSpec(
-        "weak.mapping_subdomain_leaf",
-        "weak_order",
-        "Complete weak order remains inside the requested search shard",
-        ("mapping_subdomain_leaf_checks",),
-        ("mapping_subdomain_pruned_leaves",),
-    ),
-    FilterSpec(
-        "weak.exterior_arc_repetition_assignment",
-        "weak_order",
-        "Assignment admits a possible repeated exterior arc",
-        ("exterior_arc_repetition_assignment_checks",),
-        ("exterior_arc_repetition_pruned_assignments",),
-    ),
-    FilterSpec(
-        "weak.exterior_arc_repetition_prefix",
-        "weak_order",
-        "Weak-order prefix can still identify the required exterior arcs",
-        ("exterior_arc_repetition_checks",),
-        ("exterior_arc_repetition_pruned_nodes",),
-    ),
-    FilterSpec(
-        "weak.intrinsic_symmetry_prefix",
+        "weak.symmetry_prefix_canonical",
         "weak_order",
         "Weak-order prefix is canonical under the assignment stabilizer",
         ("symmetry_prefix_checks",),
         ("symmetry_pruned_nodes",),
     ),
     FilterSpec(
-        "weak.intrinsic_symmetry_leaf",
+        "weak.prefix_topology.hard_outer_endpoint",
         "weak_order",
-        "Complete weak order is canonical under intrinsic symmetries",
-        ("symmetry_leaf_checks",),
-        ("symmetry_pruned_leaves",),
-    ),
-    FilterSpec(
-        "weak.prefix_topology",
-        "weak_order",
-        "Resolved radius-arc topology is feasible at this prefix",
-        ("prefix_topology_checks", "prefix_topology_cache_hits", "prefix_topology_errors"),
-        ("prefix_topology_pruned_nodes",),
+        "Prefix propagation does not cross a hard outer endpoint",
+        (
+            "prefix_topology_checks",
+            "prefix_topology_cache_hits",
+        ),
+        ("prefix_topology_hard_outer_endpoint_rejections",),
         error_counters=("prefix_topology_errors",),
-        reason_prefixes=("prefix_topology_rejection_",),
+        passed_counters=("prefix_topology_hard_outer_endpoint_passes",),
     ),
     FilterSpec(
-        "weak.length_system",
+        "weak.prefix_topology.opposite_circular_sign",
+        "weak_order",
+        "Prefix propagation does not force opposite circular signs to overlap",
+        (
+            "prefix_topology_checks",
+            "prefix_topology_cache_hits",
+        ),
+        ("prefix_topology_opposite_circular_sign_rejections",),
+        error_counters=("prefix_topology_errors",),
+        passed_counters=("prefix_topology_opposite_circular_sign_passes",),
+    ),
+    FilterSpec(
+        "weak.positive_length",
         "weak_order",
         "Resolved positive-length equations are feasible",
         ("length_checks",),
         ("length_pruned_nodes",),
     ),
     FilterSpec(
-        "weak.angle_system",
+        "weak.point_angle",
         "weak_order",
         "Resolved point-angle equations are feasible",
         ("angle_checks",),
         ("angle_pruned_nodes",),
     ),
     FilterSpec(
-        "weak.complete_topology",
+        "weak.leaf_canonical",
         "weak_order",
-        "Complete radius-arc topology is feasible",
-        ("complete_topology_checks", "complete_topology_cache_hits", "complete_topology_errors"),
-        ("complete_topology_pruned_placements",),
-        error_counters=("complete_topology_errors",),
-        reason_prefixes=("complete_topology_rejection_",),
+        "Complete weak order is canonical under intrinsic symmetries",
+        ("symmetry_leaf_checks",),
+        ("symmetry_pruned_leaves",),
     ),
     FilterSpec(
-        "word.compile",
-        "formal_word",
-        "Formal word system compiles successfully",
-        ("word_compilation_checks",),
-        error_counters=("compile_errors",),
+        "weak.complete_length",
+        "weak_order",
+        "Complete positive-length system is feasible",
+        ("complete_length_checks",),
+        ("complete_length_rejections",),
     ),
     FilterSpec(
-        "preword.topology",
-        "preword",
-        "Pre-word radius-arc topology is feasible",
-        ("preword_topology_checks",),
-        ("preword_topology_rejections",),
-        error_counters=("preword_topology_errors",),
-        reason_prefixes=("preword_topology_rejection_",),
+        "weak.complete_angle",
+        "weak_order",
+        "Complete point-angle system is feasible",
+        ("complete_angle_checks",),
+        ("complete_angle_rejections",),
     ),
     FilterSpec(
-        "preword.metric",
-        "preword",
-        "Pre-word metric/radius/turn system is feasible",
-        ("preword_metric_checks",),
-        ("preword_metric_rejections",),
-        error_counters=("preword_metric_errors",),
-        reason_prefixes=("preword_metric_rejection_",),
-    ),
-    FilterSpec(
-        "preword.point_angle",
-        "preword",
-        "Pre-word point-angle system is feasible",
-        ("preword_point_angle_checks",),
-        ("preword_point_angle_rejections",),
-        error_counters=("preword_point_angle_errors",),
-        reason_prefixes=("preword_point_angle_rejection_",),
-    ),
-    FilterSpec(
-        "word.exact_solver",
-        "formal_word",
-        "Exact partial-word solver reaches a supported terminal status",
-        ("solver_cases",),
-        ("word_solver_status_exact_unsat",),
+        "weak.complete_topology.hard_outer_endpoint",
+        "weak_order",
+        "Complete propagation does not cross a hard outer endpoint",
         (
-            "word_solver_status_interrupted_external_stop",
-            "word_solver_status_unresolved_residual_literal_limit",
-            "word_solver_status_unresolved_family_limit",
-            "word_solver_status_unresolved_graph_limit",
-            "word_solver_status_restricted_terminal_contour_limit",
-            "word_solver_status_exact_unsupported_family_language",
-            "word_solver_status_not_run",
+            "complete_topology_checks",
+            "complete_topology_cache_hits",
         ),
-        ("solver_errors",),
-        passed_counters=("word_solver_status_exact_supported",),
+        ("complete_topology_hard_outer_endpoint_rejections",),
+        error_counters=("complete_topology_errors",),
+        passed_counters=("complete_topology_hard_outer_endpoint_passes",),
     ),
+    FilterSpec(
+        "preword.topology.hard_outer_endpoint",
+        "preword",
+        "Pre-word propagation does not cross a hard outer endpoint",
+        ("preword_topology_checks",),
+        ("preword_topology_hard_outer_endpoint_rejections",),
+        error_counters=("preword_topology_errors",),
+        passed_counters=("preword_topology_hard_outer_endpoint_passes",),
+    ),
+    FilterSpec(
+        "preword.topology.opposite_circular_sign",
+        "preword",
+        "Pre-word propagation does not force opposite circular signs to overlap",
+        ("preword_topology_checks",),
+        ("preword_topology_opposite_circular_sign_rejections",),
+        error_counters=("preword_topology_errors",),
+        passed_counters=("preword_topology_opposite_circular_sign_passes",),
+    ),
+    FilterSpec(
+        "preword.metric.positive_lengths",
+        "preword",
+        "Pre-word variables admit strictly positive lengths",
+        ("preword_curriculum_positive_lengths_checks",),
+        ("preword_curriculum_positive_lengths_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.local_radius_transport",
+        "preword",
+        "Local radius transport identities are feasible",
+        ("preword_curriculum_radius_local_checks",),
+        ("preword_curriculum_radius_local_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.local_smooth_turn",
+        "preword",
+        "Local smooth-turn transport identities are feasible",
+        ("preword_curriculum_smooth_turn_local_checks",),
+        ("preword_curriculum_smooth_turn_local_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.point_turn",
+        "preword",
+        "Point-turn equations are feasible",
+        ("preword_curriculum_point_turns_checks",),
+        ("preword_curriculum_point_turns_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.global_radius_balance",
+        "preword",
+        "Global signed-radius balance is feasible",
+        ("preword_curriculum_radius_global_checks",),
+        ("preword_curriculum_radius_global_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.global_turn_balance",
+        "preword",
+        "Global smooth-turn balance is feasible",
+        ("preword_curriculum_smooth_turn_global_checks",),
+        ("preword_curriculum_smooth_turn_global_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.strict_concavity",
+        "preword",
+        "Strict radius-R concavity constraints are feasible",
+        ("preword_curriculum_radius_concavity_checks",),
+        ("preword_curriculum_radius_concavity_rejections",),
+    ),
+    FilterSpec(
+        "preword.metric.isoperimetric",
+        "preword",
+        "The isoperimetric necessary bound is feasible",
+        ("preword_curriculum_isoperimetric_checks",),
+        ("preword_curriculum_isoperimetric_rejections",),
+    ),
+    FilterSpec(
+        "word.exact_contradiction",
+        "formal_word",
+        "Exact word solving does not prove a contradiction",
+        ("word_exact_contradiction_checks",),
+        ("word_solver_status_exact_unsat",),
+        error_counters=("solver_errors",),
+        passed_counters=("word_exact_contradiction_passes",),
+    ),
+    FilterSpec(
+        "word.unsupported_cycle",
+        "formal_word",
+        "Residual cycles remain in the supported exact family language",
+        ("word_unsupported_cycle_checks",),
+        ("unsupported_language_word_cases",),
+        passed_counters=("word_unsupported_cycle_passes",),
+    ),
+    FilterSpec(
+        "word.resource_limit",
+        "formal_word",
+        "Exact word solving terminates without a resource limit",
+        ("word_resource_limit_checks",),
+        ("deferred_word_cases",),
+        passed_counters=("word_resource_limit_passes",),
+    ),
+    FilterSpec(
+        "word.family_emitted",
+        "formal_word",
+        "At least one supported exact word family is emitted",
+        ("word_family_emission_checks",),
+        ("word_family_emission_rejections",),
+        passed_counters=("word_cases_with_supported_family",),
+    ),
+    FilterSpec(
+        "profile.emitted",
+        "profile",
+        "A word-family specialization emits a formal profile",
+        ("profile_emission_checks",),
+        ("profile_emission_rejections",),
+        error_counters=("profile_emission_errors",),
+        passed_counters=("profiles_emitted",),
+    ),
+)
+
+LEARNING_FILTER_IDS: Tuple[str, ...] = tuple(
+    spec.filter_id for spec in FILTER_SPECS
 )
 
 
@@ -262,6 +373,37 @@ class FilterReport:
 
     def by_id(self, filter_id: str) -> FilterObservation:
         return next(item for item in self.observations if item.filter_id == filter_id)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "FilterReport":
+        raw = payload.get("filters", ())
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+            raise ValueError("filter report filters must be a sequence")
+        observations = tuple(
+            FilterObservation.from_dict(item)
+            for item in raw
+            if isinstance(item, Mapping)
+        )
+        by_id = {item.filter_id: item for item in observations}
+        return cls(
+            tuple(
+                by_id.get(
+                    spec.filter_id,
+                    FilterObservation(
+                        spec.filter_id,
+                        spec.block,
+                        spec.label,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ),
+                )
+                for spec in FILTER_SPECS
+            )
+        )
 
     def target_vector(self) -> Tuple[float | None, ...]:
         """Conditional pass probability in stable pipeline order."""

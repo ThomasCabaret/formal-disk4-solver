@@ -1,5 +1,5 @@
 {
-  "schema_version": "graph-lab-config-v1",
+  "schema_version": "graph-lab-config-v3",
   "output": {
     "directory": "output/graph_lab/up-to-13",
     "max_training_megabytes": 8192
@@ -9,6 +9,8 @@
     "size_bias": 1.4,
     "symmetric_prior_fraction": 0.45,
     "imposed_symmetry_bias": 0.75,
+    "known_prior_fraction": 0.30,
+    "known_prior_mutation_fraction": 0.50,
     "known_seeds": [
       {"map": "c4"},
       {"map": "double-cycle-3", "symmetry": "rotation_1"},
@@ -35,7 +37,7 @@
     "pool_multiplier": 6,
     "exploration_fraction": 0.25,
     "mutation_fraction": 0.65,
-    "known_seeds_per_generation": 2,
+    "known_seeds_per_generation": 0,
     "geometry_weight": 8.0,
     "novelty_weight": 1.5,
     "cost_weight": 0.08
@@ -51,6 +53,54 @@
     "bootstrap_steps": 100,
     "steps_per_generation": 8,
     "batch_size": 16,
+    "torch_threads": 1
+  },
+  "mapping_sampling": {
+    "enabled": true,
+    "mappings_per_graph": 4,
+    "pool_multiplier": 8,
+    "exploration_fraction": 0.25,
+    "rollout_seed": 20260810,
+    "cost_weight": 0.02,
+    "preserve_from_filter_index": 21
+  },
+  "mapping_learning": {
+    "seed": 20260810,
+    "tile_feature_scale": 13,
+    "hidden_size": 64,
+    "message_layers": 3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "cost_loss_weight": 0.05,
+    "bootstrap_steps": 100,
+    "steps_per_generation": 8,
+    "batch_size": 16,
+    "torch_threads": 1
+  },
+  "weak_order_sampling": {
+    "enabled": true,
+    "rollouts_per_mapping": 4,
+    "exploration_fraction": 0.25,
+    "action_pool_size": 64,
+    "temperature": 0.7,
+    "epsilon": 0.15,
+    "deeper_utility_weight": 0.05,
+    "cost_weight": 0.01,
+    "preserve_from_filter_index": 21
+  },
+  "weak_order_learning": {
+    "seed": 20260811,
+    "tile_feature_scale": 13,
+    "hidden_size": 64,
+    "message_layers": 3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "cost_loss_weight": 0.02,
+    "bootstrap_steps": 100,
+    "steps_per_generation": 8,
+    "batch_size": 16,
+    "replay_rollouts": 50000,
+    "metric_decisions": 512,
     "torch_threads": 1
   },
   "evaluation": {
@@ -77,6 +127,18 @@
           "maximum_exponent": 1,
           "max_specializations_per_family": 64
         }
+      }
+    },
+    "mapping_search_overrides": {
+      "limits": {
+        "max_nodes": 4000,
+        "max_placements": 40,
+        "max_profiles": 4,
+        "time_limit_seconds": 5,
+        "stop_on_first_profile": false
+      },
+      "solver": {
+        "max_seconds_per_word_case": 1
       }
     }
   }

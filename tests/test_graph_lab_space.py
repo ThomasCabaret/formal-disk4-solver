@@ -12,9 +12,68 @@ from formal_disk4.graph_lab.space import (
     validate_dual_graph,
 )
 from formal_disk4.graph_lab.evaluator import GraphFormalEvaluator
+from formal_disk4.graph_lab.mapping_model import MappingLearningModel
+from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
 
 
 class GraphLabSpaceTests(unittest.TestCase):
+    def test_known_templates_are_a_statistical_prior_not_labelled_controls(self) -> None:
+        space = GraphSpace(
+            maximum_tiles=4,
+            imposed_symmetry_bias=0.0,
+            known_prior_fraction=1.0,
+            known_prior_mutation_fraction=0.0,
+            known_seeds=({"map": "c4"},),
+        )
+        template = candidate_from_planar_map(
+            "c4", imposed_automorphism=None
+        )
+        sampled = space.sample_prior(random.Random(7))
+
+        self.assertEqual(sampled.edges, template.edges)
+        self.assertEqual(sampled.origin, "prior")
+        self.assertEqual(sampled.mutation, "known_template")
+        self.assertIsNone(sampled.source_map_name)
+
+    def test_mapping_pool_ranker_and_stochastic_rollout_share_the_filter_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        evaluator = GraphFormalEvaluator(
+            root,
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_nodes": 200,
+                        "max_placements": 2,
+                        "max_profiles": 1,
+                        "time_limit_seconds": 3,
+                        "stop_on_first_profile": True,
+                    }
+                },
+            },
+        )
+        candidate = candidate_from_planar_map("c3", imposed_automorphism=None)
+        pool = evaluator.mapping_pool(candidate, random.Random(17), 3)
+        self.assertEqual(len(pool), 3)
+        self.assertEqual(len({item.mapping_id for item in pool}), 3)
+
+        model = MappingLearningModel(
+            {"hidden_size": 8, "message_layers": 1, "torch_threads": 1}
+        )
+        prediction = model.predict(pool[0])
+        self.assertEqual(
+            len(prediction.conditional_probabilities), len(LEARNING_FILTER_IDS)
+        )
+        observation = evaluator.evaluate_mapping(
+            pool[0], rollouts=2, random_seed=123
+        )
+        self.assertIsNone(observation.error)
+        self.assertEqual(observation.rollout_count, 2)
+        self.assertEqual(
+            tuple(item.filter_id for item in observation.filters.observations),
+            LEARNING_FILTER_IDS,
+        )
+
     def test_generated_graph_runs_through_the_production_solver(self) -> None:
         root = Path(__file__).resolve().parents[1]
         evaluator = GraphFormalEvaluator(

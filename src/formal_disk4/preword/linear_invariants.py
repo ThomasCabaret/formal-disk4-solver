@@ -361,9 +361,11 @@ class PrewordLinearInvariantFilter:
     ) -> PrewordLinearCurriculumResult:
         """Evaluate nested necessary systems for learning diagnostics only.
 
-        Every step only adds constraints.  Therefore a failure can never be
-        followed by a genuine pass, and the final metric system is exactly the
-        one used by :meth:`analyze` in production.
+        The metric steps only add constraints, so a metric failure cannot be
+        followed by a genuine metric pass.  Point turns form a separate exact
+        system: diagnostics evaluate it independently even after a metric
+        failure, providing a useful learning target without changing the
+        production verdict or production ordering.
         """
         if not topology.feasible:
             return PrewordLinearCurriculumResult((), False, False, False)
@@ -375,32 +377,18 @@ class PrewordLinearInvariantFilter:
             topology,
             curriculum=steps,
         )
-        point_derived = False
-        if metric.feasible:
-            point, point_derived = self._analyze_point_turns(planar_map, placement)
-            steps.append(
-                PrewordLinearCurriculumStep(
-                    "point_turns",
-                    point.feasible,
-                    point.margin,
-                    point.status,
-                    point.exact_certificate_used,
-                    len(placement.angle_equations) + 1,
-                    2 * placement.interval_count + 1,
-                )
+        point, point_derived = self._analyze_point_turns(planar_map, placement)
+        steps.append(
+            PrewordLinearCurriculumStep(
+                "point_turns",
+                point.feasible,
+                point.margin,
+                point.status,
+                point.exact_certificate_used,
+                len(placement.angle_equations) + 1,
+                2 * placement.interval_count + 1,
             )
-        else:
-            steps.append(
-                PrewordLinearCurriculumStep(
-                    "point_turns",
-                    False,
-                    None,
-                    "blocked_by_prior_failure",
-                    False,
-                    len(placement.angle_equations) + 1,
-                    2 * placement.interval_count + 1,
-                )
-            )
+        )
         return PrewordLinearCurriculumResult(
             tuple(steps), audit[0], audit[1], point_derived
         )

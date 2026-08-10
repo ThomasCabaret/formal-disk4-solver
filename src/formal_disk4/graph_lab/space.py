@@ -533,12 +533,20 @@ class GraphSpace:
         size_bias: float = 1.4,
         symmetric_prior_fraction: float = 0.45,
         imposed_symmetry_bias: float = 0.75,
+        known_prior_fraction: float = 0.30,
+        known_prior_mutation_fraction: float = 0.50,
         known_seeds: Sequence[Mapping[str, object] | str] = (),
     ) -> None:
         self.maximum_tiles = max(3, min(13, int(maximum_tiles)))
         self.size_bias = max(0.0, float(size_bias))
         self.symmetric_prior_fraction = min(1.0, max(0.0, float(symmetric_prior_fraction)))
         self.imposed_symmetry_bias = min(1.0, max(0.0, float(imposed_symmetry_bias)))
+        self.known_prior_fraction = min(
+            1.0, max(0.0, float(known_prior_fraction))
+        )
+        self.known_prior_mutation_fraction = min(
+            1.0, max(0.0, float(known_prior_mutation_fraction))
+        )
         seeds = []
         for raw in known_seeds:
             if isinstance(raw, str):
@@ -563,6 +571,10 @@ class GraphSpace:
                 config.get("symmetric_prior_fraction", 0.45)
             ),
             imposed_symmetry_bias=float(config.get("imposed_symmetry_bias", 0.75)),
+            known_prior_fraction=float(config.get("known_prior_fraction", 0.30)),
+            known_prior_mutation_fraction=float(
+                config.get("known_prior_mutation_fraction", 0.50)
+            ),
             known_seeds=config.get("known_seeds", ()),  # type: ignore[arg-type]
         )
 
@@ -678,6 +690,32 @@ class GraphSpace:
         return None
 
     def sample_prior(self, rng: random.Random) -> DualGraphCandidate:
+        if (
+            self.known_seeds
+            and rng.random() < self.known_prior_fraction
+        ):
+            template = rng.choice(self.known_seeds)
+            if rng.random() < self.known_prior_mutation_fraction:
+                mutated = self.mutate(template, rng)
+                if mutated is not None:
+                    return replace(
+                        mutated,
+                        origin="prior",
+                        mutation=f"known_neighborhood:{mutated.mutation}",
+                        parent_id=None,
+                        source_map_name=None,
+                        source_symmetry=None,
+                    )
+            # This is a stochastic prior draw, not a labelled/injected
+            # positive: only the structural template is reused. Mapping,
+            # weak-order placement, word solving, and the success label all
+            # remain unknown and must be rediscovered by the three policies.
+            return self._candidate(
+                template.graph(),
+                rng,
+                origin="prior",
+                mutation="known_template",
+            )
         tile_count = self._sample_size(rng)
         if rng.random() < self.symmetric_prior_fraction:
             graph = self._ring_graph(tile_count)

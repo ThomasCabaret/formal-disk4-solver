@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Sequence, Tuple
 
 from formal_disk4.maps.base import PlanarMap
+from formal_disk4.enumeration.weak_policy import WeakOrderBranchPolicy
 
 from .filter_report import AssignmentFilterEvaluation, FilterReport
 from .runner import SolverRunner
@@ -50,6 +51,9 @@ class SolverAPIRequest:
     config: Mapping[str, Any]
     planar_maps: Tuple[PlanarMap, ...] | None = None
     assignments: Tuple[AssignmentSelection, ...] = ()
+    weak_order_random_seed: int | None = None
+    weak_order_branch_policy: WeakOrderBranchPolicy | None = None
+    collect_learning_diagnostics: bool = False
 
     def assignment_ids_by_map(self) -> Dict[str, Tuple[int, ...]]:
         result: Dict[str, Tuple[int, ...]] = {}
@@ -98,6 +102,9 @@ class FormalSolverAPI:
             planar_maps=request.planar_maps,
             raw_assignment_ids_by_map=request.assignment_ids_by_map(),
             collect_assignment_reports=True,
+            collect_learning_diagnostics=request.collect_learning_diagnostics,
+            weak_order_random_seed=request.weak_order_random_seed,
+            weak_order_branch_policy=request.weak_order_branch_policy,
         )
         summary = runner.run()
         counters = dict(
@@ -117,6 +124,9 @@ def evaluate_formal_search(
     *,
     planar_maps: Sequence[PlanarMap] | None = None,
     assignments: Sequence[AssignmentSelection] = (),
+    weak_order_random_seed: int | None = None,
+    weak_order_branch_policy: WeakOrderBranchPolicy | None = None,
+    collect_learning_diagnostics: bool = False,
 ) -> SolverAPIResult:
     """Convenience function for clients that do not need request persistence."""
 
@@ -125,5 +135,8 @@ def evaluate_formal_search(
             config=config,
             planar_maps=(tuple(planar_maps) if planar_maps is not None else None),
             assignments=tuple(assignments),
+            weak_order_random_seed=weak_order_random_seed,
+            weak_order_branch_policy=weak_order_branch_policy,
+            collect_learning_diagnostics=collect_learning_diagnostics,
         )
     )

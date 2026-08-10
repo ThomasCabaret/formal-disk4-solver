@@ -27,6 +27,64 @@ def _mode(eligible: int, passed: int, predicted: float) -> dict[str, object]:
 
 
 class GraphLabDashboardTests(unittest.TestCase):
+    def test_mapping_metrics_use_the_microfilter_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            source = Path(raw) / "mapping_training_metrics.jsonl"
+            source.write_text(
+                json.dumps(
+                    {
+                        "generation": 4,
+                        "evaluated": 4,
+                        "geometry_ready": 0,
+                        "filter_order": ["assignment.canonical", "weak.positive_length"],
+                        "selection_modes": {
+                            "exploration": {
+                                "count": 2,
+                                "filters": {
+                                    "assignment.canonical": {
+                                        "eligible": 2,
+                                        "passed": 1,
+                                        "prediction_sum": 1.0,
+                                        "prediction_count": 2,
+                                    },
+                                    "weak.positive_length": {
+                                        "eligible": 1,
+                                        "passed": 1,
+                                        "prediction_sum": 0.5,
+                                        "prediction_count": 1,
+                                    },
+                                },
+                            },
+                            "learned": {
+                                "count": 2,
+                                "filters": {
+                                    "assignment.canonical": {
+                                        "eligible": 2,
+                                        "passed": 2,
+                                        "prediction_sum": 1.5,
+                                        "prediction_count": 2,
+                                    },
+                                    "weak.positive_length": {
+                                        "eligible": 2,
+                                        "passed": 1,
+                                        "prediction_sum": 1.0,
+                                        "prediction_count": 2,
+                                    },
+                                },
+                            },
+                        },
+                        "model": {"filters": {}},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            data = build_dashboard_data(source, window_generations=1)
+
+        self.assertEqual(data["kind"], "mapping")
+        self.assertEqual(data["stages"][1:], ["assignment.canonical", "weak.positive_length"])
+        self.assertEqual(data["transitions"][0]["recent_learned"]["rate"], 1.0)
+
     def test_compares_initial_recent_random_and_learned_conditionally(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             source = Path(raw) / "training_metrics.jsonl"
