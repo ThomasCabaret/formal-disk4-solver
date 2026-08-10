@@ -120,8 +120,6 @@ class CaseCatalogTests(unittest.TestCase):
             "double-cycle-offset-4-rotation-2": "double-cycle-offset-4",
             "inner-cycle-boundary-points-4-rotation-2":
                 "inner-cycle-boundary-points-4",
-            "outer-cycle-center-points-4-rotation-2":
-                "outer-cycle-center-points-4",
         }
         for case_id, map_name in expected.items():
             with self.subTest(case_id=case_id):

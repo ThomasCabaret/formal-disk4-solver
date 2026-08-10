@@ -67,20 +67,6 @@
           6
         ]
       }
-    },
-    {
-      "id": "center-points",
-      "label_template": "Outer cycle center points {size}",
-      "description": "Exterior-cycle family with point contacts at the center.",
-      "map_template": "outer-cycle-center-points-{size}",
-      "parameter_values": {
-        "size": [
-          3,
-          4,
-          5,
-          6
-        ]
-      }
     }
   ]
 }

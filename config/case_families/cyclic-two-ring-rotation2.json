@@ -48,13 +48,6 @@
       "label": "Inner cycle boundary points 4 - rotation_2",
       "description": "Boundary-point two-layer size-4 case with imposed half-turn symmetry.",
       "map_template": "inner-cycle-boundary-points-4"
-    },
-    {
-      "id": "center-points",
-      "case_id_template": "outer-cycle-center-points-4-rotation-2",
-      "label": "Outer cycle center points 4 - rotation_2",
-      "description": "Center-point two-layer size-4 case with imposed half-turn symmetry.",
-      "map_template": "outer-cycle-center-points-4"
     }
   ]
 }
