@@ -11,13 +11,21 @@ import numpy as np
 
 from formal_disk4.config import load_geometry_config, load_visualization_config
 from formal_disk4.geometry.model import parse_formal_geometry_problem
+from formal_disk4.geometry.status import GeometryCandidateStatus, SOLUTION_FOUND
 from formal_disk4.graph_lab.app import build_parser as build_lab_app_parser
+from formal_disk4.graph_lab.evaluator import GraphEvaluation
+from formal_disk4.graph_lab.feedback import LearningFeedback, balanced_binary_weights
+from formal_disk4.graph_lab.mapping import MappingProposal
 from formal_disk4.graph_lab.runner import DiversityArchive, GraphLabRunner
+from formal_disk4.graph_lab.space import DualGraphCandidate
 from formal_disk4.graph_lab.weak_model import (
+    WeakOrderDecisionObservation,
+    WeakOrderLearningModel,
     WeakOrderPrediction,
     WeakOrderRankedPolicy,
+    WeakOrderRolloutObservation,
 )
-from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
+from formal_disk4.pipeline.filter_report import FilterReport, LEARNING_FILTER_IDS
 from formal_disk4.enumeration.weak_policy import (
     WeakOrderActionView,
     WeakOrderStateView,
@@ -28,6 +36,178 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GraphLabTests(unittest.TestCase):
+    @staticmethod
+    def _ring_candidate() -> DualGraphCandidate:
+        return DualGraphCandidate(
+            tile_count=3,
+            edges=((-1, 0), (-1, 1), (-1, 2), (0, 1), (0, 2), (1, 2)),
+            imposed_permutation=(1, 2, 0),
+            origin="test",
+            mutation="test",
+        )
+
+    def test_sparse_learning_targets_receive_bounded_balancing(self) -> None:
+        weights = balanced_binary_weights(
+            ((1.0,),) + ((0.0,),) * 999,
+            1,
+            maximum=50.0,
+        )
+        self.assertEqual(weights[0][0], 50.0)
+        self.assertAlmostEqual(weights[0][1], 1000 / 1998)
+
+    def test_geometry_feedback_is_joined_only_at_the_right_scope(self) -> None:
+        ring = self._ring_candidate()
+        nonring = DualGraphCandidate(
+            tile_count=4,
+            edges=(
+                (-1, 0), (-1, 1), (-1, 2), (-1, 3),
+                (0, 1), (1, 2), (2, 3), (0, 3), (0, 2),
+            ),
+            imposed_permutation=None,
+            origin="test",
+            mutation="test",
+        )
+        status = GeometryCandidateStatus(
+            "fp-test", SOLUTION_FOUND, "test", 1, 0.0, "now"
+        )
+        feedback = LearningFeedback(
+            {"fp-test": status},
+            {ring.graph_id: (("fp-test", True),)},
+        )
+
+        self.assertEqual(
+            feedback.targets(
+                candidate=ring, profile_count=1, profile_ids=("fp-test",)
+            ),
+            (1.0, 1.0, 0.0),
+        )
+        self.assertEqual(
+            feedback.targets(
+                candidate=nonring, profile_count=1, profile_ids=("fp-test",)
+            ),
+            (1.0, 1.0, 1.0),
+        )
+        # A graph-level catalog hit must not label every mapping of that graph
+        # as a geometric success. Only the graph ranker may use this fallback.
+        self.assertEqual(
+            feedback.targets(candidate=ring, profile_count=1),
+            (1.0, None, 0.0),
+        )
+        self.assertEqual(
+            feedback.targets(
+                candidate=ring,
+                profile_count=1,
+                allow_graph_fallback=True,
+            ),
+            (1.0, 1.0, 0.0),
+        )
+
+    def test_resume_keeps_profile_labels_and_reconstructs_weak_state_path(self) -> None:
+        candidate = self._ring_candidate()
+        evaluation = GraphEvaluation(
+            candidate=candidate,
+            stage_index=5,
+            elapsed_seconds=0.1,
+            stop_reason="test",
+            counters={},
+            profiles=({"formal_profile_id": "fp-test"},),
+            tainted=False,
+        )
+        restored_evaluation = GraphEvaluation.from_dict(evaluation.to_dict())
+        self.assertTrue(restored_evaluation.geometry_ready)
+        self.assertEqual(
+            restored_evaluation.profiles[0]["formal_profile_id"], "fp-test"
+        )
+
+        proposal = MappingProposal(
+            candidate=candidate,
+            raw_assignment_id=0,
+            orientation_signs=(1, 1, 1),
+            cyclic_offsets=(0, 0, 0),
+            contour_lengths=(3, 3, 3),
+            edge_ports=tuple((0.0,) * 8 for _edge in candidate.edges),
+        )
+        decisions = []
+        path: tuple[int, ...] = ()
+        for index, mask in enumerate((1, 2)):
+            state = WeakOrderStateView(
+                assignment_id=0,
+                path=path,
+                counters=(index, 0, 0),
+                targets=(3, 3, 3),
+                block_count=index,
+                resolved_length_equations=0,
+                resolved_angle_equations=0,
+                available_mask=7,
+                reference_index=0,
+            )
+            action = WeakOrderActionView(mask, (index + 1, 0, 0), 1, 0, 0)
+            decisions.append(
+                WeakOrderDecisionObservation(
+                    state=state,
+                    action=action,
+                    candidate_count=2,
+                    selection_mode="exploration",
+                    selection_probability=0.5,
+                    policy_entropy=0.5,
+                    predicted_conditional_probabilities=(),
+                    predicted_reach_probabilities=(),
+                    selection_score=0.0,
+                )
+            )
+            path += (mask,)
+        rollout = WeakOrderRolloutObservation(
+            proposal=proposal,
+            decisions=tuple(decisions),
+            filters=FilterReport.from_counters({}),
+            elapsed_seconds=0.1,
+            profile_count=1,
+            profile_ids=("fp-test",),
+            selection_mode="exploration",
+            random_seed=1,
+            tainted=False,
+        )
+        restored_rollout = WeakOrderRolloutObservation.from_dict(rollout.to_dict())
+        self.assertEqual(restored_rollout.decisions[0].state.path, ())
+        self.assertEqual(restored_rollout.decisions[1].state.path, (1,))
+        self.assertEqual(restored_rollout.profile_ids, ("fp-test",))
+
+    def test_weak_ranker_can_distinguish_different_partial_block_states(self) -> None:
+        candidate = self._ring_candidate()
+        proposal = MappingProposal(
+            candidate=candidate,
+            raw_assignment_id=0,
+            orientation_signs=(1, -1, 1),
+            cyclic_offsets=(0, 1, 2),
+            contour_lengths=(3, 3, 3),
+            edge_ports=tuple((0.0,) * 8 for _edge in candidate.edges),
+        )
+        common = {
+            "assignment_id": 0,
+            "counters": (1, 1, 1),
+            "targets": (3, 3, 3),
+            "block_count": 2,
+            "resolved_length_equations": 0,
+            "resolved_angle_equations": 0,
+            "available_mask": 7,
+            "reference_index": 0,
+        }
+        left = WeakOrderStateView(path=(1, 6), **common)
+        right = WeakOrderStateView(path=(2, 5), **common)
+        action = WeakOrderActionView(1, (2, 1, 1), 1, 0, 0)
+        model = WeakOrderLearningModel(
+            {"hidden_size": 8, "message_layers": 1, "torch_threads": 1}
+        )
+        model.active_value_heads[:] = True
+
+        left_prediction = model.predict_many(proposal, left, (action,))[0]
+        right_prediction = model.predict_many(proposal, right, (action,))[0]
+
+        self.assertNotEqual(
+            left_prediction.value_probabilities,
+            right_prediction.value_probabilities,
+        )
+
     def test_unified_lab_entry_point_defaults_to_dashboard_and_geometry(self) -> None:
         arguments = build_lab_app_parser().parse_args([])
         self.assertFalse(arguments.no_dashboard)
@@ -142,6 +322,7 @@ class GraphLabTests(unittest.TestCase):
     def test_weak_order_ranker_changes_the_stochastic_action_distribution(self) -> None:
         class FakeModel:
             active_heads = np.asarray([True] + [False] * 25)
+            active_value_heads = np.asarray([True, False, False])
 
             @staticmethod
             def prepare_mapping(_proposal):
@@ -157,9 +338,8 @@ class GraphLabTests(unittest.TestCase):
                     WeakOrderPrediction(
                         conditional_probabilities=(probabilities[index],)
                         + (0.5,) * 25,
-                        reach_probabilities=(probabilities[index],)
-                        + (0.5,) * 25,
-                        utility=0.0,
+                        value_probabilities=(probabilities[index], 0.5, 0.5),
+                        auxiliary_progress=0.5,
                         expected_seconds=0.0,
                     )
                     for index, _action in enumerate(actions)

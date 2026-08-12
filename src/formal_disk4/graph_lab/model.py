@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -11,6 +12,12 @@ import networkx as nx
 import numpy as np
 
 from .evaluator import GRAPH_STAGES, GraphEvaluation
+from .feedback import (
+    LearningFeedback,
+    VALUE_TARGET_IDS,
+    balanced_binary_weights,
+    formal_profile_ids,
+)
 from .space import DualGraphCandidate, OUTSIDE
 
 try:
@@ -23,7 +30,7 @@ except ImportError as error:  # pragma: no cover - exercised only without the ex
     ) from error
 
 
-MODEL_VERSION = "graph-lab-gnn-v2"
+MODEL_VERSION = "graph-lab-gnn-v3"
 TRANSITIONS = tuple(range(1, len(GRAPH_STAGES)))
 NODE_FEATURES = 8
 GLOBAL_FEATURES = 6
@@ -120,6 +127,7 @@ class SharedGraphNetwork(nn.Module):
             nn.ReLU(),
         )
         self.stage_heads = nn.Linear(hidden_size, len(TRANSITIONS))
+        self.value_heads = nn.Linear(hidden_size, len(VALUE_TARGET_IDS))
         self.cost_head = nn.Linear(hidden_size, 1)
 
     def forward(
@@ -128,7 +136,7 @@ class SharedGraphNetwork(nn.Module):
         adjacency: torch.Tensor,
         global_features: torch.Tensor,
         outside_index: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden = torch.relu(self.node_input(node_features))
         for layer in self.message_layers:
             message = adjacency @ hidden
@@ -145,7 +153,11 @@ class SharedGraphNetwork(nn.Module):
             )
         )
         representation = self.trunk(pooled)
-        return self.stage_heads(representation), self.cost_head(representation).squeeze(0)
+        return (
+            self.stage_heads(representation),
+            self.value_heads(representation),
+            self.cost_head(representation).squeeze(0),
+        )
 
 
 @dataclass(frozen=True)
@@ -154,6 +166,7 @@ class GraphPrediction:
     reach_probabilities: tuple[float, ...]
     expected_stage: float
     geometry_probability: float
+    value_probabilities: tuple[float, ...]
     expected_seconds: float
 
 
@@ -175,6 +188,10 @@ class GraphLearningModel:
         )
         self.active_heads = np.zeros(len(TRANSITIONS), dtype=bool)
         self.empirical_rates = np.full(len(TRANSITIONS), 0.5, dtype=np.float32)
+        self.active_value_heads = np.zeros(len(VALUE_TARGET_IDS), dtype=bool)
+        self.empirical_value_rates = np.full(
+            len(VALUE_TARGET_IDS), 0.5, dtype=np.float32
+        )
 
     def _refresh_statistics(self, observations: Sequence[GraphEvaluation]) -> None:
         stages = np.asarray([item.stage_index for item in observations], dtype=np.int16)
@@ -185,6 +202,31 @@ class GraphLearningModel:
             self.active_heads[head] = positives > 0 and negatives > 0
             self.empirical_rates[head] = (positives + 0.5) / (
                 int(np.count_nonzero(eligible)) + 1.0
+            )
+
+    def _value_targets(
+        self, observation: GraphEvaluation, feedback: LearningFeedback
+    ) -> tuple[float | None, ...]:
+        return feedback.targets(
+            candidate=observation.candidate,
+            profile_count=len(observation.profiles),
+            profile_ids=formal_profile_ids(observation.profiles),
+            allow_graph_fallback=True,
+        )
+
+    def _refresh_value_statistics(
+        self,
+        observations: Sequence[GraphEvaluation],
+        feedback: LearningFeedback,
+    ) -> None:
+        targets = [self._value_targets(item, feedback) for item in observations]
+        for head in range(len(VALUE_TARGET_IDS)):
+            labels = [row[head] for row in targets if row[head] is not None]
+            positive = sum(float(value) for value in labels)
+            negative = len(labels) - positive
+            self.active_value_heads[head] = positive > 0.0 and negative > 0.0
+            self.empirical_value_rates[head] = float(
+                (positive + 0.5) / (len(labels) + 1.0)
             )
 
     @staticmethod
@@ -207,11 +249,15 @@ class GraphLearningModel:
     def predict(self, candidate: DualGraphCandidate) -> GraphPrediction:
         self.network.eval()
         with torch.no_grad():
-            logits, log_cost = self.network(
+            logits, value_logits, log_cost = self.network(
                 *graph_tensors(candidate, tile_scale=self.tile_scale)
             )
             probabilities = torch.sigmoid(logits).cpu().numpy()
+            value_probabilities = torch.sigmoid(value_logits).cpu().numpy()
         probabilities[~self.active_heads] = self.empirical_rates[~self.active_heads]
+        value_probabilities[~self.active_value_heads] = self.empirical_value_rates[
+            ~self.active_value_heads
+        ]
         reach = np.cumprod(probabilities)
         expected_stage = float(np.sum(reach))
         return GraphPrediction(
@@ -219,6 +265,7 @@ class GraphLearningModel:
             reach_probabilities=tuple(float(value) for value in reach),
             expected_stage=expected_stage,
             geometry_probability=float(reach[-1]),
+            value_probabilities=tuple(float(value) for value in value_probabilities),
             expected_seconds=max(
                 0.0, math.expm1(min(20.0, max(-20.0, float(log_cost.item()))))
             ),
@@ -230,13 +277,17 @@ class GraphLearningModel:
         *,
         novelty: float,
         geometry_weight: float,
+        solution_weight: float,
+        nontrivial_solution_weight: float,
         novelty_weight: float,
         cost_weight: float,
     ) -> tuple[float, GraphPrediction]:
         prediction = self.predict(candidate)
         score = (
             prediction.expected_stage
-            + geometry_weight * prediction.geometry_probability
+            + geometry_weight * prediction.value_probabilities[0]
+            + solution_weight * prediction.value_probabilities[1]
+            + nontrivial_solution_weight * prediction.value_probabilities[2]
             + novelty_weight * float(novelty)
             - cost_weight * math.log1p(prediction.expected_seconds)
         )
@@ -249,21 +300,64 @@ class GraphLearningModel:
         steps: int,
         batch_size: int,
         generation: int,
+        feedback: LearningFeedback | None = None,
     ) -> dict[str, object]:
+        feedback = feedback or LearningFeedback.empty()
         if not observations:
-            return self.metrics(observations)
-        training, _validation = self._partitions(observations)
+            return self.metrics(observations, feedback=feedback)
+        replay_limit = max(1, int(self.config.get("replay_examples", 50000)))
+        replay = observations[-replay_limit:]
+        training, _validation = self._partitions(replay)
         self._refresh_statistics(training)
+        self._refresh_value_statistics(training, feedback)
+        value_targets = {
+            id(item): self._value_targets(item, feedback) for item in training
+        }
+        value_weights = balanced_binary_weights(
+            tuple(value_targets.values()),
+            len(VALUE_TARGET_IDS),
+            maximum=float(self.config.get("maximum_class_weight", 50.0)),
+        )
+        cohorts: dict[int, list[GraphEvaluation]] = defaultdict(list)
+        ranking_window = training[
+            -max(1, int(self.config.get("ranking_replay_examples", 10000))):
+        ]
+        for observation in ranking_window:
+            cohorts[observation.candidate.tile_count].append(observation)
+        rankable: list[
+            tuple[int, list[GraphEvaluation], list[GraphEvaluation]]
+        ] = []
+        for values in cohorts.values():
+            for head in range(len(VALUE_TARGET_IDS)):
+                labelled = [
+                    (item, value_targets[id(item)][head])
+                    for item in values
+                ]
+                positive = [item for item, target in labelled if target == 1.0]
+                negative = [item for item, target in labelled if target == 0.0]
+                if positive and negative:
+                    rankable.append((head, positive, negative))
         stages = np.asarray([item.stage_index for item in training], dtype=np.int16)
         positive_weights = []
         negative_weights = []
+        maximum_class_weight = float(
+            self.config.get("maximum_class_weight", 50.0)
+        )
         for target in TRANSITIONS:
             eligible = stages >= target - 1
             positive = int(np.count_nonzero(stages >= target))
             negative = int(np.count_nonzero(eligible)) - positive
             total = positive + negative
-            positive_weights.append(total / (2 * positive) if positive else 1.0)
-            negative_weights.append(total / (2 * negative) if negative else 1.0)
+            positive_weights.append(
+                min(maximum_class_weight, total / (2 * positive))
+                if positive
+                else 1.0
+            )
+            negative_weights.append(
+                min(maximum_class_weight, total / (2 * negative))
+                if negative
+                else 1.0
+            )
 
         rng = random.Random(self.seed + int(generation) * 104729)
         losses = []
@@ -277,7 +371,7 @@ class GraphLearningModel:
             batch_loss = torch.tensor(0.0)
             terms = 0
             for observation in selected:
-                logits, log_cost = self.network(
+                logits, value_logits, log_cost = self.network(
                     *graph_tensors(
                         observation.candidate, tile_scale=self.tile_scale
                     )
@@ -293,18 +387,57 @@ class GraphLearningModel:
                         logits[head], torch.tensor(label)
                     )
                     terms += 1
+                for head, target in enumerate(
+                    value_targets[id(observation)]
+                ):
+                    if target is None or not self.active_value_heads[head]:
+                        continue
+                    weight = (
+                        value_weights[head][0] * float(target)
+                        + value_weights[head][1] * (1.0 - float(target))
+                    )
+                    batch_loss = batch_loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
+                        value_logits[head], torch.tensor(float(target))
+                    )
+                    terms += 1
                 cost_target = torch.tensor(math.log1p(observation.elapsed_seconds))
                 batch_loss = batch_loss + float(
                     self.config.get("cost_loss_weight", 0.1)
                 ) * torch.nn.functional.smooth_l1_loss(log_cost, cost_target)
                 terms += 1
+            pair_amount = min(
+                len(rankable),
+                max(0, int(self.config.get("ranking_pairs_per_step", 4))),
+            )
+            if pair_amount:
+                for head, positive, negative in rng.sample(rankable, pair_amount):
+                    better = positive[rng.randrange(len(positive))]
+                    worse = negative[rng.randrange(len(negative))]
+                    _stages, better_values, _cost = self.network(
+                        *graph_tensors(better.candidate, tile_scale=self.tile_scale)
+                    )
+                    _stages, worse_values, _cost = self.network(
+                        *graph_tensors(worse.candidate, tile_scale=self.tile_scale)
+                    )
+                    batch_loss = batch_loss + float(
+                        self.config.get("ranking_loss_weight", 0.5)
+                    ) * torch.nn.functional.softplus(
+                        -(better_values[head] - worse_values[head])
+                    )
+                    terms += 1
             batch_loss = batch_loss / max(1, terms)
             batch_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 5.0)
             self.optimizer.step()
             losses.append(float(batch_loss.detach().item()))
-        metrics = self.metrics(observations)
+        metric_limit = max(1, int(self.config.get("metric_examples", 512)))
+        metrics = self.metrics(
+            observations,
+            feedback=feedback,
+            maximum_examples=metric_limit,
+        )
         metrics["training_loss"] = float(np.mean(losses)) if losses else None
+        metrics["training_replay_examples"] = len(training)
         return metrics
 
     @staticmethod
@@ -328,7 +461,14 @@ class GraphLearningModel:
             / (positives * negatives)
         )
 
-    def metrics(self, observations: Sequence[GraphEvaluation]) -> dict[str, object]:
+    def metrics(
+        self,
+        observations: Sequence[GraphEvaluation],
+        *,
+        feedback: LearningFeedback | None = None,
+        maximum_examples: int | None = None,
+    ) -> dict[str, object]:
+        feedback = feedback or LearningFeedback.empty()
         if not observations:
             return {
                 "examples": 0,
@@ -337,9 +477,17 @@ class GraphLearningModel:
                 "metric_partition": "none",
                 "transitions": {},
             }
-        training, validation = self._partitions(observations)
+        metric_source = observations
+        if maximum_examples is not None:
+            metric_source = observations[
+                -max(1, int(maximum_examples) * 5):
+            ]
+        training, validation = self._partitions(metric_source)
         self._refresh_statistics(training)
+        self._refresh_value_statistics(training, feedback)
         measured = validation if validation else training
+        if maximum_examples is not None:
+            measured = measured[-max(1, int(maximum_examples)):]
         stages = np.asarray([item.stage_index for item in measured], dtype=np.int16)
         predictions = [self.predict(item.candidate) for item in measured]
         transitions = {}
@@ -362,13 +510,61 @@ class GraphLearningModel:
             abs(item.expected_seconds - observation.elapsed_seconds)
             for item, observation in zip(predictions, measured)
         ]
+        values: dict[str, object] = {}
+        for head, value_id in enumerate(VALUE_TARGET_IDS):
+            labels_and_scores = [
+                (targets[head], prediction.value_probabilities[head])
+                for observation, prediction in zip(measured, predictions)
+                for targets in (self._value_targets(observation, feedback),)
+                if targets[head] is not None
+            ]
+            labels = np.asarray([float(item[0]) for item in labels_and_scores])
+            scores = np.asarray([float(item[1]) for item in labels_and_scores])
+            values[value_id] = {
+                "eligible": len(labels),
+                "mean_rate": float(np.mean(labels)) if len(labels) else None,
+                "mean_prediction": float(np.mean(scores)) if len(scores) else None,
+                "auc": self._auc(labels >= 0.5, scores),
+                "active": bool(self.active_value_heads[head]),
+            }
+        pairwise: dict[str, object] = {}
+        cohorts: dict[int, list[tuple[GraphEvaluation, GraphPrediction]]] = defaultdict(list)
+        for observation, prediction in zip(measured, predictions):
+            cohorts[observation.candidate.tile_count].append(
+                (observation, prediction)
+            )
+        for head, value_id in enumerate(VALUE_TARGET_IDS):
+            correct = 0
+            total = 0
+            for items in cohorts.values():
+                labelled = [
+                    (item, prediction, self._value_targets(item, feedback)[head])
+                    for item, prediction in items
+                ]
+                positive = [item for item in labelled if item[2] == 1.0]
+                negative = [item for item in labelled if item[2] == 0.0]
+                for better in positive:
+                    for worse in negative:
+                        total += 1
+                        correct += int(
+                            better[1].value_probabilities[head]
+                            > worse[1].value_probabilities[head]
+                        )
+            pairwise[value_id] = {
+                "pairs": total,
+                "accuracy": correct / total if total else None,
+                "scope": "same_tile_count",
+            }
         return {
             "schema_version": "graph-lab-gnn-metrics-v1",
             "examples": len(observations),
             "training_examples": len(training),
             "validation_examples": len(validation),
             "metric_partition": "validation" if validation else "training_fallback",
+            "metric_examples": len(measured),
             "transitions": transitions,
+            "values": values,
+            "pairwise_ranking": pairwise,
             "cost_mean_absolute_error_seconds": float(np.mean(cost_errors)),
         }
 
@@ -383,6 +579,8 @@ class GraphLearningModel:
                 "optimizer": self.optimizer.state_dict(),
                 "active_heads": self.active_heads,
                 "empirical_rates": self.empirical_rates,
+                "active_value_heads": self.active_value_heads,
+                "empirical_value_rates": self.empirical_value_rates,
             },
             temporary,
         )
@@ -396,12 +594,19 @@ class GraphLearningModel:
         if not path.exists():
             return result
         payload = torch.load(path, map_location="cpu", weights_only=False)
-        if payload.get("version") != MODEL_VERSION:
+        version = payload.get("version")
+        if version != MODEL_VERSION:
             raise ValueError("Stored Graph Lab model is incompatible; use --restart")
         result.network.load_state_dict(payload["network"])
         result.optimizer.load_state_dict(payload["optimizer"])
         result.active_heads = np.asarray(payload["active_heads"], dtype=bool)
         result.empirical_rates = np.asarray(
             payload["empirical_rates"], dtype=np.float32
+        )
+        result.active_value_heads = np.asarray(
+            payload["active_value_heads"], dtype=bool
+        )
+        result.empirical_value_rates = np.asarray(
+            payload["empirical_value_rates"], dtype=np.float32
         )
         return result

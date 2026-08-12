@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
 
 from .evaluator import GRAPH_STAGES, GraphEvaluation, GraphFormalEvaluator
+from .feedback import read_learning_feedback
 from .isomorphism import IsomorphismIndex
 from .mapping import MappingEvaluation, MappingProposal
 from .mapping_model import MappingLearningModel
@@ -237,26 +238,37 @@ class GraphLabRunner:
             ),
         )
         scored = []
-        active_heads = [
-            index for index, active in enumerate(model.active_heads) if active
+        active_values = [
+            index
+            for index, active in enumerate(model.active_value_heads)
+            if active
         ]
         for proposal in pool:
             prediction = model.predict(proposal)
             utility = (
-                math.log(
-                    max(
-                        1e-12,
-                        prediction.reach_probabilities[active_heads[-1]],
-                    )
-                )
-                if active_heads
+                math.log(max(1e-12, prediction.terminal_probability))
+                if active_values
                 else 0.0
-            ) - float(
+            )
+            if 1 in active_values:
+                utility += float(
+                    self.mapping_sampling.get("geometry_solution_weight", 1.0)
+                ) * prediction.value_probabilities[1]
+            if 2 in active_values:
+                utility += float(
+                    self.mapping_sampling.get(
+                        "nontrivial_solution_weight", 2.0
+                    )
+                ) * prediction.value_probabilities[2]
+            utility += float(
+                self.mapping_sampling.get("deeper_utility_weight", 0.05)
+            ) * prediction.auxiliary_progress
+            utility -= float(
                 self.mapping_sampling.get("cost_weight", 0.02)
             ) * math.log1p(prediction.expected_seconds)
             scored.append((utility, proposal, prediction))
         scored.sort(key=lambda item: (-item[0], item[1].mapping_id))
-        if not active_heads:
+        if not active_values:
             selected = [
                 (item, "exploration") for item in rng.sample(scored, amount)
             ]
@@ -279,15 +291,11 @@ class GraphLabRunner:
                     "predicted_conditional_probabilities": list(
                         prediction.conditional_probabilities
                     ),
-                    "predicted_reach_probabilities": list(
-                        prediction.reach_probabilities
+                    "predicted_value_probabilities": list(
+                        prediction.value_probabilities
                     ),
                     "predicted_seconds": prediction.expected_seconds,
-                    "frontier_filter": (
-                        LEARNING_FILTER_IDS[active_heads[-1]]
-                        if active_heads
-                        else None
-                    ),
+                    "ranking_target": "profile_emitted",
                 },
             )
             for (score, proposal, prediction), mode in selected
@@ -334,7 +342,17 @@ class GraphLabRunner:
                 self.weak_order_sampling.get("preserve_from_filter_index", 21)
             ):
                 _append_jsonl(
-                    self.output / "deep_weak_order_candidates.jsonl", payload
+                    self.output / "deep_weak_order_candidates.jsonl",
+                    {
+                        "schema_version": "graph-lab-deep-weak-index-v2",
+                        "generation": generation,
+                        "trajectory_id": weak_trajectory_id(observation),
+                        "graph_id": observation.proposal.candidate.graph_id,
+                        "mapping_id": observation.proposal.mapping_id,
+                        "deepest_filter_index": observation.deepest_filter_index,
+                        "profile_count": observation.profile_count,
+                        "source": "weak_order_rollouts.jsonl",
+                    },
                 )
             weak_records.append(observation)
 
@@ -363,7 +381,18 @@ class GraphLabRunner:
             if evaluation.deepest_filter_index >= int(
                 self.mapping_sampling.get("preserve_from_filter_index", 21)
             ):
-                _append_jsonl(self.output / "deep_mapping_candidates.jsonl", payload)
+                _append_jsonl(
+                    self.output / "deep_mapping_candidates.jsonl",
+                    {
+                        "schema_version": "graph-lab-deep-mapping-index-v2",
+                        "generation": generation,
+                        "graph_id": evaluation.proposal.candidate.graph_id,
+                        "mapping_id": evaluation.proposal.mapping_id,
+                        "deepest_filter_index": evaluation.deepest_filter_index,
+                        "profile_count": len(evaluation.profiles),
+                        "source": "mapping_observations.jsonl",
+                    },
+                )
             records.append((evaluation, metadata))
         evaluations = [evaluation for evaluation, _metadata in records]
         return (
@@ -571,11 +600,17 @@ class GraphLabRunner:
     def _training_output_bytes(self) -> int:
         if not self.output.exists():
             return 0
-        return sum(
-            path.stat().st_size
-            for path in self.output.iterdir()
-            if path.is_file() and not path.name.endswith(".tmp")
-        )
+        total = 0
+        for path in self.output.rglob("*"):
+            if not path.is_file() or path.name.endswith(".tmp"):
+                continue
+            try:
+                total += path.stat().st_size
+            except OSError:
+                # A concurrent geometry worker may atomically replace a file
+                # while the Lab samples disk usage. The next check sees it.
+                continue
+        return total
 
     def _output_budget_reached(self) -> bool:
         return (
@@ -641,12 +676,18 @@ class GraphLabRunner:
                 candidate,
                 novelty=novelty,
                 geometry_weight=float(self.sampling.get("geometry_weight", 8.0)),
+                solution_weight=float(
+                    self.sampling.get("geometry_solution_weight", 4.0)
+                ),
+                nontrivial_solution_weight=float(
+                    self.sampling.get("nontrivial_solution_weight", 8.0)
+                ),
                 novelty_weight=float(self.sampling.get("novelty_weight", 1.5)),
                 cost_weight=float(self.sampling.get("cost_weight", 0.08)),
             )
             scored.append((score, candidate, prediction, novelty))
         scored.sort(key=lambda item: (-item[0], item[1].graph_id))
-        if not any(bool(value) for value in model.active_heads):
+        if not any(bool(value) for value in model.active_value_heads):
             return [
                 (
                     candidate,
@@ -657,6 +698,9 @@ class GraphLabRunner:
                         "predicted_stage": prediction.expected_stage,
                         "predicted_geometry_probability": (
                             prediction.geometry_probability
+                        ),
+                        "predicted_value_probabilities": list(
+                            prediction.value_probabilities
                         ),
                         "predicted_transition_probabilities": list(
                             prediction.conditional_probabilities
@@ -688,6 +732,9 @@ class GraphLabRunner:
                     "novelty": novelty,
                     "predicted_stage": prediction.expected_stage,
                     "predicted_geometry_probability": prediction.geometry_probability,
+                    "predicted_value_probabilities": list(
+                        prediction.value_probabilities
+                    ),
                     "predicted_transition_probabilities": list(
                         prediction.conditional_probabilities
                     ),
@@ -817,6 +864,7 @@ class GraphLabRunner:
         generation: int,
         *,
         stop_reason: str,
+        model_metrics: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         stage_histogram = Counter(item.stage_name for item in observations)
         reached = {
@@ -878,7 +926,17 @@ class GraphLabRunner:
             "geometry_ready": geometry,
             "geometry_ready_evaluations": len(geometry),
             "geometry_ready_unique_graphs": unique_geometry_count,
-            "model": model.metrics(observations),
+            "model": (
+                dict(model_metrics)
+                if model_metrics is not None
+                else model.metrics(
+                    observations,
+                    feedback=read_learning_feedback(self.output),
+                    maximum_examples=int(
+                        self.learning.get("metric_examples", 512)
+                    ),
+                )
+            ),
         }
         _atomic_json(self.output / "report.json", report)
         lines = [
@@ -978,12 +1036,14 @@ class GraphLabRunner:
         weak_order_model = WeakOrderLearningModel.load_or_create(
             self.output / "weak_order_model.pt", self.weak_order_learning
         )
+        feedback = read_learning_feedback(self.output)
         if observations and not (self.output / "model.pt").exists():
             model.train(
                 observations,
                 steps=int(self.learning.get("bootstrap_steps", 100)),
                 batch_size=int(self.learning.get("batch_size", 16)),
                 generation=-1,
+                feedback=feedback,
             )
         if mapping_observations and not (self.output / "mapping_model.pt").exists():
             mapping_model.train(
@@ -991,6 +1051,7 @@ class GraphLabRunner:
                 steps=int(self.mapping_learning.get("bootstrap_steps", 100)),
                 batch_size=int(self.mapping_learning.get("batch_size", 16)),
                 generation=-1,
+                feedback=feedback,
             )
         if weak_order_rollouts and not (
             self.output / "weak_order_model.pt"
@@ -1000,6 +1061,7 @@ class GraphLabRunner:
                 steps=int(self.weak_order_learning.get("bootstrap_steps", 100)),
                 batch_size=int(self.weak_order_learning.get("batch_size", 16)),
                 generation=-1,
+                feedback=feedback,
             )
 
         start = self._state_generation()
@@ -1163,11 +1225,13 @@ class GraphLabRunner:
                     if evaluation.stop_reason == "keyboard_interrupt":
                         raise KeyboardInterrupt
 
+                feedback = read_learning_feedback(self.output)
                 metrics = model.train(
                     observations,
                     steps=int(self.learning.get("steps_per_generation", 8)),
                     batch_size=int(self.learning.get("batch_size", 16)),
                     generation=generation,
+                    feedback=feedback,
                 )
                 model.save(self.output / "model.pt")
                 if self.mapping_learning_enabled:
@@ -1178,6 +1242,7 @@ class GraphLabRunner:
                         ),
                         batch_size=int(self.mapping_learning.get("batch_size", 16)),
                         generation=generation,
+                        feedback=feedback,
                     )
                     mapping_model.save(self.output / "mapping_model.pt")
                     _append_jsonl(
@@ -1189,7 +1254,9 @@ class GraphLabRunner:
                         ),
                     )
                 else:
-                    mapping_metrics = mapping_model.metrics(mapping_observations)
+                    mapping_metrics = mapping_model.metrics(
+                        mapping_observations, feedback=feedback
+                    )
                 if self.weak_order_learning_enabled:
                     weak_order_metrics = weak_order_model.train(
                         weak_order_rollouts,
@@ -1202,6 +1269,7 @@ class GraphLabRunner:
                             self.weak_order_learning.get("batch_size", 16)
                         ),
                         generation=generation,
+                        feedback=feedback,
                     )
                     weak_order_model.save(
                         self.output / "weak_order_model.pt"
@@ -1216,7 +1284,7 @@ class GraphLabRunner:
                     )
                 else:
                     weak_order_metrics = weak_order_model.metrics(
-                        weak_order_rollouts
+                        weak_order_rollouts, feedback=feedback
                     )
                 _append_jsonl(
                     self.output / "training_metrics.jsonl",
@@ -1276,6 +1344,7 @@ class GraphLabRunner:
                             else "running"
                         )
                     ),
+                    model_metrics=metrics,
                 )
                 last_generation = generation
                 print(

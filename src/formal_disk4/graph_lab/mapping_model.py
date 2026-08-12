@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -13,6 +14,12 @@ from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
 
 from .mapping import MappingEvaluation, MappingProposal
 from .model import GLOBAL_FEATURES, NODE_FEATURES, graph_tensors
+from .feedback import (
+    LearningFeedback,
+    VALUE_TARGET_IDS,
+    balanced_binary_weights,
+    formal_profile_ids,
+)
 
 try:
     import torch
@@ -24,7 +31,7 @@ except ImportError as error:  # pragma: no cover
     ) from error
 
 
-MODEL_VERSION = "graph-lab-mapping-gnn-v1"
+MODEL_VERSION = "graph-lab-mapping-gnn-v2"
 MAPPING_FEATURES = 8
 EDGE_FEATURES = 8
 
@@ -115,6 +122,7 @@ class MappingGraphNetwork(nn.Module):
             nn.ReLU(),
         )
         self.filter_heads = nn.Linear(hidden_size, len(LEARNING_FILTER_IDS))
+        self.value_heads = nn.Linear(hidden_size, len(VALUE_TARGET_IDS))
         self.cost_head = nn.Linear(hidden_size, 1)
 
     def forward(
@@ -124,7 +132,7 @@ class MappingGraphNetwork(nn.Module):
         global_features: torch.Tensor,
         outside_index: int,
         edge_features: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden = torch.relu(self.node_input(node_features))
         node_count = len(hidden)
         for message_layer, update_layer in zip(
@@ -152,15 +160,23 @@ class MappingGraphNetwork(nn.Module):
             )
         )
         representation = self.trunk(pooled)
-        return self.filter_heads(representation), self.cost_head(representation).squeeze(0)
+        return (
+            self.filter_heads(representation),
+            self.value_heads(representation),
+            self.cost_head(representation).squeeze(0),
+        )
 
 
 @dataclass(frozen=True)
 class MappingPrediction:
     conditional_probabilities: tuple[float, ...]
-    reach_probabilities: tuple[float, ...]
-    utility: float
+    value_probabilities: tuple[float, ...]
+    auxiliary_progress: float
     expected_seconds: float
+
+    @property
+    def terminal_probability(self) -> float:
+        return self.value_probabilities[0]
 
 
 class MappingLearningModel:
@@ -183,6 +199,10 @@ class MappingLearningModel:
         )
         self.active_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
         self.empirical_rates = np.full(len(LEARNING_FILTER_IDS), 0.5, dtype=np.float32)
+        self.active_value_heads = np.zeros(len(VALUE_TARGET_IDS), dtype=bool)
+        self.empirical_value_rates = np.full(
+            len(VALUE_TARGET_IDS), 0.5, dtype=np.float32
+        )
 
     @staticmethod
     def _is_validation(observation: MappingEvaluation) -> bool:
@@ -215,28 +235,49 @@ class MappingLearningModel:
             self.active_heads[head] = positive > 0.0 and negative > 0.0
             self.empirical_rates[head] = float((positive + 0.5) / (len(labels) + 1.0))
 
+    def _value_targets(
+        self,
+        observation: MappingEvaluation,
+        feedback: LearningFeedback,
+    ) -> tuple[float | None, ...]:
+        return feedback.targets(
+            candidate=observation.proposal.candidate,
+            profile_count=len(observation.profiles),
+            profile_ids=formal_profile_ids(observation.profiles),
+        )
+
+    def _refresh_value_statistics(
+        self,
+        observations: Sequence[MappingEvaluation],
+        feedback: LearningFeedback,
+    ) -> None:
+        targets = [self._value_targets(item, feedback) for item in observations]
+        for head in range(len(VALUE_TARGET_IDS)):
+            labels = [row[head] for row in targets if row[head] is not None]
+            positive = sum(float(value) for value in labels)
+            negative = len(labels) - positive
+            self.active_value_heads[head] = positive > 0.0 and negative > 0.0
+            self.empirical_value_rates[head] = float(
+                (positive + 0.5) / (len(labels) + 1.0)
+            )
+
     def predict(self, proposal: MappingProposal) -> MappingPrediction:
         self.network.eval()
         with torch.no_grad():
-            logits, log_cost = self.network(
+            logits, value_logits, log_cost = self.network(
                 *mapping_tensors(proposal, tile_scale=self.tile_scale)
             )
             probabilities = torch.sigmoid(logits).cpu().numpy()
+            value_probabilities = torch.sigmoid(value_logits).cpu().numpy()
         probabilities[~self.active_heads] = self.empirical_rates[~self.active_heads]
-        reach = np.cumprod(probabilities)
-        weights = np.asarray(
-            [float(value) for value in self.config.get(
-                "filter_weights", [1.0] * len(LEARNING_FILTER_IDS)
-            )],
-            dtype=np.float32,
-        )
-        if len(weights) != len(LEARNING_FILTER_IDS):
-            weights = np.ones(len(LEARNING_FILTER_IDS), dtype=np.float32)
-        utility = float(np.sum(weights * reach))
+        value_probabilities[~self.active_value_heads] = self.empirical_value_rates[
+            ~self.active_value_heads
+        ]
+        active = probabilities[self.active_heads]
         return MappingPrediction(
             conditional_probabilities=tuple(float(value) for value in probabilities),
-            reach_probabilities=tuple(float(value) for value in reach),
-            utility=utility,
+            value_probabilities=tuple(float(value) for value in value_probabilities),
+            auxiliary_progress=float(np.mean(active)) if len(active) else 0.5,
             expected_seconds=max(
                 0.0, math.expm1(min(20.0, max(-20.0, float(log_cost.item()))))
             ),
@@ -249,11 +290,48 @@ class MappingLearningModel:
         steps: int,
         batch_size: int,
         generation: int,
+        feedback: LearningFeedback | None = None,
     ) -> dict[str, object]:
+        feedback = feedback or LearningFeedback.empty()
         if not observations:
-            return self.metrics(observations)
-        training, _ = self._partitions(observations)
+            return self.metrics(observations, feedback=feedback)
+        replay_limit = max(1, int(self.config.get("replay_examples", 50000)))
+        replay = observations[-replay_limit:]
+        training, _ = self._partitions(replay)
         self._refresh_statistics(training)
+        self._refresh_value_statistics(training, feedback)
+        value_targets = {
+            id(item): self._value_targets(item, feedback) for item in training
+        }
+        filter_weights = balanced_binary_weights(
+            tuple(item.target_vector for item in training),
+            len(LEARNING_FILTER_IDS),
+            maximum=float(self.config.get("maximum_class_weight", 50.0)),
+        )
+        value_weights = balanced_binary_weights(
+            tuple(value_targets.values()),
+            len(VALUE_TARGET_IDS),
+            maximum=float(self.config.get("maximum_class_weight", 50.0)),
+        )
+        groups: dict[str, list[MappingEvaluation]] = defaultdict(list)
+        ranking_window = training[
+            -max(1, int(self.config.get("ranking_replay_examples", 10000))):
+        ]
+        for observation in ranking_window:
+            groups[observation.proposal.candidate.graph_id].append(observation)
+        rankable: list[
+            tuple[int, list[MappingEvaluation], list[MappingEvaluation]]
+        ] = []
+        for values in groups.values():
+            for head in range(len(VALUE_TARGET_IDS)):
+                labelled = [
+                    (item, value_targets[id(item)][head])
+                    for item in values
+                ]
+                positive = [item for item, target in labelled if target == 1.0]
+                negative = [item for item, target in labelled if target == 0.0]
+                if positive and negative:
+                    rankable.append((head, positive, negative))
         rng = random.Random(self.seed + int(generation) * 130363)
         losses: list[float] = []
         self.network.train()
@@ -266,14 +344,32 @@ class MappingLearningModel:
             loss = torch.tensor(0.0)
             terms = 0
             for observation in selected:
-                logits, log_cost = self.network(
+                logits, value_logits, log_cost = self.network(
                     *mapping_tensors(observation.proposal, tile_scale=self.tile_scale)
                 )
                 for head, target in enumerate(observation.target_vector):
                     if target is None or not self.active_heads[head]:
                         continue
-                    loss = loss + torch.nn.functional.binary_cross_entropy_with_logits(
+                    weight = (
+                        filter_weights[head][0] * float(target)
+                        + filter_weights[head][1] * (1.0 - float(target))
+                    )
+                    loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
                         logits[head], torch.tensor(float(target), dtype=torch.float32)
+                    )
+                    terms += 1
+                for head, target in enumerate(
+                    value_targets[id(observation)]
+                ):
+                    if target is None or not self.active_value_heads[head]:
+                        continue
+                    weight = (
+                        value_weights[head][0] * float(target)
+                        + value_weights[head][1] * (1.0 - float(target))
+                    )
+                    loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
+                        value_logits[head],
+                        torch.tensor(float(target), dtype=torch.float32),
                     )
                     terms += 1
                 loss = loss + float(self.config.get("cost_loss_weight", 0.05)) * (
@@ -283,13 +379,39 @@ class MappingLearningModel:
                     )
                 )
                 terms += 1
+            pair_amount = min(
+                len(rankable),
+                max(0, int(self.config.get("ranking_pairs_per_step", 4))),
+            )
+            if pair_amount:
+                for head, positive, negative in rng.sample(rankable, pair_amount):
+                    better = positive[rng.randrange(len(positive))]
+                    worse = negative[rng.randrange(len(negative))]
+                    _filters, better_values, _cost = self.network(
+                        *mapping_tensors(better.proposal, tile_scale=self.tile_scale)
+                    )
+                    _filters, worse_values, _cost = self.network(
+                        *mapping_tensors(worse.proposal, tile_scale=self.tile_scale)
+                    )
+                    loss = loss + float(
+                        self.config.get("ranking_loss_weight", 0.5)
+                    ) * torch.nn.functional.softplus(
+                        -(better_values[head] - worse_values[head])
+                    )
+                    terms += 1
             loss = loss / max(1, terms)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 5.0)
             self.optimizer.step()
             losses.append(float(loss.detach().item()))
-        metrics = self.metrics(observations)
+        metric_limit = max(1, int(self.config.get("metric_examples", 512)))
+        metrics = self.metrics(
+            observations,
+            feedback=feedback,
+            maximum_examples=metric_limit,
+        )
         metrics["training_loss"] = float(np.mean(losses)) if losses else None
+        metrics["training_replay_examples"] = len(training)
         return metrics
 
     @staticmethod
@@ -313,16 +435,31 @@ class MappingLearningModel:
             / (positives * negatives)
         )
 
-    def metrics(self, observations: Sequence[MappingEvaluation]) -> dict[str, object]:
+    def metrics(
+        self,
+        observations: Sequence[MappingEvaluation],
+        *,
+        feedback: LearningFeedback | None = None,
+        maximum_examples: int | None = None,
+    ) -> dict[str, object]:
+        feedback = feedback or LearningFeedback.empty()
         if not observations:
             return {
                 "schema_version": "graph-lab-mapping-metrics-v1",
                 "examples": 0,
                 "filters": {},
             }
-        training, validation = self._partitions(observations)
+        metric_source = observations
+        if maximum_examples is not None:
+            metric_source = observations[
+                -max(1, int(maximum_examples) * 5):
+            ]
+        training, validation = self._partitions(metric_source)
         self._refresh_statistics(training)
+        self._refresh_value_statistics(training, feedback)
         measured = validation if validation else training
+        if maximum_examples is not None:
+            measured = measured[-max(1, int(maximum_examples)):]
         predictions = [self.predict(item.proposal) for item in measured]
         filters: dict[str, object] = {}
         for head, filter_id in enumerate(LEARNING_FILTER_IDS):
@@ -344,13 +481,61 @@ class MappingLearningModel:
                 "binary_auc": self._auc(labels >= 0.5, scores),
                 "active": bool(self.active_heads[head]),
             }
+        values: dict[str, object] = {}
+        for head, value_id in enumerate(VALUE_TARGET_IDS):
+            labels_and_scores = [
+                (targets[head], prediction.value_probabilities[head])
+                for item, prediction in zip(measured, predictions)
+                for targets in (self._value_targets(item, feedback),)
+                if targets[head] is not None
+            ]
+            labels = np.asarray([float(item[0]) for item in labels_and_scores])
+            scores = np.asarray([float(item[1]) for item in labels_and_scores])
+            values[value_id] = {
+                "eligible": len(labels),
+                "mean_rate": float(np.mean(labels)) if len(labels) else None,
+                "mean_prediction": float(np.mean(scores)) if len(scores) else None,
+                "binary_auc": self._auc(labels >= 0.5, scores),
+                "active": bool(self.active_value_heads[head]),
+            }
+        by_graph: dict[str, list[tuple[MappingEvaluation, MappingPrediction]]] = defaultdict(list)
+        for item, prediction in zip(measured, predictions):
+            by_graph[item.proposal.candidate.graph_id].append((item, prediction))
+        pairwise: dict[str, object] = {}
+        for head, value_id in enumerate(VALUE_TARGET_IDS):
+            pair_total = 0
+            pair_correct = 0
+            for items in by_graph.values():
+                labelled = [
+                    (item, prediction, self._value_targets(item, feedback)[head])
+                    for item, prediction in items
+                ]
+                positives = [pair for pair in labelled if pair[2] == 1.0]
+                negatives = [pair for pair in labelled if pair[2] == 0.0]
+                for positive in positives:
+                    for negative in negatives:
+                        pair_total += 1
+                        pair_correct += int(
+                            positive[1].value_probabilities[head]
+                            > negative[1].value_probabilities[head]
+                        )
+            pairwise[value_id] = {
+                "pairs": pair_total,
+                "accuracy": pair_correct / pair_total if pair_total else None,
+                "scope": "same_graph",
+            }
         return {
             "schema_version": "graph-lab-mapping-metrics-v1",
             "examples": len(observations),
             "training_examples": len(training),
             "validation_examples": len(validation),
             "metric_partition": "validation" if validation else "training_fallback",
+            "metric_examples": len(measured),
             "filters": filters,
+            "values": values,
+            "pairwise_ranking": pairwise,
+            "within_parent_pair_accuracy": pairwise["profile_emitted"]["accuracy"],
+            "within_parent_pairs": pairwise["profile_emitted"]["pairs"],
         }
 
     def save(self, path: Path) -> None:
@@ -364,6 +549,8 @@ class MappingLearningModel:
                 "optimizer": self.optimizer.state_dict(),
                 "active_heads": self.active_heads,
                 "empirical_rates": self.empirical_rates,
+                "active_value_heads": self.active_value_heads,
+                "empirical_value_rates": self.empirical_value_rates,
             },
             temporary,
         )
@@ -377,10 +564,17 @@ class MappingLearningModel:
         if not path.exists():
             return result
         payload = torch.load(path, map_location="cpu", weights_only=False)
-        if payload.get("version") != MODEL_VERSION:
+        version = payload.get("version")
+        if version != MODEL_VERSION:
             raise ValueError("Stored mapping model is incompatible; use --restart")
         result.network.load_state_dict(payload["network"])
         result.optimizer.load_state_dict(payload["optimizer"])
         result.active_heads = np.asarray(payload["active_heads"], dtype=bool)
         result.empirical_rates = np.asarray(payload["empirical_rates"], dtype=np.float32)
+        result.active_value_heads = np.asarray(
+            payload["active_value_heads"], dtype=bool
+        )
+        result.empirical_value_rates = np.asarray(
+            payload["empirical_value_rates"], dtype=np.float32
+        )
         return result

@@ -10,6 +10,8 @@ from formal_disk4.enumeration.assignments import ContourAssignment
 from formal_disk4.maps.base import InterfaceView, PlanarMap
 from formal_disk4.pipeline.filter_report import FilterReport
 
+from .feedback import formal_profile_ids
+
 from .space import DualGraphCandidate
 
 
@@ -167,6 +169,7 @@ class MappingEvaluation:
             "rollout_count": self.rollout_count,
             "elapsed_seconds": self.elapsed_seconds,
             "profile_count": len(self.profiles),
+            "profile_ids": list(formal_profile_ids(self.profiles)),
             "tainted": self.tainted,
             "stop_reasons": list(self.stop_reasons),
             "error": self.error,
@@ -177,6 +180,16 @@ class MappingEvaluation:
         report_payload = payload.get("filter_report")
         if not isinstance(report_payload, Mapping):
             raise ValueError("Mapping observation has no filter_report")
+        identifiers = tuple(
+            str(value) for value in payload.get("profile_ids", ())  # type: ignore[union-attr]
+        )
+        profile_count = int(payload.get("profile_count", len(identifiers)))
+        restored_profiles = [
+            {"formal_profile_id": profile_id} for profile_id in identifiers
+        ]
+        restored_profiles.extend(
+            {} for _ in range(max(0, profile_count - len(restored_profiles)))
+        )
         return cls(
             proposal=MappingProposal.from_dict(payload["proposal"]),  # type: ignore[arg-type]
             filters=FilterReport.from_dict(report_payload),
@@ -186,7 +199,7 @@ class MappingEvaluation:
             },
             rollout_count=int(payload.get("rollout_count", 1)),
             elapsed_seconds=float(payload.get("elapsed_seconds", 0.0)),
-            profiles=(),
+            profiles=tuple(restored_profiles),
             tainted=bool(payload.get("tainted", False)),
             stop_reasons=tuple(
                 str(value) for value in payload.get("stop_reasons", ())  # type: ignore[union-attr]

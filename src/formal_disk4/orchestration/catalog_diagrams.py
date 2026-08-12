@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from html import escape
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -284,6 +285,95 @@ def build_catalog_schematic(planar_map: PlanarMap) -> CatalogSchematic:
         tuple(pieces),
         point_contacts,
     )
+
+
+def catalog_schematic_svg(
+    schematic: CatalogSchematic,
+    *,
+    width: int = 480,
+    height: int = 360,
+) -> str:
+    """Render the same schematic used by the Tk catalog browser as SVG."""
+
+    width = max(160, int(width))
+    height = max(120, int(height))
+    scale = 0.43 * min(width, height)
+    center_x = 0.5 * width
+    center_y = 0.5 * height
+
+    def screen(point: Point) -> Point:
+        return (
+            center_x + scale * point[0],
+            center_y - scale * point[1],
+        )
+
+    def number(value: float) -> str:
+        return f"{value:.2f}"
+
+    colors = {
+        "arc": "#79b8d1",
+        "point": "#efc35a",
+        "none": "#e68a63",
+    }
+    outer_edges = {
+        frozenset(
+            (
+                schematic.outer_cycle[index],
+                schematic.outer_cycle[(index + 1) % len(schematic.outer_cycle)],
+            )
+        )
+        for index in range(len(schematic.outer_cycle))
+    }
+    parts = [
+        (
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="Structural schematic {escape(schematic.map_name)}">'
+        ),
+        f'<rect width="{width}" height="{height}" fill="#f0f1f2"/>',
+        (
+            f'<circle cx="{number(center_x)}" cy="{number(center_y)}" '
+            f'r="{number(scale)}" fill="#ffffff"/>'
+        ),
+    ]
+    for piece in schematic.pieces:
+        coordinates = " ".join(
+            f"{number(x)},{number(y)}" for x, y in map(screen, piece.points)
+        )
+        parts.append(
+            f'<polygon points="{coordinates}" '
+            f'fill="{colors.get(piece.outer_contact, colors["none"])}"/>'
+        )
+    for left, right in schematic.edges:
+        if frozenset((left, right)) in outer_edges:
+            continue
+        start = screen(schematic.vertex_positions[left])
+        end = screen(schematic.vertex_positions[right])
+        parts.append(
+            f'<line x1="{number(start[0])}" y1="{number(start[1])}" '
+            f'x2="{number(end[0])}" y2="{number(end[1])}" '
+            'stroke="#25282a" stroke-width="1.4"/>'
+        )
+    parts.append(
+        f'<circle cx="{number(center_x)}" cy="{number(center_y)}" '
+        f'r="{number(scale)}" fill="none" stroke="#25282a" stroke-width="2.5"/>'
+    )
+    for vertex in schematic.point_contacts:
+        x, y = screen(schematic.vertex_positions[vertex])
+        parts.append(
+            f'<circle cx="{number(x)}" cy="{number(y)}" r="4" '
+            'fill="#ffffff" stroke="#25282a" stroke-width="1.5"/>'
+        )
+    for piece in schematic.pieces:
+        x, y = screen(piece.label_position)
+        parts.append(
+            f'<text x="{number(x)}" y="{number(y + 3)}" '
+            'text-anchor="middle" fill="#25282a" '
+            'font-family="system-ui,sans-serif" font-size="12" '
+            f'font-weight="700">{escape(piece.name)}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
 
 
 def _imposed_symmetry(case: CaseDefinition) -> str:

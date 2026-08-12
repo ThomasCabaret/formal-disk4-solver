@@ -17,6 +17,7 @@ from .evaluator import GRAPH_STAGES
 from .geometry_catalog import GeometryCandidateCatalog
 from .rollout_audit import build_audit_report
 from .solution_gallery import GeometrySolutionIndex
+from .structure_gallery import RecentStructureGallery
 
 
 def _load_json_lines(path: Path) -> list[dict[str, Any]]:
@@ -244,6 +245,39 @@ def build_dashboard_data(
     model_transitions = latest_model.get(collection_key, {})
     if not isinstance(model_transitions, Mapping):
         model_transitions = {}
+    model_values = latest_model.get("values", {})
+    if not isinstance(model_values, Mapping):
+        model_values = {}
+    model_pairwise = latest_model.get("pairwise_ranking", {})
+    if not isinstance(model_pairwise, Mapping):
+        model_pairwise = {}
+    value_labels = {
+        "profile_emitted": "Formal profile emitted",
+        "geometry_solution": "Geometry solution found",
+        "nontrivial_geometry_solution": "Non-ring geometry solution found",
+    }
+    objectives = []
+    for value_id, label in value_labels.items():
+        value = model_values.get(value_id, {})
+        pair = model_pairwise.get(value_id, {})
+        if not isinstance(value, Mapping):
+            value = {}
+        if not isinstance(pair, Mapping):
+            pair = {}
+        objectives.append(
+            {
+                "id": value_id,
+                "label": label,
+                "eligible": int(value.get("eligible", 0) or 0),
+                "actual_rate": value.get("mean_rate"),
+                "mean_prediction": value.get("mean_prediction"),
+                "auc": value.get("binary_auc", value.get("auc")),
+                "active": bool(value.get("active", False)),
+                "pair_accuracy": pair.get("accuracy"),
+                "pair_count": int(pair.get("pairs", 0) or 0),
+                "pair_scope": pair.get("scope"),
+            }
+        )
 
     transitions = []
     for index, stage in enumerate(transition_ids):
@@ -316,6 +350,7 @@ def build_dashboard_data(
         "window_generations": window,
         "points": points,
         "transitions": transitions,
+        "objectives": objectives,
         "comparison": {
             "required": require_comparable,
             "comparable_generations": len(comparable_rows),
@@ -356,6 +391,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 def build_unified_dashboard_data(
     output: Path,
     catalog: GeometryCandidateCatalog,
+    structures: RecentStructureGallery | None = None,
     *,
     window_generations: int = 50,
     max_points: int = 400,
@@ -363,6 +399,7 @@ def build_unified_dashboard_data(
     page_size: int = 100,
     include_importance: set[str] | None = None,
     include_statuses: set[str] | None = None,
+    structure_limit: int = 100,
 ) -> dict[str, Any]:
     output = output.resolve()
     geometry_output = output / "geometry"
@@ -426,6 +463,11 @@ def build_unified_dashboard_data(
         "coverage": coverage,
         "worker": worker,
         "gallery": gallery,
+        "recent_structures": (
+            structures.recent(structure_limit)
+            if structures is not None
+            else {"requested": structure_limit, "available": 0, "items": []}
+        ),
         "state": _read_json(output / "state.json"),
         "report": _read_json(output / "report.json"),
     }
@@ -522,6 +564,7 @@ def make_handler(
     output: Path,
     catalog: GeometryCandidateCatalog,
     solutions: GeometrySolutionIndex,
+    structures: RecentStructureGallery,
     window_generations: int,
     max_points: int,
 ) -> type[BaseHTTPRequestHandler]:
@@ -540,8 +583,11 @@ def make_handler(
                 try:
                     page = int(query.get("page", ["1"])[0])
                     page_size = int(query.get("page_size", ["100"])[0])
+                    structure_limit = int(
+                        query.get("structure_limit", ["100"])[0]
+                    )
                 except ValueError:
-                    page, page_size = 1, 100
+                    page, page_size, structure_limit = 1, 100, 100
                 importance_parameter = query.get("importance")
                 importance = {
                     value
@@ -565,6 +611,7 @@ def make_handler(
                     build_unified_dashboard_data(
                         output,
                         catalog,
+                        structures,
                         window_generations=window_generations,
                         max_points=max_points,
                         page=page,
@@ -575,6 +622,7 @@ def make_handler(
                         include_statuses=(
                             statuses if status_parameter is not None else None
                         ),
+                        structure_limit=structure_limit,
                     ),
                     ensure_ascii=False,
                 ).encode("utf-8")
@@ -595,6 +643,26 @@ def make_handler(
                     self._send(404, "text/plain; charset=utf-8", b"Not found\n")
                 else:
                     self._send(200, "image/svg+xml; charset=utf-8", svg.encode("utf-8"))
+            elif route == "/api/structure-svg":
+                query = parse_qs(parsed.query)
+                visit_id = str(query.get("visit", [""])[0])
+                try:
+                    svg = structures.svg(visit_id) if visit_id else None
+                except Exception as error:
+                    self._send(
+                        422,
+                        "text/plain; charset=utf-8",
+                        f"Structure rendering failed: {error}\n".encode("utf-8"),
+                    )
+                    return
+                if svg is None:
+                    self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                else:
+                    self._send(
+                        200,
+                        "image/svg+xml; charset=utf-8",
+                        svg.encode("utf-8"),
+                    )
             elif route == "/favicon.ico":
                 self._send(204, "image/x-icon", b"")
             else:
@@ -634,12 +702,16 @@ class GraphLabDashboardServer:
         self.solutions = GeometrySolutionIndex(
             self.geometry_output / "geometric_solutions.jsonl"
         )
+        self.structures = RecentStructureGallery(
+            self.output / "observations.jsonl"
+        )
         self.server = ThreadingHTTPServer(
             (host, int(port)),
             make_handler(
                 self.output,
                 self.catalog,
                 self.solutions,
+                self.structures,
                 window_generations,
                 max_points,
             ),

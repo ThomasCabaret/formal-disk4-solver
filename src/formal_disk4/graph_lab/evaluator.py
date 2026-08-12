@@ -21,6 +21,7 @@ from formal_disk4.pipeline.filter_report import FilterReport
 from formal_disk4.pipeline.runner import SolverRunner
 
 from .mapping import MappingEvaluation, MappingProposal, sum_counters
+from .feedback import formal_profile_ids
 from .space import DynamicPlanarMap, DualGraphCandidate, build_dynamic_planar_map
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class GraphEvaluation:
             "stop_reason": self.stop_reason,
             "counters": dict(self.counters),
             "profile_count": len(self.profiles),
+            "profile_ids": list(formal_profile_ids(self.profiles)),
             "geometry_ready": self.geometry_ready,
             "tainted": self.tainted,
             "error": self.error,
@@ -81,6 +83,16 @@ class GraphEvaluation:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "GraphEvaluation":
+        identifiers = tuple(
+            str(value) for value in payload.get("profile_ids", ())  # type: ignore[union-attr]
+        )
+        profile_count = int(payload.get("profile_count", len(identifiers)))
+        restored_profiles = [
+            {"formal_profile_id": profile_id} for profile_id in identifiers
+        ]
+        restored_profiles.extend(
+            {} for _ in range(max(0, profile_count - len(restored_profiles)))
+        )
         return cls(
             candidate=DualGraphCandidate.from_dict(payload["candidate"]),  # type: ignore[arg-type]
             stage_index=int(payload["stage_index"]),
@@ -90,7 +102,7 @@ class GraphEvaluation:
                 str(name): int(value)
                 for name, value in dict(payload.get("counters", {})).items()  # type: ignore[arg-type]
             },
-            profiles=(),
+            profiles=tuple(restored_profiles),
             tainted=bool(payload.get("tainted", False)),
             error=str(payload["error"]) if payload.get("error") else None,
         )
@@ -309,7 +321,7 @@ class GraphFormalEvaluator:
                     counter_values.append(counters)
                     reasons.append(str(statistics.get("stop_reason", "unknown")))
                     tainted |= bool(result.summary.get("tainted", False))
-                    rollout_profiles = 0
+                    rollout_profiles: list[Mapping[str, object]] = []
                     candidate_path = directory / str(
                         config["output"]["candidates_file"]
                     )
@@ -320,7 +332,7 @@ class GraphFormalEvaluator:
                                     value = json.loads(line)
                                     if isinstance(value, dict):
                                         profiles.append(value)
-                                        rollout_profiles += 1
+                                        rollout_profiles.append(value)
                     if branch_policy is not None and rollout_sink is not None:
                         from .weak_model import WeakOrderRolloutObservation
 
@@ -340,7 +352,8 @@ class GraphFormalEvaluator:
                                 filters=result.filters,
                                 elapsed_seconds=time.perf_counter()
                                 - rollout_started,
-                                profile_count=rollout_profiles,
+                                profile_count=len(rollout_profiles),
+                                profile_ids=formal_profile_ids(rollout_profiles),
                                 selection_mode=actual_mode,
                                 random_seed=rollout_seed,
                                 tainted=bool(result.summary.get("tainted", False)),

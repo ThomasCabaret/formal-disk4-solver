@@ -29,11 +29,27 @@ does not lose the planar embedding by seeing only an unlabelled adjacency
 matrix. It has no graph-specific embedding table, so examples from one graph
 can train the ranking policy used on another graph or another tile count.
 
-Its supervised target is the stable 26-component vector exposed by
+Every ranker retains the stable 26-component vector exposed by
 `formal_disk4.pipeline.filter_report.LEARNING_FILTER_IDS`. Each component is a
 conditional pass rate among descendants that actually reached and decided the
 corresponding filter. Deferred, inapplicable, unvisited, and implementation
-error outcomes are not mislabeled as failures.
+error outcomes are not mislabeled as failures. These heads are auxiliary: the
+policy no longer multiplies them as though they were one independent linear
+chain.
+
+Policy ordering instead uses three direct value heads: probability of emitting
+a formal profile, probability that the asynchronous geometry worker finds a
+solution, and probability that it finds a solution on a non-ring graph. The
+last two labels are joined by exact formal-profile identifier. Old graph-level
+records may use the persistent graph/profile catalog, but a graph's solution is
+never copied onto every mapping or weak-order rollout of that graph. Unknown
+geometry outcomes stay unlabeled rather than becoming failures.
+
+Sparse direct and micro-filter labels use bounded class balancing. A pairwise
+loss additionally compares candidates in the same decision domain: equal tile
+count for graph proposals, the same graph for mappings, and the exact same
+mapping plus partial state for weak-order actions. Thus the model learns the
+ordering needed by the policy as well as calibrated absolute targets.
 
 The uniform mappings selected from the same proposal pool are retained as a
 control population. This makes learned enrichment distinguishable from an
@@ -41,10 +57,14 @@ easier generation or a change in the graph distribution.
 
 The weak-order level also keeps uniform control rollouts. Every decision stores
 its state, chosen action, pool size, selection probability, entropy, and the
-terminal 26-filter target. Training/validation is split by complete graph, so
-validation tests transfer rather than memorization of another branch of the
-same graph. The deterministic GUI/CLI search passes no policy and retains its
-exhaustive DFS.
+terminal 26-filter target. Its state encoder includes the ordered coincidence
+blocks already fixed by the prefix. This is not provenance: those blocks are
+part of the current mathematical state and are not recoverable from aggregate
+counters alone. They are omitted from each repeated on-disk state to avoid
+quadratic output, then reconstructed from the preceding decisions on resume.
+Training/validation is split by complete graph, so validation tests transfer
+rather than memorization of another branch of the same graph. The deterministic
+GUI/CLI search passes no policy and retains its exhaustive DFS.
 
 When the legal weak-order action set is larger than the configured pool, the
 pool is sampled uniformly without replacement. No full-mask or singleton shape
@@ -67,6 +87,9 @@ py.exe -m formal_disk4.graph_lab.app --config config\graph_lab\up-to-13.json --g
 whose `state.json` contains `next_generation: 1000` therefore continues with
 `--generations 2000`. Use `--restart` only for an intentionally fresh
 experiment: it clears both the learned-search output and its geometry queue.
+Model checkpoints are architecture-exact: after changing a ranker architecture,
+start a fresh experiment instead of partially loading coincidentally compatible
+tensors from an older model.
 After the requested generation target is reached, the console keeps the web
 dashboard and geometry queue alive until Ctrl+C. Add `--exit-when-complete` for
 a non-interactive run.
@@ -82,6 +105,10 @@ policy-versus-random comparison. The learned policy itself is not modified by
 this reporting rule: only the random control rows outside its action domain are
 excluded from the comparison.
 
+Each level also displays the three direct policy objectives, including observed
+rate, mean prediction, held-out AUC, and pairwise ranking accuracy. The
+26-filter table remains available as the fine-grained diagnostic signal.
+
 Each level includes a nested-area filter funnel: the area of every inner
 rectangle is the product of its displayed conditional passage rates. The line
 below it separately reports the actual fraction that reached the level's final
@@ -92,6 +119,14 @@ and the total number of emissions, and embeds an SVG assembly for each solved
 profile. Repeated emissions update the profile's last source line and move its
 card to the top without discarding its occurrence count. Structure and solver
 status checkboxes filter the gallery without changing the catalog.
+
+The structures tab shows the 50 or 100 most recent graph rollouts, newest
+first. Unlike the geometry catalog, it deliberately keeps repeated visits: it
+is a view of the search trajectory rather than a deduplicated result set. Each
+card uses the catalog browser's schematic contact renderer and states the exact
+imposed permutation, its order, the selection mode, and the deepest reached
+stage. The dashboard tails `observations.jsonl` incrementally, so refreshing
+this view does not rebuild all historical schematics.
 
 Pizza classification is intentionally conservative. A profile is a ring only
 when its graph is exactly an outside star plus one connected, simple cycle over
@@ -139,7 +174,8 @@ Important durable outputs are:
 - `mapping_training_metrics.jsonl`: per-filter learned-versus-uniform rates and
   validation metrics;
 - `mapping_model.pt`: resumable mapping model and optimizer state;
-- `deep_mapping_candidates.jsonl`: mappings that reached the word-level gates;
+- `deep_mapping_candidates.jsonl`: compact identifiers of mappings that
+  reached the word-level gates; full records stay in `mapping_observations.jsonl`;
 - `weak_order_rollouts.jsonl`: one complete stochastic trajectory with all
   state/action decisions and its terminal filter vector;
 - `weak_order_training_metrics.jsonl`: per-filter learned-versus-uniform
@@ -148,8 +184,9 @@ Important durable outputs are:
   concentration, revisit, and local-nonselection telemetry for all three
   policy levels;
 - `weak_order_model.pt`: resumable state/action ranker and optimizer;
-- `deep_weak_order_candidates.jsonl`: complete trajectories that reached the
-  configured deep-filter threshold;
+- `deep_weak_order_candidates.jsonl`: compact identifiers of trajectories that
+  reached the configured deep-filter threshold; full records stay in
+  `weak_order_rollouts.jsonl`;
 - `geometry_candidates.jsonl`: every emitted formal profile, ready for the
   background geometry queue;
 - `geometry/geometry_candidate_catalog.sqlite3`: resumable occurrence and
@@ -160,4 +197,6 @@ Important durable outputs are:
   SVG previews.
 
 All files live under the ignored `output/` tree and remain subject to the
-configured 8 GiB aggregate training-output limit.
+configured 8 GiB recursive output limit. Metrics evaluate a bounded recent
+sample instead of re-running neural inference over the complete history after
+every generation; the full durable examples remain available for replay.

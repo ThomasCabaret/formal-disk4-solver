@@ -570,7 +570,10 @@ class WeakOrderEnumerator:
         masks: Sequence[int],
     ) -> Tuple[int, ...]:
         values = tuple(int(mask) for mask in masks)
-        if self.branch_policy is None:
+        # An empty legal set is an ordinary dead leaf of the exhaustive
+        # enumerator.  It is not a policy decision: there is nothing to rank
+        # and the deterministic search would simply yield no child here.
+        if not values or self.branch_policy is None:
             return values
         available = set(values)
         proposed = tuple(
