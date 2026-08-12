@@ -515,6 +515,44 @@ class GeometrySolverTests(unittest.TestCase):
             self.assertEqual(counts.rejected_certain, 1)
             self.assertEqual(counts.no_solution_found, 0)
 
+    def test_one_scan_does_not_retry_an_exact_duplicate_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate_path = build_pizza_candidate(root)
+            original = candidate_path.read_text(encoding="utf-8")
+            candidate_path.write_text(original + original, encoding="utf-8")
+            config = load_geometry_config(None)
+            config["input"]["candidates_file"] = str(candidate_path)
+            config["output"].update(
+                {
+                    "directory": str(root / "geometry-deduplicated"),
+                    "write_failures": False,
+                }
+            )
+            config["checkpoint"].update(
+                {"enabled": True, "resume": False, "restart": False}
+            )
+            runner = GeometryRunner(config)
+            calls = []
+
+            def fail_once(_problem):
+                calls.append(1)
+                return GeometryAttemptResult(
+                    solution=None,
+                    reason="synthetic_failure",
+                    attempts=1,
+                    best_cost=1.0,
+                    best_validation=None,
+                )
+
+            runner.solver.solve = fail_once
+            summary = runner.run()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(summary["state"]["candidates_seen"], 1)
+            self.assertEqual(
+                summary["state"]["candidates_skipped_considered"], 1
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

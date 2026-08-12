@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from formal_disk4.graph_lab.dashboard import build_dashboard_data
+from formal_disk4.graph_lab.dashboard import (
+    build_dashboard_data,
+    build_unified_dashboard_data,
+)
+from formal_disk4.graph_lab.geometry_catalog import GeometryCandidateCatalog
 
 
 def _mode(eligible: int, passed: int, predicted: float) -> dict[str, object]:
@@ -27,6 +31,166 @@ def _mode(eligible: int, passed: int, predicted: float) -> dict[str, object]:
 
 
 class GraphLabDashboardTests(unittest.TestCase):
+    def test_required_comparison_uses_only_parent_matched_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            source = Path(raw) / "mapping.jsonl"
+            raw_mode = {
+                "count": 100,
+                "profile_emitting_count": 100,
+                "filters": {
+                    "assignment.canonical": {
+                        "eligible": 100,
+                        "passed": 100,
+                        "prediction_sum": 50.0,
+                        "prediction_count": 100,
+                    }
+                },
+            }
+            comparable_random = {
+                "count": 10,
+                "profile_emitting_count": 2,
+                "filters": {
+                    "assignment.canonical": {
+                        "eligible": 10,
+                        "passed": 2,
+                        "prediction_sum": 5.0,
+                        "prediction_count": 10,
+                    }
+                },
+            }
+            comparable_learned = {
+                "count": 30,
+                "profile_emitting_count": 9,
+                "filters": {
+                    "assignment.canonical": {
+                        "eligible": 30,
+                        "passed": 9,
+                        "prediction_sum": 15.0,
+                        "prediction_count": 30,
+                    }
+                },
+            }
+            source.write_text(
+                json.dumps(
+                    {
+                        "generation": 1,
+                        "evaluated": 130,
+                        "geometry_ready": 11,
+                        "filter_order": ["assignment.canonical"],
+                        "selection_modes": {
+                            "exploration": raw_mode,
+                            "learned": comparable_learned,
+                        },
+                        "comparable_selection_modes": {
+                            "exploration": comparable_random,
+                            "learned": comparable_learned,
+                        },
+                        "comparison": {"scope": "same_generation_and_graph"},
+                        "model": {"filters": {}},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            data = build_dashboard_data(
+                source, window_generations=10, require_comparable=True
+            )
+        transition = data["transitions"][0]
+        self.assertEqual(transition["recent_random"]["rate"], 0.2)
+        self.assertEqual(transition["recent_learned"]["rate"], 0.3)
+        self.assertEqual(data["recent_outcomes"]["exploration"]["rate"], 0.2)
+        self.assertEqual(data["recent_outcomes"]["learned"]["rate"], 0.3)
+        self.assertEqual(data["comparison"]["statistics_generations"], 1)
+
+    def test_unified_dashboard_contains_three_levels_and_gallery(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw)
+            graph_row = {
+                "generation": 0,
+                "evaluated": 2,
+                "geometry_ready": 1,
+                "selection_modes": {
+                    "exploration": _mode(1, 1, 0.5),
+                    "learned": _mode(1, 1, 0.5),
+                },
+                "model": {"transitions": {}},
+            }
+            filter_mode = {
+                "count": 1,
+                "filters": {
+                    "assignment.canonical": {
+                        "eligible": 1,
+                        "passed": 1,
+                        "prediction_sum": 0.5,
+                        "prediction_count": 1,
+                    }
+                },
+            }
+            filter_row = {
+                "generation": 0,
+                "evaluated": 2,
+                "geometry_ready": 0,
+                "filter_order": ["assignment.canonical"],
+                "selection_modes": {
+                    "exploration": filter_mode,
+                    "learned": filter_mode,
+                },
+                "model": {"filters": {}},
+            }
+            weak_row = dict(filter_row)
+            weak_row["schema_version"] = (
+                "graph-lab-weak-order-generation-metrics-v1"
+            )
+            for name, row in (
+                ("training_metrics.jsonl", graph_row),
+                ("mapping_training_metrics.jsonl", filter_row),
+                ("weak_order_training_metrics.jsonl", weak_row),
+            ):
+                (output / name).write_text(
+                    json.dumps(row) + "\n", encoding="utf-8"
+                )
+            source = output / "geometry_candidates.jsonl"
+            source.write_text(
+                json.dumps(
+                    {
+                        "formal_profile_id": "fp-demo",
+                        "map": {"name": "demo"},
+                        "graph_lab": {
+                            "generation": 0,
+                            "graph_id": "dg-demo",
+                            "structural_candidate": {
+                                "tile_count": 4,
+                                "edges": [
+                                    [-1, 0], [-1, 1], [-1, 2], [-1, 3],
+                                    [0, 1], [1, 2], [2, 3], [3, 0],
+                                ],
+                                "symmetry_order": 2,
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            geometry = output / "geometry"
+            catalog = GeometryCandidateCatalog(
+                geometry / "geometry_candidate_catalog.sqlite3", source
+            )
+            try:
+                catalog.ingest()
+                data = build_unified_dashboard_data(
+                    output, catalog, window_generations=1
+                )
+            finally:
+                catalog.close()
+
+        self.assertEqual([level["kind"] for level in data["levels"]], ["graph", "mapping", "weak_order"])
+        self.assertEqual(data["gallery"]["total"], 1)
+        self.assertEqual(
+            data["gallery"]["items"][0]["importance"], "pizza"
+        )
+        self.assertEqual(data["gallery"]["occurrences_total"], 1)
+
     def test_mapping_metrics_use_the_microfilter_order(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             source = Path(raw) / "mapping_training_metrics.jsonl"

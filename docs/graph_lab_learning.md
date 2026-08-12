@@ -54,32 +54,63 @@ epsilon mixture.
 
 ## Run
 
-From PowerShell in the project root:
+The normal entry point starts the learned search in the current console, opens
+the unified dashboard in the browser, and consumes geometry-ready profiles with
+the numerical geometry solver in a background queue:
 
 ```powershell
 $env:PYTHONPATH="$PWD\src"
-py.exe -m formal_disk4.graph_lab --config config\graph_lab\up-to-13.json --restart --generations 1000 --batch-size 8
+py.exe -m formal_disk4.graph_lab.app --config config\graph_lab\up-to-13.json --geometry-config config\graph_lab\geometry.json --generations 1000 --batch-size 8
 ```
 
-The new configuration and checkpoint schema are incompatible with the former
-graph-only run, so the first run must use `--restart`. Later runs omit it and
-resume from `state.json`.
+`--generations` is the total target generation, not an additional count. A run
+whose `state.json` contains `next_generation: 1000` therefore continues with
+`--generations 2000`. Use `--restart` only for an intentionally fresh
+experiment: it clears both the learned-search output and its geometry queue.
+After the requested generation target is reached, the console keeps the web
+dashboard and geometry queue alive until Ctrl+C. Add `--exit-when-complete` for
+a non-interactive run.
 
-## Live mapping dashboard
+## Unified live dashboard
+
+The single page compares recent uniform controls with learned rollouts at the
+graph, mapping, and weak-order levels. Mapping statistics compare learned and
+uniform choices only inside the same graph and generation; weak-order
+statistics use the same mapping and generation. Historical rows written before
+these matched cohorts were introduced are deliberately not presented as a
+policy-versus-random comparison. The learned policy itself is not modified by
+this reporting rule: only the random control rows outside its action domain are
+excluded from the comparison.
+
+Each level includes a nested-area filter funnel: the area of every inner
+rectangle is the product of its displayed conditional passage rates. The line
+below it separately reports the actual fraction that reached the level's final
+outcome, so the visual index is not confused with an observed end-to-end rate.
+
+The geometry tab indexes exact formal profiles, shows both their distinct count
+and the total number of emissions, and embeds an SVG assembly for each solved
+profile. Repeated emissions update the profile's last source line and move its
+card to the top without discarding its occurrence count. Structure and solver
+status checkboxes filter the gallery without changing the catalog.
+
+Pizza classification is intentionally conservative. A profile is a ring only
+when its graph is exactly an outside star plus one connected, simple cycle over
+all tiles (exactly `2n` edges in total). Ring cards then distinguish uniform and
+mixed copy orientations when assignment data is available. The imposed
+symmetry order is never used as evidence that a profile is a pizza; uncertain
+cases stay in the non-ring category.
+
+The dashboard may also be opened on an existing output directory without
+starting a search or a geometry worker:
 
 ```powershell
 $env:PYTHONPATH="$PWD\src"
-py.exe -m formal_disk4.graph_lab.dashboard --input output\graph_lab\up-to-13\mapping_training_metrics.jsonl
+py.exe -m formal_disk4.graph_lab.dashboard --output output\graph_lab\up-to-13
 ```
 
-Use `training_metrics.jsonl` instead to inspect the coarser graph ranker.
-
-To inspect the learned weak-order policy itself:
-
-```powershell
-$env:PYTHONPATH="$PWD\src"
-py.exe -m formal_disk4.graph_lab.dashboard --input output\graph_lab\up-to-13\weak_order_training_metrics.jsonl
-```
+The first opening of a large historical run incrementally builds a persistent
+SQLite index for `geometry_candidates.jsonl`; subsequent openings resume from
+its byte offset instead of rescanning the file.
 
 ## Rollout coverage audit
 
@@ -120,7 +151,13 @@ Important durable outputs are:
 - `deep_weak_order_candidates.jsonl`: complete trajectories that reached the
   configured deep-filter threshold;
 - `geometry_candidates.jsonl`: every emitted formal profile, ready for the
-  separate geometry solver.
+  background geometry queue;
+- `geometry/geometry_candidate_catalog.sqlite3`: resumable occurrence and
+  pagination index, deduplicated by exact formal-profile identifier;
+- `geometry/geometry_worker_state.json`: current background worker phase and
+  profile;
+- `geometry/geometric_solutions.jsonl`: solved contours used by the dashboard's
+  SVG previews.
 
 All files live under the ignored `output/` tree and remain subject to the
 configured 8 GiB aggregate training-output limit.

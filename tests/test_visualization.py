@@ -9,6 +9,7 @@ from formal_disk4.pipeline.runner import SolverRunner
 from formal_disk4.visualization.assembly import assemble_geometric_solution
 from formal_disk4.visualization.validate import validate_solution_file
 from formal_disk4.visualization.viewer import JsonlSolutionSource
+from formal_disk4.visualization.svg import geometric_solution_svg
 
 
 def build_pizza_geometry(directory: Path) -> Path:
@@ -72,6 +73,9 @@ class VisualizationAssemblyTests(unittest.TestCase):
             self.assertLess(assembly.validation.maximum_interface_error, 1e-12)
             determinants = [placement.transform.determinant for placement in assembly.placements]
             self.assertTrue(all(value > 0.0 for value in determinants))
+            svg = geometric_solution_svg(record)
+            self.assertIn("<svg", svg)
+            self.assertEqual(svg.count("<polygon"), 3)
 
     def test_reflected_relative_mapping_produces_reflected_copy(self) -> None:
         occurrences = [

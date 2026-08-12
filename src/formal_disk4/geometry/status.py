@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Dict, Iterable
 
 
 GEOMETRY_STATUS_SCHEMA_VERSION = 1
@@ -44,6 +44,16 @@ class GeometryStatusCounts:
 class GeometryStatusSnapshot:
     counts: GeometryStatusCounts
     history_complete: bool
+
+
+@dataclass(frozen=True)
+class GeometryCandidateStatus:
+    formal_profile_id: str
+    status: str
+    reason: str
+    attempts: int
+    best_cost: float | None
+    updated_utc: str
 
 
 class GeometryStatusStore:
@@ -219,3 +229,34 @@ def read_geometry_status(path: Path) -> GeometryStatusSnapshot | None:
 def read_geometry_status_counts(path: Path) -> GeometryStatusCounts | None:
     snapshot = read_geometry_status(path)
     return None if snapshot is None else snapshot.counts
+
+
+def read_geometry_status_records(
+    path: Path,
+) -> Dict[str, GeometryCandidateStatus]:
+    """Read the current per-profile statuses without holding a writer lock."""
+
+    if not path.exists():
+        return {}
+    try:
+        connection = sqlite3.connect(str(path), timeout=1.0)
+        try:
+            rows = connection.execute(
+                "SELECT formal_profile_id, status, reason, attempts, best_cost, "
+                "updated_utc FROM geometry_candidate_status"
+            ).fetchall()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return {}
+    return {
+        str(row[0]): GeometryCandidateStatus(
+            formal_profile_id=str(row[0]),
+            status=str(row[1]),
+            reason=str(row[2]),
+            attempts=int(row[3]),
+            best_cost=(None if row[4] is None else float(row[4])),
+            updated_utc=str(row[5]),
+        )
+        for row in rows
+    }

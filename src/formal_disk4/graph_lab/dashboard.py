@@ -8,9 +8,15 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
+from formal_disk4.geometry.status import read_geometry_status_records
+
+from .dashboard_page import UNIFIED_DASHBOARD_HTML
 from .evaluator import GRAPH_STAGES
+from .geometry_catalog import GeometryCandidateCatalog
+from .rollout_audit import build_audit_report
+from .solution_gallery import GeometrySolutionIndex
 
 
 def _load_json_lines(path: Path) -> list[dict[str, Any]]:
@@ -47,10 +53,12 @@ def _aggregate(
     mode: str,
     transition_ids: Sequence[str],
     collection_key: str,
+    *,
+    modes_key: str = "selection_modes",
 ) -> list[dict[str, float | int | None]]:
     totals = [_blank_transition() for _stage in transition_ids]
     for row in rows:
-        modes = row.get("selection_modes", {})
+        modes = row.get(modes_key, {})
         if not isinstance(modes, Mapping):
             continue
         mode_data = modes.get(mode, {})
@@ -85,6 +93,37 @@ def _percentage_point_delta(left: object, right: object) -> float | None:
     if left is None or right is None:
         return None
     return 100.0 * (float(left) - float(right))
+
+
+def _aggregate_outcome(
+    rows: Sequence[Mapping[str, Any]],
+    mode: str,
+    *,
+    modes_key: str,
+    mapping_mode: bool,
+) -> dict[str, float | int | None]:
+    selected = 0
+    successful = 0
+    for row in rows:
+        raw_modes = row.get(modes_key, {})
+        if not isinstance(raw_modes, Mapping):
+            continue
+        raw_mode = raw_modes.get(mode, {})
+        if not isinstance(raw_mode, Mapping):
+            continue
+        count = int(raw_mode.get("count", 0) or 0)
+        selected += count
+        if mapping_mode:
+            successful += int(raw_mode.get("profile_emitting_count", 0) or 0)
+        else:
+            reached = raw_mode.get("stage_reached_counts", {})
+            if isinstance(reached, Mapping):
+                successful += int(reached.get("geometry_ready", 0) or 0)
+    return {
+        "selected": selected,
+        "successful": successful,
+        "rate": successful / selected if selected else None,
+    }
 
 
 def _diagnosis(
@@ -127,6 +166,7 @@ def build_dashboard_data(
     *,
     window_generations: int = 50,
     max_points: int = 400,
+    require_comparable: bool = False,
 ) -> dict[str, Any]:
     rows = _load_json_lines(path)
     window = max(1, int(window_generations))
@@ -158,17 +198,45 @@ def build_dashboard_data(
         else GRAPH_STAGES
     )
     collection_key = "filters" if mapping_mode else "transitions"
-    baseline_rows = rows[:window]
-    recent_rows = rows[-window:]
+    comparable_rows = [
+        row for row in rows if "comparable_selection_modes" in row
+    ]
+    statistics_rows = comparable_rows if require_comparable else rows
+    modes_key = (
+        "comparable_selection_modes" if require_comparable else "selection_modes"
+    )
+    baseline_rows = statistics_rows[:window]
+    recent_rows = statistics_rows[-window:]
     baseline = _aggregate(
-        baseline_rows, "exploration", transition_ids, collection_key
+        baseline_rows,
+        "exploration",
+        transition_ids,
+        collection_key,
+        modes_key=modes_key,
     )
     recent_random = _aggregate(
-        recent_rows, "exploration", transition_ids, collection_key
+        recent_rows,
+        "exploration",
+        transition_ids,
+        collection_key,
+        modes_key=modes_key,
     )
     recent_learned = _aggregate(
-        recent_rows, "learned", transition_ids, collection_key
+        recent_rows,
+        "learned",
+        transition_ids,
+        collection_key,
+        modes_key=modes_key,
     )
+    recent_outcomes = {
+        mode: _aggregate_outcome(
+            recent_rows,
+            mode,
+            modes_key=modes_key,
+            mapping_mode=mapping_mode,
+        )
+        for mode in ("exploration", "learned")
+    }
 
     latest_model = rows[-1].get("model", {})
     if not isinstance(latest_model, Mapping):
@@ -206,22 +274,30 @@ def build_dashboard_data(
             }
         )
 
-    stride = max(1, math.ceil(len(rows) / max(1, int(max_points))))
-    endpoints = list(range(stride - 1, len(rows), stride))
-    if not endpoints or endpoints[-1] != len(rows) - 1:
-        endpoints.append(len(rows) - 1)
+    stride = max(1, math.ceil(len(statistics_rows) / max(1, int(max_points))))
+    endpoints = list(range(stride - 1, len(statistics_rows), stride))
+    if statistics_rows and (not endpoints or endpoints[-1] != len(statistics_rows) - 1):
+        endpoints.append(len(statistics_rows) - 1)
     points = []
     for end in endpoints:
-        rolling_rows = rows[max(0, end - window + 1) : end + 1]
+        rolling_rows = statistics_rows[max(0, end - window + 1) : end + 1]
         random_stats = _aggregate(
-            rolling_rows, "exploration", transition_ids, collection_key
+            rolling_rows,
+            "exploration",
+            transition_ids,
+            collection_key,
+            modes_key=modes_key,
         )
         learned_stats = _aggregate(
-            rolling_rows, "learned", transition_ids, collection_key
+            rolling_rows,
+            "learned",
+            transition_ids,
+            collection_key,
+            modes_key=modes_key,
         )
         points.append(
             {
-                "generation": int(rows[end].get("generation", end)),
+                "generation": int(statistics_rows[end].get("generation", end)),
                 "random": [item["rate"] for item in random_stats],
                 "learned": [item["rate"] for item in learned_stats],
             }
@@ -240,9 +316,22 @@ def build_dashboard_data(
         "window_generations": window,
         "points": points,
         "transitions": transitions,
+        "comparison": {
+            "required": require_comparable,
+            "comparable_generations": len(comparable_rows),
+            "statistics_generations": len(statistics_rows),
+            "scope": (
+                str(comparable_rows[-1].get("comparison", {}).get("scope", ""))
+                if comparable_rows
+                and isinstance(comparable_rows[-1].get("comparison"), Mapping)
+                else None
+            ),
+        },
+        "recent_outcomes": recent_outcomes,
         "summary": {
             "latest_generation": int(rows[-1].get("generation", len(rows) - 1)),
             "completed_generations": len(rows),
+            "comparable_generations": len(comparable_rows),
             "evaluated": total_evaluated,
             "geometry_ready": total_geometry,
             "training_output_bytes": int(
@@ -251,6 +340,94 @@ def build_dashboard_data(
             "max_training_bytes": rows[-1].get("max_training_bytes"),
             "training_loss": latest_model.get("training_loss"),
         },
+    }
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def build_unified_dashboard_data(
+    output: Path,
+    catalog: GeometryCandidateCatalog,
+    *,
+    window_generations: int = 50,
+    max_points: int = 400,
+    page: int = 1,
+    page_size: int = 100,
+    include_importance: set[str] | None = None,
+    include_statuses: set[str] | None = None,
+) -> dict[str, Any]:
+    output = output.resolve()
+    geometry_output = output / "geometry"
+    level_specs = (
+        (
+            "Graphes",
+            "Le premier ranker choisit les structures complètes proposées par le prior.",
+            output / "training_metrics.jsonl",
+            False,
+        ),
+        (
+            "Mappings",
+            "Le deuxième ranker choisit orientation et décalage cyclique sur un graphe fixé.",
+            output / "mapping_training_metrics.jsonl",
+            True,
+        ),
+        (
+            "Ordres faibles",
+            "Le troisième ranker choisit successivement les blocs de chaque rollout.",
+            output / "weak_order_training_metrics.jsonl",
+            True,
+        ),
+    )
+    levels = []
+    for title, description, source, require_comparable in level_specs:
+        level = build_dashboard_data(
+            source,
+            window_generations=window_generations,
+            max_points=max_points,
+            require_comparable=require_comparable,
+        )
+        level["title"] = title
+        level["description"] = description
+        levels.append(level)
+
+    coverage_rows = _load_json_lines(output / "rollout_coverage_metrics.jsonl")
+    coverage = (
+        build_audit_report(
+            coverage_rows, window_generations=max(1, window_generations)
+        )
+        if coverage_rows
+        else {}
+    )
+    statuses = read_geometry_status_records(
+        geometry_output / "geometry_status.sqlite3"
+    )
+    worker = _read_json(geometry_output / "geometry_worker_state.json")
+    processing = worker.get("current_profile_id")
+    gallery = catalog.page(
+        page=page,
+        page_size=page_size,
+        statuses=statuses,
+        processing_profile_id=(str(processing) if processing else None),
+        include_importance=include_importance,
+        include_statuses=include_statuses,
+    )
+    return {
+        "schema_version": "graph-lab-unified-dashboard-v1",
+        "output": str(output),
+        "levels": levels,
+        "coverage": coverage,
+        "worker": worker,
+        "gallery": gallery,
+        "state": _read_json(output / "state.json"),
+        "report": _read_json(output / "report.json"),
     }
 
 
@@ -342,22 +519,84 @@ refresh();timer=setInterval(refresh,5000);
 
 
 def make_handler(
-    source: Path, window_generations: int, max_points: int
+    output: Path,
+    catalog: GeometryCandidateCatalog,
+    solutions: GeometrySolutionIndex,
+    window_generations: int,
+    max_points: int,
 ) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - standard-library callback name
-            route = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            route = parsed.path
             if route == "/":
-                self._send(200, "text/html; charset=utf-8", HTML.encode("utf-8"))
+                self._send(
+                    200,
+                    "text/html; charset=utf-8",
+                    UNIFIED_DASHBOARD_HTML.encode("utf-8"),
+                )
             elif route == "/api/data":
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                try:
+                    page = int(query.get("page", ["1"])[0])
+                    page_size = int(query.get("page_size", ["100"])[0])
+                except ValueError:
+                    page, page_size = 1, 100
+                importance_parameter = query.get("importance")
+                importance = {
+                    value
+                    for value in (importance_parameter or [""])[0].split(",")
+                    if value in {"pizza", "important", "alert"}
+                }
+                status_parameter = query.get("statuses")
+                statuses = {
+                    value
+                    for value in (status_parameter or [""])[0].split(",")
+                    if value
+                    in {
+                        "pending",
+                        "processing",
+                        "solution_found",
+                        "rejected_certain",
+                        "no_solution_found",
+                    }
+                }
                 payload = json.dumps(
-                    build_dashboard_data(
-                        source,
+                    build_unified_dashboard_data(
+                        output,
+                        catalog,
                         window_generations=window_generations,
                         max_points=max_points,
-                    )
+                        page=page,
+                        page_size=page_size,
+                        include_importance=(
+                            importance if importance_parameter is not None else None
+                        ),
+                        include_statuses=(
+                            statuses if status_parameter is not None else None
+                        ),
+                    ),
+                    ensure_ascii=False,
                 ).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", payload)
+            elif route == "/api/solution-svg":
+                query = parse_qs(parsed.query)
+                profile_id = str(query.get("profile", [""])[0])
+                try:
+                    svg = solutions.svg(profile_id) if profile_id else None
+                except Exception as error:
+                    self._send(
+                        422,
+                        "text/plain; charset=utf-8",
+                        f"Assembly rendering failed: {error}\n".encode("utf-8"),
+                    )
+                    return
+                if svg is None:
+                    self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                else:
+                    self._send(200, "image/svg+xml; charset=utf-8", svg.encode("utf-8"))
+            elif route == "/favicon.ico":
+                self._send(204, "image/x-icon", b"")
             else:
                 self._send(404, "text/plain; charset=utf-8", b"Not found\n")
 
@@ -375,13 +614,98 @@ def make_handler(
     return DashboardHandler
 
 
+class GraphLabDashboardServer:
+    def __init__(
+        self,
+        output: Path,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8766,
+        window_generations: int = 50,
+        max_points: int = 400,
+    ) -> None:
+        self.output = output.resolve()
+        self.geometry_output = self.output / "geometry"
+        self.geometry_output.mkdir(parents=True, exist_ok=True)
+        self.catalog = GeometryCandidateCatalog(
+            self.geometry_output / "geometry_candidate_catalog.sqlite3",
+            self.output / "geometry_candidates.jsonl",
+        )
+        self.solutions = GeometrySolutionIndex(
+            self.geometry_output / "geometric_solutions.jsonl"
+        )
+        self.server = ThreadingHTTPServer(
+            (host, int(port)),
+            make_handler(
+                self.output,
+                self.catalog,
+                self.solutions,
+                window_generations,
+                max_points,
+            ),
+        )
+        bound_host, bound_port = self.server.server_address[:2]
+        self.url = f"http://{bound_host}:{bound_port}/"
+        self.stop_event = threading.Event()
+        self.server_thread: threading.Thread | None = None
+        self.catalog_thread: threading.Thread | None = None
+
+    def _index_catalog(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                before = self.catalog.progress()["source_offset"]
+                after = self.catalog.ingest(maximum_lines=1000)["source_offset"]
+                delay = 0.05 if after > before else 1.0
+            except Exception:
+                delay = 2.0
+            self.stop_event.wait(delay)
+
+    def start(self, *, open_browser: bool = True) -> None:
+        self.catalog_thread = threading.Thread(
+            target=self._index_catalog,
+            name="graph-lab-candidate-index",
+            daemon=True,
+        )
+        self.catalog_thread.start()
+        self.server_thread = threading.Thread(
+            target=self.server.serve_forever,
+            name="graph-lab-dashboard",
+            daemon=True,
+        )
+        self.server_thread.start()
+        if open_browser:
+            threading.Timer(0.25, webbrowser.open, args=(self.url,)).start()
+
+    def serve_forever(self, *, open_browser: bool = True) -> None:
+        self.catalog_thread = threading.Thread(
+            target=self._index_catalog,
+            name="graph-lab-candidate-index",
+            daemon=True,
+        )
+        self.catalog_thread.start()
+        if open_browser:
+            threading.Timer(0.25, webbrowser.open, args=(self.url,)).start()
+        self.server.serve_forever()
+
+    def close(self) -> None:
+        self.stop_event.set()
+        if self.server_thread is not None and self.server_thread.is_alive():
+            self.server.shutdown()
+        self.server.server_close()
+        if self.server_thread is not None:
+            self.server_thread.join(timeout=2.0)
+        if self.catalog_thread is not None:
+            self.catalog_thread.join(timeout=2.0)
+        self.catalog.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Live Graph Lab transition dashboard")
+    parser = argparse.ArgumentParser(description="Unified live Graph Lab dashboard")
     parser.add_argument(
-        "--input",
+        "--output",
         type=Path,
-        default=Path("output/graph_lab/up-to-13/mapping_training_metrics.jsonl"),
-        help="graph or mapping compact metrics JSONL to follow",
+        default=Path("output/graph_lab/up-to-13"),
+        help="Graph Lab output directory",
     )
     parser.add_argument("--window-generations", type=int, default=50)
     parser.add_argument("--max-points", type=int, default=400)
@@ -393,23 +717,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    source = args.input.resolve()
-    server = ThreadingHTTPServer(
-        (args.host, args.port),
-        make_handler(source, args.window_generations, args.max_points),
+    dashboard = GraphLabDashboardServer(
+        args.output,
+        host=args.host,
+        port=args.port,
+        window_generations=args.window_generations,
+        max_points=args.max_points,
     )
-    url = f"http://{args.host}:{args.port}/"
-    print(f"Graph Lab dashboard: {url}")
-    print(f"Reading: {source}")
+    print(f"Graph Lab dashboard: {dashboard.url}")
+    print(f"Reading: {args.output.resolve()}")
     print("Press Ctrl+C to stop.")
-    if not args.no_browser:
-        threading.Timer(0.25, webbrowser.open, args=(url,)).start()
     try:
-        server.serve_forever()
+        dashboard.serve_forever(open_browser=not args.no_browser)
     except KeyboardInterrupt:
         print("\nDashboard stopped.")
     finally:
-        server.server_close()
+        dashboard.close()
     return 0
 
 

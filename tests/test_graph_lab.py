@@ -5,16 +5,19 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 from formal_disk4.config import load_geometry_config, load_visualization_config
 from formal_disk4.geometry.model import parse_formal_geometry_problem
+from formal_disk4.graph_lab.app import build_parser as build_lab_app_parser
 from formal_disk4.graph_lab.runner import DiversityArchive, GraphLabRunner
 from formal_disk4.graph_lab.weak_model import (
     WeakOrderPrediction,
     WeakOrderRankedPolicy,
 )
+from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
 from formal_disk4.enumeration.weak_policy import (
     WeakOrderActionView,
     WeakOrderStateView,
@@ -25,6 +28,51 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GraphLabTests(unittest.TestCase):
+    def test_unified_lab_entry_point_defaults_to_dashboard_and_geometry(self) -> None:
+        arguments = build_lab_app_parser().parse_args([])
+        self.assertFalse(arguments.no_dashboard)
+        self.assertFalse(arguments.no_geometry)
+        self.assertEqual(arguments.port, 8766)
+        self.assertEqual(arguments.geometry_config, "config/graph_lab/geometry.json")
+
+    def test_mapping_comparison_excludes_exploration_only_parents(self) -> None:
+        def record(
+            graph_id: str, mode: str, *, passed: bool
+        ) -> tuple[object, dict[str, object]]:
+            observation = SimpleNamespace(
+                filter_id=LEARNING_FILTER_IDS[0],
+                decided=1,
+                passed=1 if passed else 0,
+            )
+            evaluation = SimpleNamespace(
+                proposal=SimpleNamespace(
+                    candidate=SimpleNamespace(graph_id=graph_id)
+                ),
+                filters=SimpleNamespace(observations=(observation,)),
+                profiles=({"profile": True},) if passed else (),
+            )
+            return evaluation, {
+                "selection_mode": mode,
+                "predicted_conditional_probabilities": [0.5],
+            }
+
+        runner = object.__new__(GraphLabRunner)
+        metrics = runner._mapping_generation_metrics(
+            4,
+            (
+                record("easy-singleton", "exploration", passed=True),
+                record("paired", "exploration", passed=False),
+                record("paired", "learned", passed=True),
+            ),
+            {},
+        )
+        self.assertEqual(metrics["selection_modes"]["exploration"]["count"], 2)
+        comparable = metrics["comparable_selection_modes"]
+        self.assertEqual(comparable["exploration"]["count"], 1)
+        self.assertEqual(comparable["learned"]["count"], 1)
+        self.assertEqual(metrics["comparison"]["comparable_parent_count"], 1)
+        self.assertEqual(metrics["comparison"]["excluded_parent_count"], 1)
+
     def test_weak_order_action_pool_is_uniform_without_mandatory_shapes(self) -> None:
         class PoolOnlyModel:
             active_heads = np.zeros(26, dtype=bool)

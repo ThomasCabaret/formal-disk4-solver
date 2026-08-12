@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Callable, Dict, Iterable, Mapping
 
 from formal_disk4.pipeline.output import JsonlWriter, NullJsonlWriter, atomic_write_json
 
@@ -158,7 +158,12 @@ class GeometryRunner:
                     solved.add(profile_id)
         return solved
 
-    def run(self) -> Dict[str, Any]:
+    def run(
+        self,
+        *,
+        skip_profile_ids: Iterable[str] = (),
+        progress_sink: Callable[[Mapping[str, object]], None] | None = None,
+    ) -> Dict[str, Any]:
         if not self.input_path.exists():
             raise FileNotFoundError(
                 f"Formal candidate file not found: {self.input_path}. "
@@ -166,6 +171,12 @@ class GeometryRunner:
             )
         state = self._load_state()
         solved_profile_ids = self._load_solved_profile_ids()
+        externally_skipped_ids = {str(value) for value in skip_profile_ids}
+        session_attempted_ids: set[str] = set()
+
+        def progress(payload: Mapping[str, object]) -> None:
+            if progress_sink is not None:
+                progress_sink(payload)
         legacy_attempts_exist = any(
             int(state.get(name, 0)) > 0
             for name in ("candidates_seen", "candidates_failed", "fixed_candidates_evaluated")
@@ -223,6 +234,14 @@ class GeometryRunner:
                         ) + 1
                         continue
                     if (
+                        problem.formal_profile_id in externally_skipped_ids
+                        or problem.formal_profile_id in session_attempted_ids
+                    ):
+                        state["candidates_skipped_considered"] = int(
+                            state.get("candidates_skipped_considered", 0)
+                        ) + 1
+                        continue
+                    if (
                         max_candidates is not None
                         and session_candidates_attempted >= int(max_candidates)
                     ):
@@ -235,6 +254,14 @@ class GeometryRunner:
                         stop_reason = "max_solutions"
                         break
                     session_candidates_attempted += 1
+                    progress(
+                        {
+                            "event": "processing",
+                            "formal_profile_id": problem.formal_profile_id,
+                            "map": problem.map_name,
+                            "source_line": line_number,
+                        }
+                    )
                     print(
                         "[GEOMETRY] "
                         f"candidate={problem.formal_profile_id} map={problem.map_name} "
@@ -251,6 +278,7 @@ class GeometryRunner:
                             state.get("fixed_candidates_evaluated", 0)
                         ) + 1
                     if result.solution is not None:
+                        status = SOLUTION_FOUND
                         state["candidates_solved"] = int(state["candidates_solved"]) + 1
                         record: Dict[str, Any] = {
                             "schema_version": "geometric-contour-result-v1",
@@ -314,6 +342,20 @@ class GeometryRunner:
                             file=sys.stderr,
                             flush=True,
                         )
+                    # Exact duplicates in one input stream are not independent
+                    # attempts. A later explicit GeometryRunner invocation may
+                    # still retry an uncertain status with a changed setup.
+                    session_attempted_ids.add(problem.formal_profile_id)
+                    progress(
+                        {
+                            "event": "completed",
+                            "formal_profile_id": problem.formal_profile_id,
+                            "status": status,
+                            "reason": result.reason,
+                            "attempts": result.attempts,
+                            "best_cost": result.best_cost,
+                        }
+                    )
                     state["elapsed_seconds"] = float(state.get("elapsed_seconds", 0.0)) + (
                         time.perf_counter() - started
                     )

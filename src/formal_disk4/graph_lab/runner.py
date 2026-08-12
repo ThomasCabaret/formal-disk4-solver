@@ -189,7 +189,7 @@ class GraphLabRunner:
             raise ValueError("Graph Lab config must be a JSON object")
         return cls(root, config)
 
-    def _restart(self) -> None:
+    def restart_outputs(self) -> None:
         self.output.mkdir(parents=True, exist_ok=True)
         for name in RESTART_FILES:
             path = self.output / name
@@ -381,48 +381,78 @@ class GraphLabRunner:
         ],
         model_metrics: Mapping[str, object],
     ) -> dict[str, object]:
-        modes: dict[str, dict[str, object]] = {}
-        for evaluation, selection in records:
-            mode = str(selection.get("selection_mode", "unknown"))
-            bucket = modes.setdefault(
-                mode,
-                {
-                    "count": 0,
-                    "filters": {
-                        filter_id: {
-                            "eligible": 0,
-                            "passed": 0,
-                            "prediction_sum": 0.0,
-                            "prediction_count": 0,
-                        }
-                        for filter_id in LEARNING_FILTER_IDS
+        def aggregate(
+            selected: Sequence[
+                tuple[MappingEvaluation, Mapping[str, object]]
+            ],
+        ) -> dict[str, dict[str, object]]:
+            modes: dict[str, dict[str, object]] = {}
+            for evaluation, selection in selected:
+                mode = str(selection.get("selection_mode", "unknown"))
+                bucket = modes.setdefault(
+                    mode,
+                    {
+                        "count": 0,
+                        "profile_emitting_count": 0,
+                        "profile_count": 0,
+                        "filters": {
+                            filter_id: {
+                                "eligible": 0,
+                                "passed": 0,
+                                "prediction_sum": 0.0,
+                                "prediction_count": 0,
+                            }
+                            for filter_id in LEARNING_FILTER_IDS
+                        },
                     },
-                },
+                )
+                bucket["count"] = int(bucket["count"]) + 1
+                bucket["profile_emitting_count"] = int(
+                    bucket["profile_emitting_count"]
+                ) + bool(evaluation.profiles)
+                bucket["profile_count"] = int(bucket["profile_count"]) + len(
+                    evaluation.profiles
+                )
+                raw_predictions = selection.get(
+                    "predicted_conditional_probabilities", ()
+                )
+                predictions = (
+                    raw_predictions
+                    if isinstance(raw_predictions, Sequence)
+                    and not isinstance(raw_predictions, (str, bytes))
+                    else ()
+                )
+                filters = bucket["filters"]
+                assert isinstance(filters, dict)
+                for head, observation in enumerate(evaluation.filters.observations):
+                    target = filters[observation.filter_id]
+                    assert isinstance(target, dict)
+                    target["eligible"] = int(target["eligible"]) + observation.decided
+                    target["passed"] = int(target["passed"]) + observation.passed
+                    if head < len(predictions) and observation.decided:
+                        target["prediction_sum"] = float(
+                            target["prediction_sum"]
+                        ) + float(predictions[head])
+                        target["prediction_count"] = int(
+                            target["prediction_count"]
+                        ) + 1
+            return modes
+
+        parent_modes: dict[str, set[str]] = defaultdict(set)
+        for evaluation, selection in records:
+            parent_modes[evaluation.proposal.candidate.graph_id].add(
+                str(selection.get("selection_mode", "unknown"))
             )
-            bucket["count"] = int(bucket["count"]) + 1
-            raw_predictions = selection.get(
-                "predicted_conditional_probabilities", ()
-            )
-            predictions = (
-                raw_predictions
-                if isinstance(raw_predictions, Sequence)
-                and not isinstance(raw_predictions, (str, bytes))
-                else ()
-            )
-            filters = bucket["filters"]
-            assert isinstance(filters, dict)
-            for head, observation in enumerate(evaluation.filters.observations):
-                target = filters[observation.filter_id]
-                assert isinstance(target, dict)
-                target["eligible"] = int(target["eligible"]) + observation.decided
-                target["passed"] = int(target["passed"]) + observation.passed
-                if head < len(predictions) and observation.decided:
-                    target["prediction_sum"] = float(
-                        target["prediction_sum"]
-                    ) + float(predictions[head])
-                    target["prediction_count"] = int(
-                        target["prediction_count"]
-                    ) + 1
+        comparable_parents = {
+            parent
+            for parent, modes in parent_modes.items()
+            if {"exploration", "learned"}.issubset(modes)
+        }
+        comparable_records = [
+            record
+            for record in records
+            if record[0].proposal.candidate.graph_id in comparable_parents
+        ]
         return {
             "schema_version": "graph-lab-mapping-generation-metrics-v1",
             "generation": generation,
@@ -431,7 +461,13 @@ class GraphLabRunner:
                 bool(evaluation.profiles) for evaluation, _selection in records
             ),
             "filter_order": list(LEARNING_FILTER_IDS),
-            "selection_modes": modes,
+            "selection_modes": aggregate(records),
+            "comparable_selection_modes": aggregate(comparable_records),
+            "comparison": {
+                "scope": "same_generation_and_graph",
+                "comparable_parent_count": len(comparable_parents),
+                "excluded_parent_count": len(parent_modes) - len(comparable_parents),
+            },
             "model": dict(model_metrics),
         }
 
@@ -441,62 +477,94 @@ class GraphLabRunner:
         records: Sequence[WeakOrderRolloutObservation],
         model_metrics: Mapping[str, object],
     ) -> dict[str, object]:
-        modes: dict[str, dict[str, object]] = {}
-        for rollout in records:
-            bucket = modes.setdefault(
-                rollout.selection_mode,
-                {
-                    "count": 0,
-                    "decision_count": 0,
-                    "candidate_count_sum": 0,
-                    "entropy_sum": 0.0,
-                    "filters": {
-                        filter_id: {
-                            "eligible": 0,
-                            "passed": 0,
-                            "prediction_sum": 0.0,
-                            "prediction_count": 0,
-                        }
-                        for filter_id in LEARNING_FILTER_IDS
+        def aggregate(
+            selected: Sequence[WeakOrderRolloutObservation],
+        ) -> dict[str, dict[str, object]]:
+            modes: dict[str, dict[str, object]] = {}
+            for rollout in selected:
+                bucket = modes.setdefault(
+                    rollout.selection_mode,
+                    {
+                        "count": 0,
+                        "profile_emitting_count": 0,
+                        "profile_count": 0,
+                        "decision_count": 0,
+                        "candidate_count_sum": 0,
+                        "entropy_sum": 0.0,
+                        "filters": {
+                            filter_id: {
+                                "eligible": 0,
+                                "passed": 0,
+                                "prediction_sum": 0.0,
+                                "prediction_count": 0,
+                            }
+                            for filter_id in LEARNING_FILTER_IDS
+                        },
                     },
-                },
-            )
-            bucket["count"] = int(bucket["count"]) + 1
-            bucket["decision_count"] = int(bucket["decision_count"]) + len(
-                rollout.decisions
-            )
-            bucket["candidate_count_sum"] = int(
-                bucket["candidate_count_sum"]
-            ) + sum(decision.candidate_count for decision in rollout.decisions)
-            bucket["entropy_sum"] = float(bucket["entropy_sum"]) + sum(
-                decision.policy_entropy for decision in rollout.decisions
-            )
-            filters = bucket["filters"]
-            assert isinstance(filters, dict)
-            for head, observation in enumerate(rollout.filters.observations):
-                target = filters[observation.filter_id]
-                assert isinstance(target, dict)
-                target["eligible"] = int(target["eligible"]) + observation.decided
-                target["passed"] = int(target["passed"]) + observation.passed
-                for decision in rollout.decisions:
-                    if (
-                        observation.decided
-                        and head
-                        < len(decision.predicted_conditional_probabilities)
-                    ):
-                        target["prediction_sum"] = float(
-                            target["prediction_sum"]
-                        ) + decision.predicted_conditional_probabilities[head]
-                        target["prediction_count"] = int(
-                            target["prediction_count"]
-                        ) + 1
+                )
+                bucket["count"] = int(bucket["count"]) + 1
+                bucket["profile_emitting_count"] = int(
+                    bucket["profile_emitting_count"]
+                ) + (rollout.profile_count > 0)
+                bucket["profile_count"] = int(bucket["profile_count"]) + int(
+                    rollout.profile_count
+                )
+                bucket["decision_count"] = int(bucket["decision_count"]) + len(
+                    rollout.decisions
+                )
+                bucket["candidate_count_sum"] = int(
+                    bucket["candidate_count_sum"]
+                ) + sum(decision.candidate_count for decision in rollout.decisions)
+                bucket["entropy_sum"] = float(bucket["entropy_sum"]) + sum(
+                    decision.policy_entropy for decision in rollout.decisions
+                )
+                filters = bucket["filters"]
+                assert isinstance(filters, dict)
+                for head, observation in enumerate(rollout.filters.observations):
+                    target = filters[observation.filter_id]
+                    assert isinstance(target, dict)
+                    target["eligible"] = int(target["eligible"]) + observation.decided
+                    target["passed"] = int(target["passed"]) + observation.passed
+                    for decision in rollout.decisions:
+                        if (
+                            observation.decided
+                            and head
+                            < len(decision.predicted_conditional_probabilities)
+                        ):
+                            target["prediction_sum"] = float(
+                                target["prediction_sum"]
+                            ) + decision.predicted_conditional_probabilities[head]
+                            target["prediction_count"] = int(
+                                target["prediction_count"]
+                            ) + 1
+            return modes
+
+        parent_modes: dict[str, set[str]] = defaultdict(set)
+        for rollout in records:
+            parent_modes[rollout.proposal.mapping_id].add(rollout.selection_mode)
+        comparable_parents = {
+            parent
+            for parent, modes in parent_modes.items()
+            if {"exploration", "learned"}.issubset(modes)
+        }
+        comparable_records = [
+            rollout
+            for rollout in records
+            if rollout.proposal.mapping_id in comparable_parents
+        ]
         return {
             "schema_version": "graph-lab-weak-order-generation-metrics-v1",
             "generation": generation,
             "evaluated": len(records),
             "geometry_ready": sum(item.profile_count > 0 for item in records),
             "filter_order": list(LEARNING_FILTER_IDS),
-            "selection_modes": modes,
+            "selection_modes": aggregate(records),
+            "comparable_selection_modes": aggregate(comparable_records),
+            "comparison": {
+                "scope": "same_generation_and_mapping",
+                "comparable_parent_count": len(comparable_parents),
+                "excluded_parent_count": len(parent_modes) - len(comparable_parents),
+            },
             "model": dict(model_metrics),
         }
 
@@ -700,6 +768,9 @@ class GraphLabRunner:
                         transition["prediction_count"]
                     ) + 1
 
+        comparable = (
+            modes if {"exploration", "learned"}.issubset(modes) else {}
+        )
         return {
             "schema_version": "graph-lab-generation-metrics-v1",
             "generation": generation,
@@ -710,6 +781,12 @@ class GraphLabRunner:
             "training_output_bytes": self._training_output_bytes(),
             "max_training_bytes": self.max_training_bytes,
             "selection_modes": modes,
+            "comparable_selection_modes": comparable,
+            "comparison": {
+                "scope": "same_generation_proposal_pool",
+                "comparable_parent_count": 1 if comparable else 0,
+                "excluded_parent_count": 0 if comparable else 1,
+            },
             "model": dict(model_metrics),
         }
 
@@ -870,7 +947,7 @@ class GraphLabRunner:
         batch_size: int | None = None,
     ) -> GraphLabResult:
         if restart:
-            self._restart()
+            self.restart_outputs()
         self.output.mkdir(parents=True, exist_ok=True)
         _atomic_json(self.output / "effective_config.json", self.config)
         observations = self._load_observations()
