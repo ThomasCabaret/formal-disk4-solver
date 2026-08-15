@@ -1,0 +1,33 @@
+{
+  "benchmark": {
+    "case_count": 9,
+    "solver_repeats": 3,
+    "generator_seed": 20260814,
+    "vertex_counts": [8, 10, 12],
+    "difficulties": ["moderate", "strong", "extreme"],
+    "output_directory": "output/geometry_recovery_benchmark",
+    "write_solutions": true
+  },
+  "solver": {
+    "intermediate_points_per_generic_curve": 3,
+    "arc_sample_count": 64,
+    "max_restarts": 96,
+    "max_function_evaluations": 1000,
+    "candidate_timeout_seconds": 20.0,
+    "enable_clearance_refinement": true,
+    "coarse_collision_sample_count": 8,
+    "max_refinement_evaluations": 160,
+    "random_seed": 0,
+    "maximum_curve_length": 4.0,
+    "minimum_curve_length": 1e-6,
+    "maximum_generic_turn_per_joint_pi": 0.95,
+    "optimization_clearance": 1e-5,
+    "closure_tolerance": 1e-8,
+    "tangent_tolerance": 1e-7,
+    "angle_tolerance": 1e-7,
+    "length_tolerance": 1e-8,
+    "intersection_tolerance": 1e-7,
+    "minimum_area": 1e-8,
+    "minimum_sample_edge_length": 1e-9
+  }
+}

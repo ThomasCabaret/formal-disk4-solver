@@ -185,6 +185,38 @@ A geometry problem with no free formal parameters and no generic-curve shape
 parameters is evaluated once. Failed positional or tangent closure is rejected
 before any optimizer restart or sampled self-intersection test.
 
+### Known-positive geometry recovery benchmark
+
+The independent recovery benchmark generates strongly non-convex, simple
+closed witnesses mixing straight segments, circular arcs and broken generic
+curves. It certifies each hidden witness, removes its exact lengths and generic
+control points from solver initialization, and calls the same
+`NumericalContourSolver.solve()` used by the normal pipeline. Several solver
+seeds are tried per witness so the report distinguishes an accessible solution
+from robust recovery. Check the reported attempt count as well: the first start
+is deterministic, and a case that spends its entire timeout there never reaches
+a seed-dependent randomized restart.
+
+Quick smoke run:
+
+```bat
+set PYTHONPATH=%CD%\src
+py.exe -m formal_disk4.geometry.recovery_benchmark --config config\benchmarks\geometry-recovery.json --quick
+```
+
+Full configured run:
+
+```bat
+set PYTHONPATH=%CD%\src
+py.exe -m formal_disk4.geometry.recovery_benchmark --config config\benchmarks\geometry-recovery.json
+```
+
+The compact reports are written to
+`output/geometry_recovery_benchmark/report.md` and `report.json`. A failed
+recovery is a measured false negative under the selected curve
+parameterization and numerical budget: the private oracle witness already
+proves that the generated formal instance is realizable.
+
 Since 1.5.0, non-fixed candidates use a staged solver. The optimization stage
 propagates exact segment and circular-arc endpoints and solves only contour
 closure plus cheap formal-domain guards. Area and self-intersection validation

@@ -67,6 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--generations", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--restart", action="store_true")
+    parser.add_argument(
+        "--exclude-rings",
+        action="store_true",
+        help=(
+            "exclude outside-star plus simple tile-cycle graphs before graph ranking"
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--window-generations", type=int, default=50)
@@ -86,7 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path(args.root).resolve()
-    runner = GraphLabRunner.from_file(root, args.config)
+    runner = GraphLabRunner.from_file(
+        root,
+        args.config,
+        exclude_rings=True if args.exclude_rings else None,
+    )
     geometry_config = _resolved_geometry_config(
         root, runner, Path(args.geometry_config)
     )

@@ -15,7 +15,15 @@ from formal_disk4.geometry.status import GeometryCandidateStatus, SOLUTION_FOUND
 from formal_disk4.graph_lab.app import build_parser as build_lab_app_parser
 from formal_disk4.graph_lab.evaluator import GraphEvaluation
 from formal_disk4.graph_lab.feedback import LearningFeedback, balanced_binary_weights
+from formal_disk4.graph_lab.curriculum import build_curriculum, curriculum_utility
 from formal_disk4.graph_lab.mapping import MappingProposal
+from formal_disk4.graph_lab.specialization_model import (
+    SpecializationDecisionObservation,
+    SpecializationLearningModel,
+    SpecializationPoolObservation,
+    SpecializationPrediction,
+    SpecializationRankedPolicy,
+)
 from formal_disk4.graph_lab.runner import DiversityArchive, GraphLabRunner
 from formal_disk4.graph_lab.space import DualGraphCandidate
 from formal_disk4.graph_lab.weak_model import (
@@ -29,6 +37,11 @@ from formal_disk4.pipeline.filter_report import FilterReport, LEARNING_FILTER_ID
 from formal_disk4.enumeration.weak_policy import (
     WeakOrderActionView,
     WeakOrderStateView,
+)
+from formal_disk4.words.specialization_policy import (
+    SpecializationActionView,
+    SpecializationOutcomeView,
+    SpecializationPoolStateView,
 )
 
 
@@ -54,6 +67,51 @@ class GraphLabTests(unittest.TestCase):
         )
         self.assertEqual(weights[0][0], 50.0)
         self.assertAlmostEqual(weights[0][1], 1000 / 1998)
+
+    def test_mutation_parent_sampling_uses_the_same_size_growth_prior(self) -> None:
+        def observation(tile_count: int) -> SimpleNamespace:
+            return SimpleNamespace(
+                candidate=SimpleNamespace(tile_count=tile_count),
+                stage_index=1,
+                profiles=(),
+                elapsed_seconds=0.0,
+                tainted=False,
+            )
+
+        archive = DiversityArchive(())
+        archive.cells["small"] = [observation(4)]
+        archive.cells["large"] = [observation(13)]
+        rng = random.Random(20260815)
+        selected = [
+            archive.choose_parent(
+                rng,
+                size_weight=lambda size: 1.4 ** (size - 4),
+            ).candidate.tile_count
+            for _ in range(2000)
+        ]
+
+        self.assertGreater(selected.count(13), 1850)
+        self.assertGreater(selected.count(4), 0)
+
+    def test_curriculum_uses_direct_reach_without_cross_filter_products(self) -> None:
+        rates = [0.95, 0.40] + [0.0] * 24
+        supports = [100] * 26
+        active = [True, True] + [False] * 24
+        state = build_curriculum(
+            empirical_reach_rates=rates,
+            reach_supports=supports,
+            active_reach_heads=active,
+            active_pass_heads=active,
+            config={"curriculum_mastery_rate": 0.85},
+        )
+        self.assertEqual(state.frontier_index, 1)
+        score = curriculum_utility(
+            state,
+            (0.1, 0.8) + (0.0,) * 24,
+            (0.5,) * 26,
+        )
+        self.assertGreater(score, 0.8)
+        self.assertIn("never multiplied", state.to_dict()["probability_semantics"])
 
     def test_geometry_feedback_is_joined_only_at_the_right_scope(self) -> None:
         ring = self._ring_candidate()
@@ -208,12 +266,252 @@ class GraphLabTests(unittest.TestCase):
             right_prediction.value_probabilities,
         )
 
+    def test_specialization_ranker_sees_symbolic_family_and_weak_placement(self) -> None:
+        candidate = self._ring_candidate()
+        proposal = MappingProposal(
+            candidate=candidate,
+            raw_assignment_id=0,
+            orientation_signs=(1, 1, 1),
+            cyclic_offsets=(0, 0, 0),
+            contour_lengths=(3, 3, 3),
+            edge_ports=tuple((0.0,) * 8 for _edge in candidate.edges),
+        )
+        common_state = {
+            "assignment_id": 0,
+            "placement_id": 0,
+            "placement_block_count": 2,
+            "solver_variable_count": 3,
+            "equation_count": 2,
+            "interface_count": 3,
+            "outer_arc_count": 3,
+            "contour_literal_count": 3,
+            "family_count": 2,
+            "candidate_count": 2,
+        }
+        left_state = SpecializationPoolStateView(
+            placement_blocks=((0, 1), (2,)), **common_state
+        )
+        right_state = SpecializationPoolStateView(
+            placement_blocks=((0,), (1, 2)), **common_state
+        )
+        common_action = {
+            "index": 0,
+            "family_id": 0,
+            "family_kind": "finite",
+            "residual_graph_nodes": 3,
+            "family_power_depth": 0,
+            "family_trace_length": 2,
+            "exponent_variable_count": 0,
+            "exponent_sum": 0,
+            "exponent_minimum": 0,
+            "exponent_maximum": 0,
+            "environment_variable_count": 2,
+            "total_word_literals": 4,
+            "maximum_word_literals": 2,
+            "distinct_word_count": 2,
+            "distinct_literal_variable_count": 2,
+            "inverse_literal_count": 1,
+            "empty_word_count": 0,
+        }
+        direct = SpecializationActionView(
+            environment_words=((1, 2), (-1, 2)), **common_action
+        )
+        crossed = SpecializationActionView(
+            environment_words=((1, -2), (2, 1)), **common_action
+        )
+        model = SpecializationLearningModel(
+            {"hidden_size": 8, "message_layers": 1, "torch_threads": 1}
+        )
+
+        symbolic = model.predict_many(proposal, left_state, (direct, crossed))
+        placement = (
+            model.predict(proposal, left_state, direct),
+            model.predict(proposal, right_state, direct),
+        )
+
+        self.assertNotEqual(symbolic[0], symbolic[1])
+        self.assertNotEqual(placement[0], placement[1])
+
+        observation = SpecializationPoolObservation(
+            proposal=proposal,
+            state=left_state,
+            decisions=(
+                SpecializationDecisionObservation(
+                    action=direct,
+                    outcome=SpecializationOutcomeView(
+                        True, True, False, "emitted", None, 0.01, "fp-test"
+                    ),
+                    selection_mode="exploration",
+                    selection_probability=0.5,
+                    policy_entropy=0.5,
+                    predicted_valid_probability=0.5,
+                    predicted_emission_probability=0.5,
+                    selection_score=0.5,
+                ),
+            ),
+            pool_sequence=0,
+            random_seed=1,
+        )
+        compact = observation.to_dict(include_proposal=False)
+        restored = SpecializationPoolObservation.from_dict(
+            compact, proposal=proposal
+        )
+        self.assertNotIn("proposal", compact)
+        self.assertEqual(restored.pool_id, observation.pool_id)
+        self.assertEqual(restored.decisions[0].action.environment_words, direct.environment_words)
+
+    def test_specialization_policy_changes_order_but_never_closes_candidate(self) -> None:
+        class FakeModel:
+            has_policy_signal = True
+
+            @staticmethod
+            def predict_many(_proposal, _state, actions):
+                return tuple(
+                    SpecializationPrediction(
+                        0.99 if action.index == 9 else 0.01,
+                        0.5,
+                    )
+                    for action in actions
+                )
+
+        state = SpecializationPoolStateView(
+            0, 0, 1, 1, 1, 1, 1, 1, 10, 10, ((0,),)
+        )
+        actions = tuple(
+            SpecializationActionView(
+                index,
+                index,
+                "finite",
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                ((1,),),
+            )
+            for index in range(10)
+        )
+        preferred_first = 0
+        visited = set()
+        for seed in range(100):
+            policy = SpecializationRankedPolicy(
+                object(),
+                FakeModel(),
+                {
+                    "exploration_fraction": 0.25,
+                    "temperature": 0.05,
+                    "epsilon": 0.0,
+                    "visits_per_pool": 4,
+                },
+                random_seed=seed,
+            )
+            order = tuple(policy.select_specializations(state, actions))
+            self.assertEqual(len(order), 4)
+            self.assertEqual(len(set(order)), 4)
+            self.assertTrue(set(order) <= set(range(10)))
+            visited.update(order)
+            preferred_first += order[0] == 9
+
+        self.assertGreater(preferred_first, 50)
+        self.assertEqual(visited, set(range(10)))
+
     def test_unified_lab_entry_point_defaults_to_dashboard_and_geometry(self) -> None:
         arguments = build_lab_app_parser().parse_args([])
         self.assertFalse(arguments.no_dashboard)
         self.assertFalse(arguments.no_geometry)
         self.assertEqual(arguments.port, 8766)
         self.assertEqual(arguments.geometry_config, "config/graph_lab/geometry.json")
+        self.assertFalse(arguments.exclude_rings)
+        self.assertTrue(
+            build_lab_app_parser().parse_args(["--exclude-rings"]).exclude_rings
+        )
+
+    def test_ring_exclusion_filters_the_generator_before_graph_ranking(self) -> None:
+        output_root = ROOT / "output"
+        output_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as raw_output:
+            runner = GraphLabRunner(
+                ROOT,
+                {
+                    "output": {"directory": raw_output},
+                    "space": {
+                        "maximum_tiles": 4,
+                        "exclude_rings": True,
+                        "symmetric_prior_fraction": 1.0,
+                        "imposed_symmetry_bias": 1.0,
+                    },
+                    "sampling": {"mutation_fraction": 0.0},
+                    "learning": {
+                        "hidden_size": 8,
+                        "message_layers": 1,
+                        "torch_threads": 1,
+                    },
+                    "evaluation": {
+                        "base_search_config": "config/cycle_campaign/search.json"
+                    },
+                },
+            )
+            pool = runner._candidate_pool(
+                random.Random(20260812), DiversityArchive(()), 1
+            )
+
+        self.assertTrue(runner.exclude_rings)
+        self.assertEqual(len(pool), 1)
+        self.assertFalse(pool[0].is_simple_ring)
+        with self.assertRaisesRegex(ValueError, "reached the graph ranker"):
+            runner._select(
+                (self._ring_candidate(),),
+                SimpleNamespace(),
+                DiversityArchive(()),
+                random.Random(1),
+                1,
+            )
+
+    def test_ring_exclusion_is_checkpoint_compatible_in_both_directions(self) -> None:
+        output_root = ROOT / "output"
+        output_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as raw_output:
+            base_config = {
+                "output": {"directory": raw_output},
+                "space": {"maximum_tiles": 4},
+                "sampling": {},
+                "learning": {
+                    "hidden_size": 8,
+                    "message_layers": 1,
+                    "torch_threads": 1,
+                },
+                "evaluation": {
+                    "base_search_config": "config/cycle_campaign/search.json"
+                },
+            }
+            with_rings = GraphLabRunner(ROOT, base_config)
+            no_ring_config = json.loads(json.dumps(base_config))
+            no_ring_config["space"]["exclude_rings"] = True
+            without_rings = GraphLabRunner(ROOT, no_ring_config)
+            state_path = Path(raw_output) / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "graph-lab-state-v1",
+                        "fingerprint": with_rings.fingerprint,
+                        "next_generation": 624,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(with_rings.fingerprint, without_rings.fingerprint)
+            self.assertEqual(without_rings._state_generation(), 624)
+            self.assertEqual(with_rings._state_generation(), 624)
 
     def test_mapping_comparison_excludes_exploration_only_parents(self) -> None:
         def record(
@@ -230,10 +528,12 @@ class GraphLabTests(unittest.TestCase):
                 ),
                 filters=SimpleNamespace(observations=(observation,)),
                 profiles=({"profile": True},) if passed else (),
+                reach_vector=(1.0,),
             )
             return evaluation, {
                 "selection_mode": mode,
                 "predicted_conditional_probabilities": [0.5],
+                "predicted_reach_probabilities": [0.5],
             }
 
         runner = object.__new__(GraphLabRunner)
@@ -323,6 +623,7 @@ class GraphLabTests(unittest.TestCase):
         class FakeModel:
             active_heads = np.asarray([True] + [False] * 25)
             active_value_heads = np.asarray([True, False, False])
+            has_policy_signal = True
 
             @staticmethod
             def prepare_mapping(_proposal):
@@ -338,12 +639,18 @@ class GraphLabTests(unittest.TestCase):
                     WeakOrderPrediction(
                         conditional_probabilities=(probabilities[index],)
                         + (0.5,) * 25,
+                        reach_probabilities=(probabilities[index],)
+                        + (0.5,) * 25,
                         value_probabilities=(probabilities[index], 0.5, 0.5),
                         auxiliary_progress=0.5,
                         expected_seconds=0.0,
                     )
                     for index, _action in enumerate(actions)
                 )
+
+            @staticmethod
+            def policy_score(prediction):
+                return prediction.reach_probabilities[0]
 
         state = WeakOrderStateView(
             assignment_id=0,
@@ -387,13 +694,14 @@ class GraphLabTests(unittest.TestCase):
                     "output": {"directory": raw_output},
                     "space": {
                         "maximum_tiles": 3,
-                        "known_seeds": [{"map": "c3"}],
+                        "symmetric_prior_fraction": 0.0,
+                        "imposed_symmetry_bias": 0.0,
                     },
                     "sampling": {
                         "seed": 9,
                         "generations": 1,
                         "batch_size": 1,
-                        "known_seeds_per_generation": 1,
+                        "pool_multiplier": 1,
                     },
                     "learning": {
                         "hidden_size": 8,
@@ -451,6 +759,7 @@ class GraphLabTests(unittest.TestCase):
                 .read_text(encoding="utf-8")
                 .splitlines()[0]
             )
+            self.assertFalse(mapping_record.get("error"), mapping_record)
             mapping_metrics = json.loads(
                 (output / "mapping_training_metrics.jsonl")
                 .read_text(encoding="utf-8")
@@ -474,12 +783,16 @@ class GraphLabTests(unittest.TestCase):
             )
         self.assertEqual(result.observations, 1)
         self.assertEqual(len(mapping_record["target_vector"]), 26)
+        self.assertEqual(len(mapping_record["reach_vector"]), 26)
         self.assertEqual(mapping_record["rollout_count"], 2)
         self.assertEqual(mapping_metrics["model"]["examples"], 1)
         self.assertEqual(mapping_metrics["selection_modes"]["exploration"]["count"], 1)
         self.assertEqual(len(weak_records), 2)
         self.assertTrue(
             all(len(record["target_vector"]) == 26 for record in weak_records)
+        )
+        self.assertTrue(
+            all(len(record["reach_vector"]) == 26 for record in weak_records)
         )
         self.assertEqual(weak_metrics["model"]["rollouts"], 2)
         self.assertEqual(
@@ -521,7 +834,6 @@ class GraphLabTests(unittest.TestCase):
                     },
                     "space": {
                         "maximum_tiles": 13,
-                        "known_seeds": [{"map": "centered-double-cycle-6"}],
                     },
                     "sampling": {"generations": 1, "batch_size": 1},
                     "learning": {
@@ -538,21 +850,21 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "max_training_output_bytes")
         self.assertEqual(result.observations, 0)
 
-    def test_one_generation_persists_a_known_geometry_candidate(self) -> None:
+    def test_one_generation_persists_a_prior_geometry_candidate(self) -> None:
         output_root = ROOT / "output"
         output_root.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=output_root) as raw_output:
             config = {
                 "output": {"directory": raw_output},
                 "space": {
-                    "maximum_tiles": 4,
-                    "known_seeds": [{"map": "c4"}],
+                    "maximum_tiles": 3,
+                    "symmetric_prior_fraction": 1.0,
                 },
                 "sampling": {
                     "seed": 7,
                     "generations": 1,
                     "batch_size": 1,
-                    "known_seeds_per_generation": 1,
+                    "pool_multiplier": 1,
                 },
                 "learning": {
                     "seed": 7,
@@ -601,9 +913,14 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(result.geometry_ready_graphs, 1)
         self.assertEqual(result.stop_reason, "completed")
         self.assertEqual(len(report["geometry_ready"]), 1)
+        self.assertEqual(report["tile_count_prior"], {"3": 1.0})
         self.assertEqual(generation_metrics["generation"], 0)
         self.assertEqual(
-            generation_metrics["selection_modes"]["known_control"]["count"], 1
+            sum(
+                item["count"]
+                for item in generation_metrics["selection_modes"].values()
+            ),
+            1,
         )
         self.assertIn('"graph_lab"', candidates)
         self.assertTrue(geometry_problem.segments)

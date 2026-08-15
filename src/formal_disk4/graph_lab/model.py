@@ -11,6 +11,8 @@ from typing import Any, Mapping, Sequence
 import networkx as nx
 import numpy as np
 
+from formal_disk4.pipeline.output import atomic_replace
+
 from .evaluator import GRAPH_STAGES, GraphEvaluation
 from .feedback import (
     LearningFeedback,
@@ -18,6 +20,7 @@ from .feedback import (
     balanced_binary_weights,
     formal_profile_ids,
 )
+from .curriculum import normalized_cost
 from .space import DualGraphCandidate, OUTSIDE
 
 try:
@@ -30,7 +33,7 @@ except ImportError as error:  # pragma: no cover - exercised only without the ex
     ) from error
 
 
-MODEL_VERSION = "graph-lab-gnn-v3"
+MODEL_VERSION = "graph-lab-gnn-v4-curriculum"
 TRANSITIONS = tuple(range(1, len(GRAPH_STAGES)))
 NODE_FEATURES = 8
 GLOBAL_FEATURES = 6
@@ -188,6 +191,7 @@ class GraphLearningModel:
         )
         self.active_heads = np.zeros(len(TRANSITIONS), dtype=bool)
         self.empirical_rates = np.full(len(TRANSITIONS), 0.5, dtype=np.float32)
+        self.best_transition_auc = np.full(len(TRANSITIONS), np.nan)
         self.active_value_heads = np.zeros(len(VALUE_TARGET_IDS), dtype=bool)
         self.empirical_value_rates = np.full(
             len(VALUE_TARGET_IDS), 0.5, dtype=np.float32
@@ -228,6 +232,27 @@ class GraphLearningModel:
             self.empirical_value_rates[head] = float(
                 (positive + 0.5) / (len(labels) + 1.0)
             )
+
+    @property
+    def has_policy_signal(self) -> bool:
+        return bool(np.any(self.active_heads) or np.any(self.active_value_heads))
+
+    def curriculum_frontier(self) -> int | None:
+        active = np.flatnonzero(self.active_heads)
+        if not len(active):
+            return None
+        mastery = min(
+            0.999,
+            max(0.5, float(self.config.get("curriculum_mastery_rate", 0.85))),
+        )
+        return next(
+            (
+                int(index)
+                for index in active
+                if float(self.empirical_rates[index]) < mastery
+            ),
+            int(active[-1]),
+        )
 
     @staticmethod
     def _is_validation(observation: GraphEvaluation) -> bool:
@@ -283,13 +308,24 @@ class GraphLearningModel:
         cost_weight: float,
     ) -> tuple[float, GraphPrediction]:
         prediction = self.predict(candidate)
+        frontier = self.curriculum_frontier()
+        if frontier is None:
+            curriculum_score = 0.10 * prediction.expected_stage
+        else:
+            curriculum_score = prediction.conditional_probabilities[frontier]
+            curriculum_score += 0.15 * sum(
+                prediction.conditional_probabilities[:frontier]
+            ) / max(1, frontier)
+            curriculum_score += 0.10 * sum(
+                prediction.reach_probabilities[frontier + 1 :]
+            ) / max(1, len(prediction.reach_probabilities) - frontier - 1)
         score = (
-            prediction.expected_stage
+            curriculum_score
             + geometry_weight * prediction.value_probabilities[0]
             + solution_weight * prediction.value_probabilities[1]
             + nontrivial_solution_weight * prediction.value_probabilities[2]
             + novelty_weight * float(novelty)
-            - cost_weight * math.log1p(prediction.expected_seconds)
+            - cost_weight * normalized_cost(prediction.expected_seconds, self.config)
         )
         return score, prediction
 
@@ -497,15 +533,36 @@ class GraphLearningModel:
             scores = np.asarray(
                 [item.conditional_probabilities[head] for item in predictions]
             )[eligible]
+            transition_auc = self._auc(labels, scores)
+            previous_best = self.best_transition_auc[head]
             transitions[GRAPH_STAGES[target]] = {
                 "eligible": int(np.count_nonzero(eligible)),
                 "positives": int(np.count_nonzero(labels)),
                 "conditional_rate": (
                     float(np.mean(labels)) if len(labels) else None
                 ),
-                "auc": self._auc(labels, scores),
+                "auc": transition_auc,
+                "best_auc": (
+                    None if np.isnan(previous_best) else float(previous_best)
+                ),
+                "auc_regression": bool(
+                    transition_auc is not None
+                    and not np.isnan(previous_best)
+                    and transition_auc + 0.05 < previous_best
+                ),
+                "brier_score": (
+                    float(np.mean((scores - labels.astype(np.float64)) ** 2))
+                    if len(labels)
+                    else None
+                ),
                 "active": bool(self.active_heads[head]),
             }
+            if transition_auc is not None:
+                self.best_transition_auc[head] = (
+                    transition_auc
+                    if np.isnan(previous_best)
+                    else max(float(previous_best), transition_auc)
+                )
         cost_errors = [
             abs(item.expected_seconds - observation.elapsed_seconds)
             for item, observation in zip(predictions, measured)
@@ -555,6 +612,7 @@ class GraphLearningModel:
                 "accuracy": correct / total if total else None,
                 "scope": "same_tile_count",
             }
+        frontier = self.curriculum_frontier()
         return {
             "schema_version": "graph-lab-gnn-metrics-v1",
             "examples": len(observations),
@@ -565,6 +623,20 @@ class GraphLearningModel:
             "transitions": transitions,
             "values": values,
             "pairwise_ranking": pairwise,
+            "curriculum": {
+                "frontier_index": frontier,
+                "frontier_stage": (
+                    GRAPH_STAGES[TRANSITIONS[frontier]]
+                    if frontier is not None
+                    else None
+                ),
+                "status": "active" if frontier is not None else "waiting_for_contrast",
+                "probability_semantics": (
+                    "True sequential conditional transitions; cumulative reach "
+                    "is their product only at this graph level."
+                ),
+                "learnable_transition_heads": int(np.count_nonzero(self.active_heads)),
+            },
             "cost_mean_absolute_error_seconds": float(np.mean(cost_errors)),
         }
 
@@ -579,12 +651,13 @@ class GraphLearningModel:
                 "optimizer": self.optimizer.state_dict(),
                 "active_heads": self.active_heads,
                 "empirical_rates": self.empirical_rates,
+                "best_transition_auc": self.best_transition_auc,
                 "active_value_heads": self.active_value_heads,
                 "empirical_value_rates": self.empirical_value_rates,
             },
             temporary,
         )
-        temporary.replace(path)
+        atomic_replace(temporary, path)
 
     @classmethod
     def load_or_create(
@@ -602,6 +675,9 @@ class GraphLearningModel:
         result.active_heads = np.asarray(payload["active_heads"], dtype=bool)
         result.empirical_rates = np.asarray(
             payload["empirical_rates"], dtype=np.float32
+        )
+        result.best_transition_auc = np.asarray(
+            payload["best_transition_auc"], dtype=float
         )
         result.active_value_heads = np.asarray(
             payload["active_value_heads"], dtype=bool

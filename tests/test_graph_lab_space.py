@@ -17,23 +17,149 @@ from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
 
 
 class GraphLabSpaceTests(unittest.TestCase):
-    def test_known_templates_are_a_statistical_prior_not_labelled_controls(self) -> None:
+    def test_size_prior_tracks_tempered_combinatorial_growth(self) -> None:
         space = GraphSpace(
-            maximum_tiles=4,
-            imposed_symmetry_bias=0.0,
-            known_prior_fraction=1.0,
-            known_prior_mutation_fraction=0.0,
-            known_seeds=({"map": "c4"},),
+            maximum_tiles=13,
+            size_growth_factor=1.4,
+            exclude_rings=True,
         )
-        template = candidate_from_planar_map(
-            "c4", imposed_automorphism=None
+        distribution = dict(space.size_sampling_distribution())
+
+        self.assertEqual(tuple(distribution), tuple(range(4, 14)))
+        self.assertAlmostEqual(sum(distribution.values()), 1.0)
+        self.assertTrue(all(value > 0.0 for value in distribution.values()))
+        for size in range(4, 13):
+            self.assertAlmostEqual(
+                distribution[size + 1] / distribution[size], 1.4
+            )
+        self.assertLess(distribution[4], 0.02)
+        self.assertGreater(distribution[12], 0.20)
+        self.assertGreater(distribution[13], 0.29)
+
+    def test_uniform_size_factor_preserves_full_size_support(self) -> None:
+        space = GraphSpace(
+            maximum_tiles=13,
+            size_growth_factor=1.0,
+            exclude_rings=True,
         )
+        distribution = dict(space.size_sampling_distribution())
+
+        self.assertEqual(len(set(distribution.values())), 1)
+        rng = random.Random(20260815)
+        self.assertEqual(
+            {space._sample_size(rng) for _ in range(2000)}, set(range(4, 14))
+        )
+
+    def test_size_growth_factor_must_keep_full_support(self) -> None:
+        for invalid in (0.0, -1.0, float("inf"), float("nan")):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "strictly positive"):
+                    GraphSpace(size_growth_factor=invalid)
+
+    def test_symmetric_prior_has_no_catalog_seed_channel(self) -> None:
+        space = GraphSpace(maximum_tiles=13, symmetric_prior_fraction=1.0)
         sampled = space.sample_prior(random.Random(7))
 
-        self.assertEqual(sampled.edges, template.edges)
+        self.assertFalse(hasattr(space, "known_seeds"))
         self.assertEqual(sampled.origin, "prior")
-        self.assertEqual(sampled.mutation, "known_template")
         self.assertIsNone(sampled.source_map_name)
+        self.assertIsNone(sampled.source_symmetry)
+        self.assertNotIn("known", sampled.mutation)
+
+    def test_ring_exclusion_retains_a_high_symmetry_nonring_prior(self) -> None:
+        space = GraphSpace(
+            maximum_tiles=13,
+            symmetric_prior_fraction=1.0,
+            imposed_symmetry_bias=1.0,
+            exclude_rings=True,
+        )
+        rng = random.Random(119)
+        samples = [space.sample_prior(rng) for _ in range(80)]
+
+        self.assertTrue(all(not candidate.is_simple_ring for candidate in samples))
+        self.assertTrue(all(candidate.symmetry_order > 1 for candidate in samples))
+        self.assertGreater(len({candidate.symmetry_order for candidate in samples}), 3)
+        self.assertGreater(len({candidate.graph_id for candidate in samples}), 20)
+        for candidate in samples:
+            validate_dual_graph(candidate.graph(), maximum_tiles=13)
+            self.assertIsNotNone(
+                build_dynamic_planar_map(candidate).imposed_automorphism
+            )
+
+    def test_ring_exclusion_also_filters_the_general_prior_branch(self) -> None:
+        space = GraphSpace(
+            maximum_tiles=8,
+            symmetric_prior_fraction=0.0,
+            imposed_symmetry_bias=0.0,
+            exclude_rings=True,
+        )
+        rng = random.Random(211)
+
+        self.assertTrue(
+            all(not space.sample_prior(rng).is_simple_ring for _ in range(80))
+        )
+
+    def test_larger_cyclic_orders_receive_more_prior_mass(self) -> None:
+        flat = GraphSpace(maximum_tiles=13, symmetry_order_bias=0.0)
+        biased = GraphSpace(maximum_tiles=13, symmetry_order_bias=2.0)
+        flat_rng = random.Random(23)
+        biased_rng = random.Random(23)
+        flat_orders = [flat._choose_cyclic_action(12, flat_rng)[0] for _ in range(2000)]
+        biased_orders = [
+            biased._choose_cyclic_action(12, biased_rng)[0] for _ in range(2000)
+        ]
+
+        self.assertGreater(
+            sum(biased_orders) / len(biased_orders),
+            sum(flat_orders) / len(flat_orders) + 2.0,
+        )
+        self.assertEqual(set(flat_orders), {2, 3, 4, 6, 11, 12})
+        self.assertEqual(set(biased_orders), {2, 3, 4, 6, 11, 12})
+
+    def test_generic_scaffolds_cover_multiple_shell_and_subgroup_shapes(self) -> None:
+        space = GraphSpace(maximum_tiles=13, exclude_rings=True)
+        for tile_count, order in ((8, 2), (9, 3), (12, 2), (12, 4)):
+            with self.subTest(tile_count=tile_count, order=order):
+                permutation = space._cyclic_permutation(tile_count, order)
+                candidate = space._symmetric_scaffold(
+                    tile_count,
+                    order,
+                    permutation,
+                    random.Random(tile_count * 100 + order),
+                )
+                self.assertIsNotNone(candidate)
+                assert candidate is not None
+                self.assertEqual(candidate.symmetry_order, order)
+                self.assertFalse(candidate.is_simple_ring)
+                validate_dual_graph(candidate.graph(), maximum_tiles=13)
+                self.assertIsNotNone(
+                    build_dynamic_planar_map(candidate).imposed_automorphism
+                )
+
+    def test_known_positive_graphs_are_only_posthoc_support_oracles(self) -> None:
+        """Known answers test support but are never inputs to the sampler."""
+
+        space = GraphSpace(maximum_tiles=13)
+        for name in (
+            "double-cycle-6",
+            "double-cycle-offset-6",
+            "inner-cycle-boundary-points-6",
+        ):
+            with self.subTest(name=name):
+                target = candidate_from_planar_map(
+                    name, imposed_automorphism="rotation_1"
+                )
+                self.assertIsNotNone(target.imposed_permutation)
+                target_edges = set(target.edges)
+                reconstructed: set[tuple[int, int]] = set()
+                for orbit in space._all_edge_orbits(
+                    target.tile_count, target.imposed_permutation
+                ):
+                    overlap = target_edges.intersection(orbit)
+                    self.assertIn(len(overlap), (0, len(orbit)))
+                    if overlap:
+                        reconstructed.update(orbit)
+                self.assertEqual(reconstructed, target_edges)
 
     def test_mapping_pool_ranker_and_stochastic_rollout_share_the_filter_contract(self) -> None:
         root = Path(__file__).resolve().parents[1]

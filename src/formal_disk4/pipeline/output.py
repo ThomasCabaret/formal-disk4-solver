@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -66,10 +67,35 @@ class NullJsonlWriter:
         return None
 
 
+def atomic_replace(
+    temporary: Path,
+    path: Path,
+    *,
+    attempts: int = 12,
+    initial_delay_seconds: float = 0.05,
+) -> None:
+    """Replace atomically while tolerating transient Windows share locks."""
+
+    attempts = max(1, int(attempts))
+    delay = max(0.0, float(initial_delay_seconds))
+    for attempt in range(attempts):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+            # Defender, indexers, and short-lived readers can temporarily deny
+            # the delete/share access required by os.replace on Windows. The
+            # temporary file is already closed, so retrying preserves atomicity.
+            time.sleep(delay)
+            delay = min(0.8, max(0.01, delay * 2.0))
+
+
 def atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
-    os.replace(temporary, path)
+    atomic_replace(temporary, path)

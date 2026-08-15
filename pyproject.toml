@@ -30,6 +30,7 @@ formal-disk4-graph-coverage = "formal_disk4.graph_lab.coverage:main"
 formal-disk4-graph-dashboard = "formal_disk4.graph_lab.dashboard:main"
 formal-disk4-rollout-audit = "formal_disk4.graph_lab.rollout_audit:main"
 formal-disk4-lab = "formal_disk4.graph_lab.app:main"
+formal-disk4-geometry-recovery-benchmark = "formal_disk4.geometry.recovery_benchmark:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

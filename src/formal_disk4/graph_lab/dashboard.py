@@ -41,7 +41,7 @@ def _load_json_lines(path: Path) -> list[dict[str, Any]]:
 def _blank_transition() -> dict[str, float | int | None]:
     return {
         "eligible": 0,
-        "passed": 0,
+        "passed": 0.0,
         "prediction_sum": 0.0,
         "prediction_count": 0,
         "rate": None,
@@ -73,8 +73,11 @@ def _aggregate(
             if not isinstance(source, Mapping):
                 continue
             target = totals[index]
-            for key in ("eligible", "passed", "prediction_count"):
+            for key in ("eligible", "prediction_count"):
                 target[key] = int(target[key] or 0) + int(source.get(key, 0) or 0)
+            target["passed"] = float(target["passed"] or 0.0) + float(
+                source.get("passed", 0.0) or 0.0
+            )
             target["prediction_sum"] = float(
                 target["prediction_sum"] or 0.0
             ) + float(source.get("prediction_sum", 0.0) or 0.0)
@@ -172,9 +175,24 @@ def build_dashboard_data(
     rows = _load_json_lines(path)
     window = max(1, int(window_generations))
     if not rows:
+        source_name = path.name
+        empty_kind = (
+            "specialization"
+            if source_name == "specialization_training_metrics.jsonl"
+            else (
+                "weak_order"
+                if source_name == "weak_order_training_metrics.jsonl"
+                else (
+                    "mapping"
+                    if source_name == "mapping_training_metrics.jsonl"
+                    else "graph"
+                )
+            )
+        )
         return {
             "source": str(path.resolve()),
             "stages": list(GRAPH_STAGES),
+            "kind": empty_kind,
             "window_generations": window,
             "points": [],
             "transitions": [],
@@ -185,20 +203,26 @@ def build_dashboard_data(
     weak_order_mode = str(rows[-1].get("schema_version", "")).startswith(
         "graph-lab-weak-order-"
     )
+    specialization_mode = str(rows[-1].get("schema_version", "")).startswith(
+        "graph-lab-specialization-"
+    )
     transition_ids = (
         tuple(str(value) for value in rows[-1].get("filter_order", ()))
         if mapping_mode
         else GRAPH_STAGES[1:]
     )
-    stage_labels = (
-        (
-            "weak_order.state" if weak_order_mode else "mapping.sampled",
-            *transition_ids,
-        )
-        if mapping_mode
-        else GRAPH_STAGES
+    root_label = (
+        "specialization.pool"
+        if specialization_mode
+        else ("weak_order.rollout" if weak_order_mode else "mapping.rollout")
     )
-    collection_key = "filters" if mapping_mode else "transitions"
+    stage_labels = (
+        (root_label, *transition_ids) if mapping_mode else GRAPH_STAGES
+    )
+    # Mapping/weak filters are instrumentation points, not one homogeneous
+    # Markov chain. Their dashboard therefore displays the directly measured
+    # P(filter entered), rather than multiplying unrelated conditional rates.
+    collection_key = "reach" if mapping_mode else "transitions"
     comparable_rows = [
         row for row in rows if "comparable_selection_modes" in row
     ]
@@ -229,6 +253,24 @@ def build_dashboard_data(
         collection_key,
         modes_key=modes_key,
     )
+    if mapping_mode:
+        recent_random_conditional = _aggregate(
+            recent_rows,
+            "exploration",
+            transition_ids,
+            "filters",
+            modes_key=modes_key,
+        )
+        recent_learned_conditional = _aggregate(
+            recent_rows,
+            "learned",
+            transition_ids,
+            "filters",
+            modes_key=modes_key,
+        )
+    else:
+        recent_random_conditional = recent_random
+        recent_learned_conditional = recent_learned
     recent_outcomes = {
         mode: _aggregate_outcome(
             recent_rows,
@@ -251,11 +293,19 @@ def build_dashboard_data(
     model_pairwise = latest_model.get("pairwise_ranking", {})
     if not isinstance(model_pairwise, Mapping):
         model_pairwise = {}
+    conditional_models = latest_model.get("filters", {}) if mapping_mode else {}
+    if not isinstance(conditional_models, Mapping):
+        conditional_models = {}
     value_labels = {
         "profile_emitted": "Formal profile emitted",
         "geometry_solution": "Geometry solution found",
         "nontrivial_geometry_solution": "Non-ring geometry solution found",
     }
+    if specialization_mode:
+        value_labels = {
+            "profile_valid": "Formal specialization accepted",
+            **value_labels,
+        }
     objectives = []
     for value_id, label in value_labels.items():
         value = model_values.get(value_id, {})
@@ -284,14 +334,24 @@ def build_dashboard_data(
         model = model_transitions.get(stage, {})
         if not isinstance(model, Mapping):
             model = {}
+        conditional_model = conditional_models.get(stage, {})
+        if not isinstance(conditional_model, Mapping):
+            conditional_model = {}
+        diagnosis = _diagnosis(
+            baseline[index], recent_random[index], recent_learned[index]
+        )
+        if bool(model.get("auc_regression", False)):
+            diagnosis += "; model validation AUC regressed > 0.05 from its best"
         transitions.append(
             {
                 "index": index,
-                "from": stage_labels[index],
+                "from": root_label if mapping_mode else stage_labels[index],
                 "to": stage,
                 "baseline": baseline[index],
                 "recent_random": recent_random[index],
                 "recent_learned": recent_learned[index],
+                "recent_random_conditional": recent_random_conditional[index],
+                "recent_learned_conditional": recent_learned_conditional[index],
                 "learned_vs_baseline_pp": _percentage_point_delta(
                     recent_learned[index]["rate"], baseline[index]["rate"]
                 ),
@@ -302,9 +362,14 @@ def build_dashboard_data(
                     "binary_auc" if mapping_mode else "auc"
                 ),
                 "model_active": bool(model.get("active", False)),
-                "diagnosis": _diagnosis(
-                    baseline[index], recent_random[index], recent_learned[index]
+                "model_brier": model.get("brier_score"),
+                "conditional_model_auc": conditional_model.get("binary_auc"),
+                "conditional_model_brier": conditional_model.get("brier_score"),
+                "conditional_model_active": bool(
+                    conditional_model.get("active", False)
                 ),
+                "model_auc_regression": bool(model.get("auc_regression", False)),
+                "diagnosis": diagnosis,
             }
         )
 
@@ -343,14 +408,21 @@ def build_dashboard_data(
         "source": str(path.resolve()),
         "stages": list(stage_labels),
         "kind": (
-            "weak_order"
-            if weak_order_mode
-            else ("mapping" if mapping_mode else "graph")
+            "specialization"
+            if specialization_mode
+            else (
+                "weak_order"
+                if weak_order_mode
+                else ("mapping" if mapping_mode else "graph")
+            )
         ),
         "window_generations": window,
         "points": points,
         "transitions": transitions,
         "objectives": objectives,
+        "probability_semantics": (
+            "direct_filter_reach" if mapping_mode else "sequential_transition"
+        ),
         "comparison": {
             "required": require_comparable,
             "comparable_generations": len(comparable_rows),
@@ -374,6 +446,12 @@ def build_dashboard_data(
             ),
             "max_training_bytes": rows[-1].get("max_training_bytes"),
             "training_loss": latest_model.get("training_loss"),
+            "curriculum": latest_model.get("curriculum", {}),
+            "pool_coverage": rows[-1].get("pool_coverage", {}),
+            "validation_auc_regressions": sum(
+                bool(item.get("model_auc_regression", False))
+                for item in transitions
+            ),
         },
     }
 
@@ -420,6 +498,12 @@ def build_unified_dashboard_data(
             "Ordres faibles",
             "Le troisième ranker choisit successivement les blocs de chaque rollout.",
             output / "weak_order_training_metrics.jsonl",
+            True,
+        ),
+        (
+            "Familles et spécialisations",
+            "Le quatrième ranker classe ensemble les familles finies et leurs spécialisations pour un même cas de mots.",
+            output / "specialization_training_metrics.jsonl",
             True,
         ),
     )
@@ -669,12 +753,20 @@ def make_handler(
                 self._send(404, "text/plain; charset=utf-8", b"Not found\n")
 
         def _send(self, status: int, content_type: str, body: bytes) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # A dashboard refresh may supersede its previous fetch, and a
+                # browser tab may close while a large JSON response is still
+                # being written. This disconnect belongs to that one HTTP
+                # client; it must neither print a server traceback nor affect
+                # the learning and geometry worker threads.
+                return
 
         def log_message(self, format: str, *args: object) -> None:
             return

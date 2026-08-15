@@ -8,6 +8,7 @@ from pathlib import Path
 from formal_disk4.graph_lab.dashboard import (
     build_dashboard_data,
     build_unified_dashboard_data,
+    make_handler,
 )
 from formal_disk4.graph_lab.geometry_catalog import GeometryCandidateCatalog
 from formal_disk4.graph_lab.space import DualGraphCandidate
@@ -34,6 +35,28 @@ def _mode(eligible: int, passed: int, predicted: float) -> dict[str, object]:
 
 
 class GraphLabDashboardTests(unittest.TestCase):
+    def test_client_disconnect_during_response_is_ignored(self) -> None:
+        handler_type = make_handler(
+            Path("."),
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            50,
+            400,
+        )
+        handler = object.__new__(handler_type)
+        handler.send_response = lambda _status: None
+        handler.send_header = lambda _name, _value: None
+        handler.end_headers = lambda: None
+
+        class DisconnectedWriter:
+            @staticmethod
+            def write(_body: bytes) -> None:
+                raise ConnectionAbortedError(10053, "client aborted")
+
+        handler.wfile = DisconnectedWriter()
+        handler._send(200, "application/json", b"{}")
+
     def test_recent_structure_gallery_preserves_visits_and_renders_schematic(self) -> None:
         candidate = DualGraphCandidate(
             tile_count=3,
@@ -103,6 +126,7 @@ class GraphLabDashboardTests(unittest.TestCase):
                     }
                 },
             }
+            raw_mode["reach"] = raw_mode["filters"]
             comparable_random = {
                 "count": 10,
                 "profile_emitting_count": 2,
@@ -115,6 +139,7 @@ class GraphLabDashboardTests(unittest.TestCase):
                     }
                 },
             }
+            comparable_random["reach"] = comparable_random["filters"]
             comparable_learned = {
                 "count": 30,
                 "profile_emitting_count": 9,
@@ -127,6 +152,7 @@ class GraphLabDashboardTests(unittest.TestCase):
                     }
                 },
             }
+            comparable_learned["reach"] = comparable_learned["filters"]
             source.write_text(
                 json.dumps(
                     {
@@ -143,7 +169,7 @@ class GraphLabDashboardTests(unittest.TestCase):
                             "learned": comparable_learned,
                         },
                         "comparison": {"scope": "same_generation_and_graph"},
-                        "model": {"filters": {}},
+                        "model": {"filters": {}, "reach": {}},
                     }
                 )
                 + "\n",
@@ -159,7 +185,7 @@ class GraphLabDashboardTests(unittest.TestCase):
         self.assertEqual(data["recent_outcomes"]["learned"]["rate"], 0.3)
         self.assertEqual(data["comparison"]["statistics_generations"], 1)
 
-    def test_unified_dashboard_contains_three_levels_and_gallery(self) -> None:
+    def test_unified_dashboard_contains_four_levels_and_gallery(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             output = Path(raw)
             graph_row = {
@@ -183,6 +209,7 @@ class GraphLabDashboardTests(unittest.TestCase):
                     }
                 },
             }
+            filter_mode["reach"] = filter_mode["filters"]
             filter_row = {
                 "generation": 0,
                 "evaluated": 2,
@@ -192,16 +219,53 @@ class GraphLabDashboardTests(unittest.TestCase):
                     "exploration": filter_mode,
                     "learned": filter_mode,
                 },
-                "model": {"filters": {}},
+                "model": {"filters": {}, "reach": {}},
             }
             weak_row = dict(filter_row)
             weak_row["schema_version"] = (
                 "graph-lab-weak-order-generation-metrics-v1"
             )
+            specialization_mode = {
+                "count": 2,
+                "profile_emitting_count": 1,
+                "filters": {
+                    "specialization.profile_valid": {
+                        "eligible": 2,
+                        "passed": 1,
+                        "prediction_sum": 1.0,
+                        "prediction_count": 2,
+                    }
+                },
+            }
+            specialization_mode["reach"] = specialization_mode["filters"]
+            specialization_row = {
+                "schema_version": (
+                    "graph-lab-specialization-generation-metrics-v1"
+                ),
+                "generation": 0,
+                "evaluated": 4,
+                "geometry_ready": 1,
+                "filter_order": ["specialization.profile_valid"],
+                "selection_modes": {
+                    "exploration": specialization_mode,
+                    "learned": specialization_mode,
+                },
+                "model": {
+                    "filters": {},
+                    "reach": {},
+                    "pairwise_ranking": {
+                        "profile_valid": {"accuracy": 0.75, "pairs": 4}
+                    },
+                },
+            }
             for name, row in (
                 ("training_metrics.jsonl", graph_row),
                 ("mapping_training_metrics.jsonl", filter_row),
                 ("weak_order_training_metrics.jsonl", weak_row),
+                (
+                    "specialization_training_metrics.jsonl",
+                    specialization_row,
+                ),
             ):
                 (output / name).write_text(
                     json.dumps(row) + "\n", encoding="utf-8"
@@ -241,7 +305,11 @@ class GraphLabDashboardTests(unittest.TestCase):
             finally:
                 catalog.close()
 
-        self.assertEqual([level["kind"] for level in data["levels"]], ["graph", "mapping", "weak_order"])
+        self.assertEqual(
+            [level["kind"] for level in data["levels"]],
+            ["graph", "mapping", "weak_order", "specialization"],
+        )
+        self.assertEqual(data["levels"][3]["summary"]["evaluated"], 4)
         self.assertEqual(data["gallery"]["total"], 1)
         self.assertEqual(
             data["gallery"]["items"][0]["importance"], "pizza"
@@ -275,6 +343,20 @@ class GraphLabDashboardTests(unittest.TestCase):
                                         "prediction_count": 1,
                                     },
                                 },
+                                "reach": {
+                                    "assignment.canonical": {
+                                        "eligible": 2,
+                                        "passed": 1,
+                                        "prediction_sum": 1.0,
+                                        "prediction_count": 2,
+                                    },
+                                    "weak.positive_length": {
+                                        "eligible": 2,
+                                        "passed": 1,
+                                        "prediction_sum": 1.0,
+                                        "prediction_count": 2,
+                                    },
+                                },
                             },
                             "learned": {
                                 "count": 2,
@@ -292,9 +374,23 @@ class GraphLabDashboardTests(unittest.TestCase):
                                         "prediction_count": 2,
                                     },
                                 },
+                                "reach": {
+                                    "assignment.canonical": {
+                                        "eligible": 2,
+                                        "passed": 2,
+                                        "prediction_sum": 1.5,
+                                        "prediction_count": 2,
+                                    },
+                                    "weak.positive_length": {
+                                        "eligible": 2,
+                                        "passed": 1,
+                                        "prediction_sum": 1.0,
+                                        "prediction_count": 2,
+                                    },
+                                },
                             },
                         },
-                        "model": {"filters": {}},
+                        "model": {"filters": {}, "reach": {}},
                     }
                 )
                 + "\n",

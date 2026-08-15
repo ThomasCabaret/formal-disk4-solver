@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import random
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -203,6 +203,41 @@ class DualGraphCandidate:
     @property
     def edge_count(self) -> int:
         return len(self.edges)
+
+    @property
+    def is_simple_ring(self) -> bool:
+        """Whether this is exactly an outside star plus one tile cycle."""
+
+        if self.tile_count < 3 or len(self.edges) != 2 * self.tile_count:
+            return False
+        edges = {
+            tuple(sorted((int(left), int(right)))) for left, right in self.edges
+        }
+        if len(edges) != len(self.edges):
+            return False
+        tiles = set(range(self.tile_count))
+        outside = {(OUTSIDE, tile) for tile in tiles}
+        if not outside.issubset(edges):
+            return False
+        internal = edges - outside
+        if len(internal) != self.tile_count:
+            return False
+        adjacency = {tile: set() for tile in tiles}
+        for left, right in internal:
+            if left not in tiles or right not in tiles:
+                return False
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+        if any(len(neighbours) != 2 for neighbours in adjacency.values()):
+            return False
+        seen = {0}
+        pending = [0]
+        while pending:
+            for neighbour in adjacency[pending.pop()]:
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    pending.append(neighbour)
+        return seen == tiles
 
     def graph(self) -> nx.Graph:
         return _graph_from_edges(self.tile_count, self.edges)
@@ -486,7 +521,7 @@ def candidate_from_planar_map(
     map_name: str,
     *,
     imposed_automorphism: str | None,
-    origin: str = "known_seed",
+    origin: str = "catalog_oracle",
 ) -> DualGraphCandidate:
     planar_map = build_map(map_name)
     piece_index = {piece.name: index for index, piece in enumerate(planar_map.pieces)}
@@ -530,60 +565,86 @@ class GraphSpace:
         self,
         *,
         maximum_tiles: int = 13,
-        size_bias: float = 1.4,
+        size_growth_factor: float = 1.4,
         symmetric_prior_fraction: float = 0.45,
         imposed_symmetry_bias: float = 0.75,
-        known_prior_fraction: float = 0.30,
-        known_prior_mutation_fraction: float = 0.50,
-        known_seeds: Sequence[Mapping[str, object] | str] = (),
+        symmetry_order_bias: float = 1.5,
+        symmetric_edge_subset_fraction: float = 0.20,
+        symmetric_edge_subset_attempts: int = 24,
+        exclude_rings: bool = False,
     ) -> None:
         self.maximum_tiles = max(3, min(13, int(maximum_tiles)))
-        self.size_bias = max(0.0, float(size_bias))
+        self.exclude_rings = bool(exclude_rings)
+        if self.exclude_rings and self.maximum_tiles < 4:
+            raise ValueError(
+                "Excluding simple rings leaves no valid 3-connected graph "
+                "when maximum_tiles is below four"
+            )
+        self.size_growth_factor = float(size_growth_factor)
+        if not math.isfinite(self.size_growth_factor) or self.size_growth_factor <= 0:
+            raise ValueError("size_growth_factor must be finite and strictly positive")
         self.symmetric_prior_fraction = min(1.0, max(0.0, float(symmetric_prior_fraction)))
         self.imposed_symmetry_bias = min(1.0, max(0.0, float(imposed_symmetry_bias)))
-        self.known_prior_fraction = min(
-            1.0, max(0.0, float(known_prior_fraction))
+        self.symmetry_order_bias = max(0.0, float(symmetry_order_bias))
+        self.symmetric_edge_subset_fraction = min(
+            1.0, max(0.0, float(symmetric_edge_subset_fraction))
         )
-        self.known_prior_mutation_fraction = min(
-            1.0, max(0.0, float(known_prior_mutation_fraction))
+        self.symmetric_edge_subset_attempts = max(
+            1, int(symmetric_edge_subset_attempts)
         )
-        seeds = []
-        for raw in known_seeds:
-            if isinstance(raw, str):
-                map_name = raw
-                symmetry = None
-            else:
-                map_name = str(raw["map"])
-                symmetry = str(raw["symmetry"]) if raw.get("symmetry") else None
-            candidate = candidate_from_planar_map(
-                map_name, imposed_automorphism=symmetry
-            )
-            if candidate.tile_count <= self.maximum_tiles:
-                seeds.append(candidate)
-        self.known_seeds = tuple(seeds)
 
     @classmethod
     def from_config(cls, config: Mapping[str, object]) -> "GraphSpace":
         return cls(
             maximum_tiles=int(config.get("maximum_tiles", 13)),
-            size_bias=float(config.get("size_bias", 1.4)),
+            size_growth_factor=float(config.get("size_growth_factor", 1.4)),
             symmetric_prior_fraction=float(
                 config.get("symmetric_prior_fraction", 0.45)
             ),
             imposed_symmetry_bias=float(config.get("imposed_symmetry_bias", 0.75)),
-            known_prior_fraction=float(config.get("known_prior_fraction", 0.30)),
-            known_prior_mutation_fraction=float(
-                config.get("known_prior_mutation_fraction", 0.50)
+            symmetry_order_bias=float(config.get("symmetry_order_bias", 1.5)),
+            symmetric_edge_subset_fraction=float(
+                config.get("symmetric_edge_subset_fraction", 0.20)
             ),
-            known_seeds=config.get("known_seeds", ()),  # type: ignore[arg-type]
+            symmetric_edge_subset_attempts=int(
+                config.get("symmetric_edge_subset_attempts", 24)
+            ),
+            exclude_rings=bool(config.get("exclude_rings", False)),
         )
 
-    def _sample_size(self, rng: random.Random) -> int:
-        sizes = tuple(range(3, self.maximum_tiles + 1))
-        weights = tuple(
-            0.15 + (self.maximum_tiles - size + 1) ** self.size_bias
-            for size in sizes
+    def size_sampling_distribution(self) -> tuple[tuple[int, float], ...]:
+        """Return the tempered combinatorial prior over tile counts.
+
+        Even a uniform distribution over sizes massively over-represents each
+        small topology, because the number of planar graph classes grows very
+        quickly with the number of vertices.  We therefore give every extra
+        tile a configurable multiplicative amount of proposal mass.  A factor
+        greater than one favours larger domains, one is uniform by size, and a
+        factor below one remains available for deliberately small searches.
+
+        This is intentionally a tempered proxy rather than an attempted exact
+        enumeration of graph classes.  Every permitted size keeps strictly
+        positive probability.
+        """
+
+        minimum = 4 if self.exclude_rings else 3
+        sizes = tuple(range(minimum, self.maximum_tiles + 1))
+        raw = tuple(
+            self.size_growth_factor ** (size - minimum) for size in sizes
         )
+        total = math.fsum(raw)
+        return tuple((size, weight / total) for size, weight in zip(sizes, raw))
+
+    def size_sampling_weight(self, tile_count: int) -> float:
+        """Unnormalised size weight, also used by mutation-parent sampling."""
+
+        minimum = 4 if self.exclude_rings else 3
+        return self.size_growth_factor ** (int(tile_count) - minimum)
+
+    def _sample_size(self, rng: random.Random) -> int:
+        distribution = self.size_sampling_distribution()
+        sizes = tuple(size for size, _probability in distribution)
+        weights = tuple(probability for _size, probability in distribution)
         return int(rng.choices(sizes, weights=weights, k=1)[0])
 
     def _choose_symmetry(
@@ -668,6 +729,374 @@ class GraphSpace:
         return graph
 
     @staticmethod
+    def _mapped_edge(
+        edge: tuple[int, int], permutation: tuple[int, ...]
+    ) -> tuple[int, int]:
+        left, right = edge
+        mapped_left = OUTSIDE if left == OUTSIDE else permutation[left]
+        mapped_right = OUTSIDE if right == OUTSIDE else permutation[right]
+        return (min(mapped_left, mapped_right), max(mapped_left, mapped_right))
+
+    @classmethod
+    def _edge_orbit(
+        cls,
+        edge: tuple[int, int],
+        permutation: tuple[int, ...],
+    ) -> tuple[tuple[int, int], ...]:
+        canonical = (min(edge), max(edge))
+        orbit = []
+        current = canonical
+        while current not in orbit:
+            orbit.append(current)
+            current = cls._mapped_edge(current, permutation)
+        return tuple(sorted(orbit))
+
+    def _candidate_preserving_symmetry(
+        self,
+        graph: nx.Graph,
+        permutation: tuple[int, ...],
+        *,
+        origin: str,
+        mutation: str,
+        parent_id: str | None,
+    ) -> DualGraphCandidate:
+        graph = _normalized_graph(graph)
+        validate_dual_graph(graph, maximum_tiles=self.maximum_tiles)
+        tile_count = len(graph) - 1
+        if sorted(permutation) != list(range(tile_count)):
+            raise ValueError("The imposed permutation does not cover every tile")
+        edges = {
+            (min(left, right), max(left, right)) for left, right in graph.edges()
+        }
+        if any(
+            self._mapped_edge(edge, permutation) not in edges for edge in edges
+        ):
+            raise ValueError("The equivariant mutation broke the imposed symmetry")
+        if permutation not in _direct_automorphisms(graph):
+            raise ValueError(
+                "The imposed cyclic action is not an orientation-preserving "
+                "automorphism of the planar embedding"
+            )
+        return DualGraphCandidate(
+            tile_count=tile_count,
+            edges=tuple(sorted(edges)),
+            imposed_permutation=permutation,
+            origin=origin,
+            mutation=mutation,
+            parent_id=parent_id,
+        )
+
+    @staticmethod
+    def _feasible_symmetry_orders(tile_count: int) -> tuple[int, ...]:
+        """Orders of orientation-preserving cyclic actions on a sphere.
+
+        A non-identity finite rotation of the sphere has two fixed points.  The
+        distinguished outside vertex consumes one of them, so tile vertices
+        consist of full orbits of length ``order`` and at most one fixed tile.
+        This is both more general and more accurate than naming a catalog
+        family such as rings or double rings.
+        """
+
+        return tuple(
+            order
+            for order in range(2, int(tile_count) + 1)
+            if int(tile_count) % order in (0, 1)
+        )
+
+    @staticmethod
+    def _cyclic_permutation(tile_count: int, order: int) -> tuple[int, ...]:
+        if order < 2 or tile_count % order not in (0, 1):
+            raise ValueError("Invalid cyclic action for this number of tiles")
+        permutation = list(range(tile_count))
+        moving_tiles = tile_count - tile_count % order
+        for start in range(0, moving_tiles, order):
+            for offset in range(order):
+                permutation[start + offset] = start + (offset + 1) % order
+        result = tuple(permutation)
+        if _permutation_order(result) != order:
+            raise ValueError("Generated permutation has the wrong order")
+        return result
+
+    def _choose_cyclic_action(
+        self, tile_count: int, rng: random.Random
+    ) -> tuple[int, tuple[int, ...]] | None:
+        orders = self._feasible_symmetry_orders(tile_count)
+        if not orders:
+            return None
+        # The additive floor keeps every feasible order reachable even when a
+        # strong high-order bias is requested.
+        weights = tuple(0.25 + order**self.symmetry_order_bias for order in orders)
+        order = int(rng.choices(orders, weights=weights, k=1)[0])
+        return order, self._cyclic_permutation(tile_count, order)
+
+    def _all_edge_orbits(
+        self, tile_count: int, permutation: tuple[int, ...]
+    ) -> tuple[tuple[tuple[int, int], ...], ...]:
+        nodes = (OUTSIDE, *range(tile_count))
+        return tuple(
+            sorted(
+                {
+                    self._edge_orbit((left, right), permutation)
+                    for left_index, left in enumerate(nodes)
+                    for right in nodes[left_index + 1 :]
+                }
+            )
+        )
+
+    def _sample_invariant_edge_subset(
+        self,
+        tile_count: int,
+        permutation: tuple[int, ...],
+        rng: random.Random,
+        *,
+        attempts: int | None = None,
+    ) -> DualGraphCandidate | None:
+        """Sample complete edge orbits without assuming a graph family.
+
+        Every invariant labelled simple graph is a union of these edge orbits.
+        Every orbit is independently included with a probability strictly
+        between zero and one, so every graph admitting the selected action has
+        non-zero probability of being proposed.  Planarity, 3-connectivity and
+        directness are rejection conditions, not generator-specific shortcuts.
+        """
+
+        orbits = self._all_edge_orbits(tile_count, permutation)
+        vertex_count = tile_count + 1
+        minimum_edges = math.ceil(3 * vertex_count / 2)
+        maximum_edges = 3 * vertex_count - 6
+        total_edges = vertex_count * (vertex_count - 1) // 2
+        for _attempt in range(
+            self.symmetric_edge_subset_attempts if attempts is None else attempts
+        ):
+            target_edges = rng.randint(minimum_edges, maximum_edges)
+            probability = min(0.80, max(0.08, target_edges / total_edges))
+            graph = nx.Graph()
+            graph.add_nodes_from((OUTSIDE, *range(tile_count)))
+            for orbit in orbits:
+                if rng.random() < probability:
+                    graph.add_edges_from(orbit)
+            if not minimum_edges <= graph.number_of_edges() <= maximum_edges:
+                continue
+            if any(degree < 3 for _node, degree in graph.degree()):
+                continue
+            if not nx.is_connected(graph):
+                continue
+            if not nx.check_planarity(graph, counterexample=False)[0]:
+                continue
+            if nx.node_connectivity(graph) < 3:
+                continue
+            try:
+                candidate = self._candidate_preserving_symmetry(
+                    graph,
+                    permutation,
+                    origin="prior",
+                    mutation="symmetric_edge_orbit_subset",
+                    parent_id=None,
+                )
+            except (ValueError, nx.NetworkXError):
+                continue
+            if self.exclude_rings and candidate.is_simple_ring:
+                continue
+            return candidate
+        return None
+
+    def _symmetric_scaffold(
+        self,
+        tile_count: int,
+        order: int,
+        permutation: tuple[int, ...],
+        rng: random.Random,
+    ) -> DualGraphCandidate | None:
+        """Build a generic cyclic planar scaffold from orbit data alone.
+
+        Free tile orbits are arranged into one or more equal cyclic shells.  A
+        possible fixed tile caps the innermost shell.  The construction knows
+        only ``tile_count`` and the abstract group action; no catalog topology
+        or known positive graph is consulted.
+        """
+
+        fixed_count = tile_count % order
+        moving_tiles = tile_count - fixed_count
+        orbit_count = moving_tiles // order
+        orbit_blocks = tuple(
+            tuple(range(start, start + order))
+            for start in range(0, moving_tiles, order)
+        )
+        divisors = [
+            width
+            for width in range(1, orbit_count + 1)
+            if orbit_count % width == 0 and width * order >= 3
+        ]
+        if self.exclude_rings and fixed_count == 0:
+            nonring_divisors = [width for width in divisors if width < orbit_count]
+            if nonring_divisors:
+                divisors = nonring_divisors
+        if not divisors:
+            return None
+        shell_width = int(rng.choice(divisors))
+        shell_count = orbit_count // shell_width
+        shells: list[tuple[int, ...]] = []
+        for shell_index in range(shell_count):
+            blocks = orbit_blocks[
+                shell_index * shell_width : (shell_index + 1) * shell_width
+            ]
+            shell = tuple(
+                blocks[block_index][phase]
+                for phase in range(order)
+                for block_index in range(shell_width)
+            )
+            shells.append(shell)
+
+        graph = nx.Graph()
+        graph.add_nodes_from((OUTSIDE, *range(tile_count)))
+        for shell in shells:
+            for index, node in enumerate(shell):
+                graph.add_edge(node, shell[(index + 1) % len(shell)])
+        graph.add_edges_from((OUTSIDE, node) for node in shells[0])
+        for outer, inner in zip(shells, shells[1:]):
+            phase = rng.randrange(len(inner))
+            graph.add_edges_from(
+                (node, inner[(index + phase) % len(inner)])
+                for index, node in enumerate(outer)
+            )
+        if fixed_count:
+            fixed_tile = tile_count - 1
+            graph.add_edges_from((fixed_tile, node) for node in shells[-1])
+            # The smallest half-turn action has only two moving vertices.  Its
+            # unique 3-connected scaffold is K4, whose two fixed vertices are
+            # also adjacent.
+            if len(shells[-1]) == 2:
+                graph.add_edge(OUTSIDE, fixed_tile)
+        try:
+            candidate = self._candidate_preserving_symmetry(
+                graph,
+                permutation,
+                origin="prior",
+                mutation="symmetric_orbit_scaffold",
+                parent_id=None,
+            )
+        except (ValueError, nx.NetworkXError):
+            return None
+        if self.exclude_rings and candidate.is_simple_ring:
+            return None
+        return candidate
+
+    def _mutate_equivariant_edges(
+        self, parent: DualGraphCandidate, rng: random.Random
+    ) -> DualGraphCandidate | None:
+        """Apply one whole edge-orbit edit under the imposed permutation.
+
+        Local single-edge mutations almost always destroy a high-order
+        automorphism.  Editing the complete orbit provides a genuine random
+        neighbourhood of symmetric structures without replaying a catalog case
+        directly.
+        """
+
+        permutation = parent.imposed_permutation
+        if permutation is None or parent.symmetry_order <= 1:
+            return None
+        base = parent.graph()
+        existing = {
+            (min(left, right), max(left, right)) for left, right in base.edges()
+        }
+        possible = {
+            (min(left, right), max(left, right))
+            for left, right in nx.non_edges(base)
+        }
+        actions = ["symmetric_edge_add", "symmetric_edge_delete"]
+        rng.shuffle(actions)
+        for action in actions:
+            source = possible if action == "symmetric_edge_add" else existing
+            orbits = list(
+                {
+                    self._edge_orbit(edge, permutation)
+                    for edge in source
+                }
+            )
+            rng.shuffle(orbits)
+            for orbit in orbits:
+                proposal = base.copy()
+                if action == "symmetric_edge_add":
+                    proposal.add_edges_from(orbit)
+                    if not nx.check_planarity(proposal, counterexample=False)[0]:
+                        continue
+                else:
+                    proposal.remove_edges_from(orbit)
+                    if nx.node_connectivity(proposal) < 3:
+                        continue
+                try:
+                    candidate = self._candidate_preserving_symmetry(
+                        proposal,
+                        permutation,
+                        origin="mutation",
+                        mutation=action,
+                        parent_id=parent.graph_id,
+                    )
+                except (ValueError, nx.NetworkXError):
+                    continue
+                if candidate.graph_id != parent.graph_id:
+                    return candidate
+        return None
+
+    def _sample_symmetric_prior(
+        self, tile_count: int, rng: random.Random
+    ) -> DualGraphCandidate | None:
+        """Sample a general high-order cyclic graph with no catalog knowledge."""
+
+        def apply_imposition(candidate: DualGraphCandidate) -> DualGraphCandidate:
+            if rng.random() < self.imposed_symmetry_bias:
+                return candidate
+            return DualGraphCandidate(
+                tile_count=candidate.tile_count,
+                edges=candidate.edges,
+                imposed_permutation=None,
+                origin=candidate.origin,
+                mutation=candidate.mutation + ":symmetry_unconstrained",
+            )
+
+        for _attempt in range(16):
+            action = self._choose_cyclic_action(tile_count, rng)
+            if action is None:
+                return None
+            order, permutation = action
+            if rng.random() < self.symmetric_edge_subset_fraction:
+                complete = self._sample_invariant_edge_subset(
+                    tile_count, permutation, rng
+                )
+                if complete is not None:
+                    return apply_imposition(complete)
+            current = self._symmetric_scaffold(
+                tile_count, order, permutation, rng
+            )
+            if current is None:
+                # This also gives difficult orbit types a full-support chance
+                # when the cheap shell scaffold has no valid realization.
+                current = self._sample_invariant_edge_subset(
+                    tile_count, permutation, rng
+                )
+                if current is None:
+                    continue
+            mutations = []
+            for _step in range(rng.randrange(0, 7)):
+                mutated = self._mutate_equivariant_edges(current, rng)
+                if mutated is None:
+                    break
+                current = mutated
+                mutations.append(mutated.mutation)
+            if self.exclude_rings and current.is_simple_ring:
+                continue
+            if mutations:
+                current = DualGraphCandidate(
+                    tile_count=current.tile_count,
+                    edges=current.edges,
+                    imposed_permutation=current.imposed_permutation,
+                    origin="prior",
+                    mutation="symmetric_orbit_walk:" + "+".join(mutations),
+                )
+            return apply_imposition(current)
+        return None
+
+    @staticmethod
     def _edge_flip(graph: nx.Graph, rng: random.Random) -> nx.Graph | None:
         embedding = _embedding(graph)
         edges = list(graph.edges())
@@ -690,46 +1119,39 @@ class GraphSpace:
         return None
 
     def sample_prior(self, rng: random.Random) -> DualGraphCandidate:
-        if (
-            self.known_seeds
-            and rng.random() < self.known_prior_fraction
-        ):
-            template = rng.choice(self.known_seeds)
-            if rng.random() < self.known_prior_mutation_fraction:
-                mutated = self.mutate(template, rng)
-                if mutated is not None:
-                    return replace(
-                        mutated,
-                        origin="prior",
-                        mutation=f"known_neighborhood:{mutated.mutation}",
-                        parent_id=None,
-                        source_map_name=None,
-                        source_symmetry=None,
-                    )
-            # This is a stochastic prior draw, not a labelled/injected
-            # positive: only the structural template is reused. Mapping,
-            # weak-order placement, word solving, and the success label all
-            # remain unknown and must be rediscovered by the three policies.
-            return self._candidate(
-                template.graph(),
-                rng,
-                origin="prior",
-                mutation="known_template",
-            )
         tile_count = self._sample_size(rng)
         if rng.random() < self.symmetric_prior_fraction:
-            graph = self._ring_graph(tile_count)
-            return self._candidate(
-                graph, rng, origin="prior", mutation="symmetric_ring"
+            symmetric = self._sample_symmetric_prior(tile_count, rng)
+            if symmetric is not None:
+                return symmetric
+        for _attempt in range(40):
+            graph = self._random_polyhedral_graph(tile_count, rng)
+            candidate = self._candidate(
+                graph, rng, origin="prior", mutation="random_polyhedral"
             )
-        graph = self._random_polyhedral_graph(tile_count, rng)
-        return self._candidate(
-            graph, rng, origin="prior", mutation="random_polyhedral"
-        )
+            if not (self.exclude_rings and candidate.is_simple_ring):
+                return candidate
+        # This can only be reached in a very small, heavily constrained graph
+        # space.  Retry through the general symmetric sampler rather than
+        # leaking an explicitly excluded topology to the caller.
+        symmetric = self._sample_symmetric_prior(tile_count, rng)
+        if symmetric is not None:
+            return symmetric
+        raise RuntimeError("Could not sample a non-ring 3-connected planar graph")
 
     def mutate(
         self, parent: DualGraphCandidate, rng: random.Random
     ) -> DualGraphCandidate | None:
+        if (
+            parent.imposed_permutation is not None
+            and parent.symmetry_order > 1
+            and rng.random() < self.imposed_symmetry_bias
+        ):
+            equivariant = self._mutate_equivariant_edges(parent, rng)
+            if equivariant is not None and not (
+                self.exclude_rings and equivariant.is_simple_ring
+            ):
+                return equivariant
         base = parent.graph()
         actions = ["edge_add", "edge_delete", "edge_flip"]
         if parent.tile_count < self.maximum_tiles:

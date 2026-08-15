@@ -21,9 +21,11 @@ from formal_disk4.pipeline.filter_report import (
     FilterObservation,
     FilterReport,
 )
+from formal_disk4.pipeline.output import atomic_replace
 
 from .mapping import MappingProposal
 from .mapping_model import EDGE_FEATURES, mapping_tensors
+from .curriculum import build_curriculum, curriculum_utility, normalized_cost
 from .feedback import LearningFeedback, VALUE_TARGET_IDS, balanced_binary_weights
 from .model import GLOBAL_FEATURES, NODE_FEATURES
 
@@ -37,7 +39,7 @@ except ImportError as error:  # pragma: no cover
     ) from error
 
 
-MODEL_VERSION = "graph-lab-weak-order-ranker-v2"
+MODEL_VERSION = "graph-lab-weak-order-ranker-v3-reach-curriculum"
 WEAK_NODE_FEATURES = 13
 WEAK_GLOBAL_FEATURES = 10
 
@@ -120,6 +122,17 @@ class WeakOrderRolloutObservation:
         return self.filters.target_vector()
 
     @property
+    def reach_vector(self) -> tuple[float | None, ...]:
+        """Whether this rollout actually invoked each instrumented filter."""
+
+        if self.tainted:
+            return tuple(None for _ in self.filters.observations)
+        return tuple(
+            1.0 if observation.entered else 0.0
+            for observation in self.filters.observations
+        )
+
+    @property
     def deepest_filter_index(self) -> int:
         deepest = -1
         for index, observation in enumerate(self.filters.observations):
@@ -133,6 +146,7 @@ class WeakOrderRolloutObservation:
             "proposal": self.proposal.to_dict(),
             "decisions": [decision.to_dict() for decision in self.decisions],
             "target_vector": list(self.target_vector),
+            "reach_vector": list(self.reach_vector),
             "filter_counts": [
                 [
                     item.entered,
@@ -323,6 +337,7 @@ class WeakOrderActionNetwork(nn.Module):
             nn.ReLU(),
         )
         self.filter_heads = nn.Linear(hidden_size, len(LEARNING_FILTER_IDS))
+        self.reach_heads = nn.Linear(hidden_size, len(LEARNING_FILTER_IDS))
         self.value_heads = nn.Linear(hidden_size, len(VALUE_TARGET_IDS))
         self.cost_head = nn.Linear(hidden_size, 1)
 
@@ -333,7 +348,7 @@ class WeakOrderActionNetwork(nn.Module):
         global_features: torch.Tensor,
         outside_index: int,
         edge_features: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden = torch.relu(self.node_input(node_features))
         node_count = len(hidden)
         for message_layer, update_layer in zip(
@@ -407,6 +422,7 @@ class WeakOrderActionNetwork(nn.Module):
         representation = self.action_trunk(pooled)
         return (
             self.filter_heads(representation),
+            self.reach_heads(representation),
             self.value_heads(representation),
             self.cost_head(representation).squeeze(1),
         )
@@ -415,6 +431,7 @@ class WeakOrderActionNetwork(nn.Module):
 @dataclass(frozen=True)
 class WeakOrderPrediction:
     conditional_probabilities: tuple[float, ...]
+    reach_probabilities: tuple[float, ...]
     value_probabilities: tuple[float, ...]
     auxiliary_progress: float
     expected_seconds: float
@@ -441,9 +458,17 @@ class WeakOrderLearningModel:
             weight_decay=float(config.get("weight_decay", 1e-4)),
         )
         self.active_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
+        self.pass_supports = np.zeros(len(LEARNING_FILTER_IDS), dtype=np.int64)
         self.empirical_rates = np.full(
             len(LEARNING_FILTER_IDS), 0.5, dtype=np.float32
         )
+        self.active_reach_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
+        self.reach_supports = np.zeros(len(LEARNING_FILTER_IDS), dtype=np.int64)
+        self.empirical_reach_rates = np.full(
+            len(LEARNING_FILTER_IDS), 0.5, dtype=np.float32
+        )
+        self.best_filter_auc = np.full(len(LEARNING_FILTER_IDS), np.nan)
+        self.best_reach_auc = np.full(len(LEARNING_FILTER_IDS), np.nan)
         self.active_value_heads = np.zeros(len(VALUE_TARGET_IDS), dtype=bool)
         self.empirical_value_rates = np.full(
             len(VALUE_TARGET_IDS), 0.5, dtype=np.float32
@@ -478,9 +503,24 @@ class WeakOrderLearningModel:
             ]
             positive = sum(float(value) for value in labels)
             negative = len(labels) - positive
+            self.pass_supports[head] = len(labels)
             self.active_heads[head] = positive > 0.0 and negative > 0.0
             self.empirical_rates[head] = float(
                 (positive + 0.5) / (len(labels) + 1.0)
+            )
+            reach_labels = [
+                item.reach_vector[head]
+                for item in observations
+                if item.decisions and item.reach_vector[head] is not None
+            ]
+            reach_positive = sum(reach_labels)
+            reach_negative = len(reach_labels) - reach_positive
+            self.reach_supports[head] = len(reach_labels)
+            self.active_reach_heads[head] = (
+                reach_positive > 0.0 and reach_negative > 0.0
+            )
+            self.empirical_reach_rates[head] = float(
+                (reach_positive + 0.5) / (len(reach_labels) + 1.0)
             )
 
     def _value_targets(
@@ -508,6 +548,46 @@ class WeakOrderLearningModel:
             self.empirical_value_rates[head] = float(
                 (positive + 0.5) / (len(labels) + 1.0)
             )
+
+    def curriculum_state(self):
+        return build_curriculum(
+            empirical_reach_rates=self.empirical_reach_rates,
+            reach_supports=self.reach_supports,
+            active_reach_heads=self.active_reach_heads,
+            active_pass_heads=self.active_heads,
+            config=self.config,
+        )
+
+    @property
+    def has_policy_signal(self) -> bool:
+        return bool(
+            np.any(self.active_reach_heads)
+            or np.any(self.active_heads)
+            or np.any(self.active_value_heads)
+        )
+
+    def policy_score(self, prediction: WeakOrderPrediction) -> float:
+        score = curriculum_utility(
+            self.curriculum_state(),
+            prediction.reach_probabilities,
+            prediction.conditional_probabilities,
+        )
+        if self.active_value_heads[0]:
+            score += float(self.config.get("terminal_profile_weight", 0.20)) * (
+                prediction.value_probabilities[0]
+            )
+        if len(prediction.value_probabilities) > 1 and self.active_value_heads[1]:
+            score += float(self.config.get("geometry_solution_weight", 0.20)) * (
+                prediction.value_probabilities[1]
+            )
+        if len(prediction.value_probabilities) > 2 and self.active_value_heads[2]:
+            score += float(self.config.get("nontrivial_solution_weight", 0.40)) * (
+                prediction.value_probabilities[2]
+            )
+        score -= float(self.config.get("cost_weight", 0.01)) * normalized_cost(
+            prediction.expected_seconds, self.config
+        )
+        return score
 
     @staticmethod
     def _history_masks(
@@ -561,28 +641,33 @@ class WeakOrderLearningModel:
                     *mapping_tensors(proposal, tile_scale=self.tile_scale)
                 )
             )
-            logits, value_logits, log_costs = self.network.score_actions(
+            logits, reach_logits, value_logits, log_costs = self.network.score_actions(
                 encoded,
                 torch.stack([item[0] for item in action_tensors]),
                 torch.stack([item[1] for item in action_tensors]),
                 self._history_masks(state, proposal.candidate.tile_count),
             )
             probabilities = torch.sigmoid(logits).cpu().numpy()
+            reach_probabilities = torch.sigmoid(reach_logits).cpu().numpy()
             value_probabilities = torch.sigmoid(value_logits).cpu().numpy()
         probabilities[:, ~self.active_heads] = self.empirical_rates[
             ~self.active_heads
         ]
+        reach_probabilities[:, ~self.active_reach_heads] = (
+            self.empirical_reach_rates[~self.active_reach_heads]
+        )
         value_probabilities[:, ~self.active_value_heads] = self.empirical_value_rates[
             ~self.active_value_heads
         ]
         results = []
-        for row, values, log_cost in zip(
-            probabilities, value_probabilities, log_costs
+        for row, reaches, values, log_cost in zip(
+            probabilities, reach_probabilities, value_probabilities, log_costs
         ):
-            active = row[self.active_heads]
+            active = reaches[self.active_reach_heads]
             results.append(
                 WeakOrderPrediction(
                     conditional_probabilities=tuple(float(value) for value in row),
+                    reach_probabilities=tuple(float(value) for value in reaches),
                     value_probabilities=tuple(float(value) for value in values),
                     auxiliary_progress=(
                         float(np.mean(active)) if len(active) else 0.5
@@ -624,6 +709,11 @@ class WeakOrderLearningModel:
             len(LEARNING_FILTER_IDS),
             maximum=float(self.config.get("maximum_class_weight", 50.0)),
         )
+        reach_weights = balanced_binary_weights(
+            tuple(item.reach_vector for item in training),
+            len(LEARNING_FILTER_IDS),
+            maximum=float(self.config.get("maximum_class_weight", 50.0)),
+        )
         value_weights = balanced_binary_weights(
             tuple(value_targets.values()),
             len(VALUE_TARGET_IDS),
@@ -662,6 +752,36 @@ class WeakOrderLearningModel:
                     for right in negative
                 ):
                     rankable.append((head, positive, negative))
+        curriculum = self.curriculum_state()
+        reach_rankable: list[
+            tuple[
+                tuple[WeakOrderRolloutObservation, WeakOrderDecisionObservation],
+                tuple[WeakOrderRolloutObservation, WeakOrderDecisionObservation],
+            ]
+        ] = []
+        if curriculum.frontier_index is not None:
+            head = curriculum.frontier_index
+            for values in state_groups.values():
+                positives = [
+                    item
+                    for item in values
+                    if item[0].reach_vector[head] is not None
+                    and float(item[0].reach_vector[head]) > 0.5
+                ]
+                negatives = [
+                    item
+                    for item in values
+                    if item[0].reach_vector[head] is not None
+                    and float(item[0].reach_vector[head]) <= 0.5
+                ]
+                compatible = [
+                    (positive, negative)
+                    for positive in positives
+                    for negative in negatives
+                    if positive[1].action.mask != negative[1].action.mask
+                ]
+                if compatible:
+                    reach_rankable.append(compatible[0])
         rng = random.Random(self.seed + int(generation) * 130363)
         losses: list[float] = []
         self.network.train()
@@ -686,7 +806,7 @@ class WeakOrderLearningModel:
                         rollout.proposal, tile_scale=self.tile_scale
                     )
                 )
-                logits, value_logits, log_cost = self.network.score_actions(
+                logits, reach_logits, value_logits, log_cost = self.network.score_actions(
                     encoded,
                     weak_nodes.unsqueeze(0),
                     weak_globals.unsqueeze(0),
@@ -703,6 +823,18 @@ class WeakOrderLearningModel:
                     )
                     loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
                         logits[0, head],
+                        torch.tensor(float(target), dtype=torch.float32),
+                    )
+                    terms += 1
+                for head, target in enumerate(rollout.reach_vector):
+                    if target is None or not self.active_reach_heads[head]:
+                        continue
+                    weight = (
+                        reach_weights[head][0] * float(target)
+                        + reach_weights[head][1] * (1.0 - float(target))
+                    )
+                    loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
+                        reach_logits[0, head],
                         torch.tensor(float(target), dtype=torch.float32),
                     )
                     terms += 1
@@ -763,7 +895,7 @@ class WeakOrderLearningModel:
                                 tile_scale=self.tile_scale,
                             )
                         )
-                        _filters, values, _cost = self.network.score_actions(
+                        _filters, _reaches, values, _cost = self.network.score_actions(
                             encoded,
                             weak_nodes.unsqueeze(0),
                             weak_globals.unsqueeze(0),
@@ -775,6 +907,45 @@ class WeakOrderLearningModel:
                         pair_logits.append(values[0, head])
                     loss = loss + float(
                         self.config.get("ranking_loss_weight", 0.5)
+                    ) * torch.nn.functional.softplus(
+                        -(pair_logits[0] - pair_logits[1])
+                    )
+                    terms += 1
+            reach_pair_amount = min(
+                len(reach_rankable),
+                max(0, int(self.config.get("curriculum_ranking_pairs_per_step", 4))),
+            )
+            if reach_pair_amount and curriculum.frontier_index is not None:
+                head = curriculum.frontier_index
+                for positive, negative in rng.sample(
+                    reach_rankable, reach_pair_amount
+                ):
+                    pair_logits = []
+                    for pair_rollout, pair_decision in (positive, negative):
+                        weak_nodes, weak_globals = weak_action_tensors(
+                            pair_rollout.proposal,
+                            pair_decision.state,
+                            pair_decision.action,
+                            tile_scale=self.tile_scale,
+                        )
+                        encoded = self.network.encode_mapping(
+                            *mapping_tensors(
+                                pair_rollout.proposal,
+                                tile_scale=self.tile_scale,
+                            )
+                        )
+                        _passes, reaches, _values, _cost = self.network.score_actions(
+                            encoded,
+                            weak_nodes.unsqueeze(0),
+                            weak_globals.unsqueeze(0),
+                            self._history_masks(
+                                pair_decision.state,
+                                pair_rollout.proposal.candidate.tile_count,
+                            ),
+                        )
+                        pair_logits.append(reaches[0, head])
+                    loss = loss + float(
+                        self.config.get("curriculum_ranking_loss_weight", 0.5)
                     ) * torch.nn.functional.softplus(
                         -(pair_logits[0] - pair_logits[1])
                     )
@@ -862,6 +1033,7 @@ class WeakOrderLearningModel:
                 )[0]
             )
         filters: dict[str, object] = {}
+        reach: dict[str, object] = {}
         for head, filter_id in enumerate(LEARNING_FILTER_IDS):
             eligible = [
                 index
@@ -877,15 +1049,78 @@ class WeakOrderLearningModel:
                     for index in eligible
                 ]
             )
+            filter_auc = self._auc(labels >= 0.5, scores)
+            filter_best = self.best_filter_auc[head]
             filters[filter_id] = {
                 "eligible": len(eligible),
                 "mean_conditional_pass_rate": (
                     float(np.mean(labels)) if len(labels) else None
                 ),
                 "mean_prediction": float(np.mean(scores)) if len(scores) else None,
-                "binary_auc": self._auc(labels >= 0.5, scores),
+                "binary_auc": filter_auc,
+                "best_binary_auc": (
+                    None if np.isnan(filter_best) else float(filter_best)
+                ),
+                "auc_regression": bool(
+                    filter_auc is not None
+                    and not np.isnan(filter_best)
+                    and filter_auc + 0.05 < filter_best
+                ),
+                "brier_score": (
+                    float(np.mean((scores - labels) ** 2)) if len(labels) else None
+                ),
                 "active": bool(self.active_heads[head]),
             }
+            reach_eligible = [
+                index
+                for index, (rollout, _decision) in enumerate(examples)
+                if rollout.reach_vector[head] is not None
+            ]
+            reach_labels = np.asarray(
+                [float(examples[index][0].reach_vector[head]) for index in reach_eligible]
+            )
+            reach_scores = np.asarray(
+                [predictions[index].reach_probabilities[head] for index in reach_eligible]
+            )
+            reach_auc = self._auc(reach_labels >= 0.5, reach_scores)
+            reach_best = self.best_reach_auc[head]
+            reach[filter_id] = {
+                "eligible": len(reach_labels),
+                "mean_reach_rate": (
+                    float(np.mean(reach_labels)) if len(reach_labels) else None
+                ),
+                "mean_prediction": (
+                    float(np.mean(reach_scores)) if len(reach_scores) else None
+                ),
+                "binary_auc": reach_auc,
+                "best_binary_auc": (
+                    None if np.isnan(reach_best) else float(reach_best)
+                ),
+                "auc_regression": bool(
+                    reach_auc is not None
+                    and not np.isnan(reach_best)
+                    and reach_auc + 0.05 < reach_best
+                ),
+                "brier_score": (
+                    float(np.mean((reach_scores - reach_labels) ** 2))
+                    if len(reach_labels)
+                    else None
+                ),
+                "active": bool(self.active_reach_heads[head]),
+                "training_support": int(self.reach_supports[head]),
+            }
+            if filter_auc is not None:
+                self.best_filter_auc[head] = (
+                    filter_auc
+                    if np.isnan(filter_best)
+                    else max(float(filter_best), filter_auc)
+                )
+            if reach_auc is not None:
+                self.best_reach_auc[head] = (
+                    reach_auc
+                    if np.isnan(reach_best)
+                    else max(float(reach_best), reach_auc)
+                )
         values: dict[str, object] = {}
         for head, value_id in enumerate(VALUE_TARGET_IDS):
             labels_and_scores = [
@@ -936,6 +1171,28 @@ class WeakOrderLearningModel:
                 "accuracy": pair_correct / pair_total if pair_total else None,
                 "scope": "same_mapping_and_state",
             }
+        curriculum = self.curriculum_state()
+        frontier_pairs = 0
+        frontier_correct = 0
+        if curriculum.frontier_index is not None:
+            head = curriculum.frontier_index
+            for items in paired.values():
+                for left_index, left in enumerate(items):
+                    for right in items[left_index + 1 :]:
+                        left_target = left[0].reach_vector[head]
+                        right_target = right[0].reach_vector[head]
+                        if left_target is None or right_target is None:
+                            continue
+                        if abs(left_target - right_target) < 1e-9:
+                            continue
+                        if left[1].action.mask == right[1].action.mask:
+                            continue
+                        frontier_pairs += 1
+                        left_score = left[2].reach_probabilities[head]
+                        right_score = right[2].reach_probabilities[head]
+                        frontier_correct += int(
+                            (left_score - right_score) * (left_target - right_target) > 0
+                        )
         return {
             "schema_version": "graph-lab-weak-order-metrics-v1",
             "rollouts": len(observations),
@@ -946,7 +1203,17 @@ class WeakOrderLearningModel:
             "metric_partition": "validation" if validation else "training_fallback",
             "metric_decisions": len(examples),
             "filters": filters,
+            "reach": reach,
             "values": values,
+            "curriculum": {
+                **curriculum.to_dict(),
+                "within_state_pairs": frontier_pairs,
+                "within_state_pair_accuracy": (
+                    frontier_correct / frontier_pairs if frontier_pairs else None
+                ),
+                "learnable_reach_heads": int(np.count_nonzero(self.active_reach_heads)),
+                "learnable_conditional_heads": int(np.count_nonzero(self.active_heads)),
+            },
             "pairwise_ranking": pairwise,
             "within_state_pair_accuracy": pairwise["profile_emitted"]["accuracy"],
             "within_state_pairs": pairwise["profile_emitted"]["pairs"],
@@ -962,13 +1229,19 @@ class WeakOrderLearningModel:
                 "network": self.network.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "active_heads": self.active_heads,
+                "pass_supports": self.pass_supports,
                 "empirical_rates": self.empirical_rates,
+                "active_reach_heads": self.active_reach_heads,
+                "reach_supports": self.reach_supports,
+                "empirical_reach_rates": self.empirical_reach_rates,
+                "best_filter_auc": self.best_filter_auc,
+                "best_reach_auc": self.best_reach_auc,
                 "active_value_heads": self.active_value_heads,
                 "empirical_value_rates": self.empirical_value_rates,
             },
             temporary,
         )
-        temporary.replace(path)
+        atomic_replace(temporary, path)
 
     @classmethod
     def load_or_create(
@@ -984,9 +1257,19 @@ class WeakOrderLearningModel:
         result.network.load_state_dict(payload["network"])
         result.optimizer.load_state_dict(payload["optimizer"])
         result.active_heads = np.asarray(payload["active_heads"], dtype=bool)
+        result.pass_supports = np.asarray(payload["pass_supports"], dtype=np.int64)
         result.empirical_rates = np.asarray(
             payload["empirical_rates"], dtype=np.float32
         )
+        result.active_reach_heads = np.asarray(
+            payload["active_reach_heads"], dtype=bool
+        )
+        result.reach_supports = np.asarray(payload["reach_supports"], dtype=np.int64)
+        result.empirical_reach_rates = np.asarray(
+            payload["empirical_reach_rates"], dtype=np.float32
+        )
+        result.best_filter_auc = np.asarray(payload["best_filter_auc"], dtype=float)
+        result.best_reach_auc = np.asarray(payload["best_reach_auc"], dtype=float)
         result.active_value_heads = np.asarray(
             payload["active_value_heads"], dtype=bool
         )
@@ -1045,25 +1328,7 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         return weights / max(1e-12, float(np.sum(weights)))
 
     def _score(self, prediction: WeakOrderPrediction) -> float:
-        active_values = np.flatnonzero(self.model.active_value_heads)
-        if not len(active_values):
-            return 0.0
-        score = math.log(max(1e-12, prediction.terminal_probability))
-        if len(prediction.value_probabilities) > 1:
-            score += float(self.config.get("geometry_solution_weight", 1.0)) * (
-                prediction.value_probabilities[1]
-            )
-        if len(prediction.value_probabilities) > 2:
-            score += float(
-                self.config.get("nontrivial_solution_weight", 2.0)
-            ) * prediction.value_probabilities[2]
-        score += float(self.config.get("deeper_utility_weight", 0.05)) * (
-            prediction.auxiliary_progress
-        )
-        score -= float(self.config.get("cost_weight", 0.01)) * math.log1p(
-            prediction.expected_seconds
-        )
-        return score
+        return self.model.policy_score(prediction)
 
     def select_actions(
         self,
@@ -1072,17 +1337,17 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
     ) -> Sequence[int]:
         if not actions:
             return ()
-        predictions = self.model.predict_many(
-            self.proposal,
-            state,
-            actions,
-            prepared_mapping=self.prepared_mapping,
-        )
         learned = self.selection_mode == "learned" and bool(
-            np.any(self.model.active_value_heads)
+            self.model.has_policy_signal
         )
-        scores = [self._score(prediction) for prediction in predictions]
         if learned:
+            predictions = self.model.predict_many(
+                self.proposal,
+                state,
+                actions,
+                prepared_mapping=self.prepared_mapping,
+            )
+            scores = [self._score(prediction) for prediction in predictions]
             learned_distribution = self._distribution(
                 scores, float(self.config.get("temperature", 0.7))
             )
@@ -1094,14 +1359,26 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
                 + epsilon / len(actions)
             )
             mode = "learned"
+            chosen_index = self.rng.choices(
+                range(len(actions)), weights=probabilities, k=1
+            )[0]
+            prediction = predictions[chosen_index]
+            selection_score = scores[chosen_index]
         else:
             probabilities = np.full(len(actions), 1.0 / len(actions))
             mode = "exploration"
-        chosen_index = self.rng.choices(
-            range(len(actions)), weights=probabilities, k=1
-        )[0]
+            chosen_index = self.rng.randrange(len(actions))
+            # The control rollout is genuinely uniform.  Only score its chosen
+            # action for diagnostics; scoring the whole pool cannot affect the
+            # decision and used to waste most weak-policy inference time.
+            prediction = self.model.predict_many(
+                self.proposal,
+                state,
+                (actions[chosen_index],),
+                prepared_mapping=self.prepared_mapping,
+            )[0]
+            selection_score = self._score(prediction)
         chosen = actions[chosen_index]
-        prediction = predictions[chosen_index]
         legal_mask_count, pooled_mask_count = self._pool_sizes.pop(
             state, (len(actions), len(actions))
         )
@@ -1119,8 +1396,8 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
                 predicted_conditional_probabilities=(
                     prediction.conditional_probabilities
                 ),
-                predicted_reach_probabilities=prediction.value_probabilities,
-                selection_score=float(scores[chosen_index]),
+                predicted_reach_probabilities=prediction.reach_probabilities,
+                selection_score=float(selection_score),
                 legal_mask_count=legal_mask_count,
                 pooled_mask_count=pooled_mask_count,
             )

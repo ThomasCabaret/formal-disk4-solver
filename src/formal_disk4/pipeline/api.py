@@ -6,12 +6,13 @@ from typing import Any, Dict, Mapping, Sequence, Tuple
 
 from formal_disk4.maps.base import PlanarMap
 from formal_disk4.enumeration.weak_policy import WeakOrderBranchPolicy
+from formal_disk4.words.specialization_policy import FamilySpecializationPolicy
 
 from .filter_report import AssignmentFilterEvaluation, FilterReport
 from .runner import SolverRunner
 
 
-SOLVER_API_SCHEMA_VERSION = "formal-solver-api-v1"
+SOLVER_API_SCHEMA_VERSION = "formal-solver-api-v2"
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,9 @@ class SolverAPIRequest:
     assignments: Tuple[AssignmentSelection, ...] = ()
     weak_order_random_seed: int | None = None
     weak_order_branch_policy: WeakOrderBranchPolicy | None = None
+    family_specialization_policy: FamilySpecializationPolicy | None = None
     collect_learning_diagnostics: bool = False
+    collect_profiles: bool = False
 
     def assignment_ids_by_map(self) -> Dict[str, Tuple[int, ...]]:
         result: Dict[str, Tuple[int, ...]] = {}
@@ -71,6 +74,7 @@ class SolverAPIResult:
     summary: Mapping[str, object]
     filters: FilterReport
     assignments: Tuple[AssignmentFilterEvaluation, ...] = ()
+    profiles: Tuple[Mapping[str, object], ...] = ()
 
     @property
     def target_vector(self) -> Tuple[float | None, ...]:
@@ -84,6 +88,7 @@ class SolverAPIResult:
             "assignment_evaluations": [
                 item.to_dict() for item in self.assignments
             ],
+            "profiles": [dict(item) for item in self.profiles],
         }
 
 
@@ -97,14 +102,20 @@ class FormalSolverAPI:
     @staticmethod
     def evaluate(request: SolverAPIRequest) -> SolverAPIResult:
         config = deepcopy(dict(request.config))
+        if request.collect_profiles:
+            output = dict(config.get("output", {}))
+            output["write_candidates"] = False
+            config["output"] = output
         runner = SolverRunner(
             config,
             planar_maps=request.planar_maps,
             raw_assignment_ids_by_map=request.assignment_ids_by_map(),
             collect_assignment_reports=True,
             collect_learning_diagnostics=request.collect_learning_diagnostics,
+            collect_profiles=request.collect_profiles,
             weak_order_random_seed=request.weak_order_random_seed,
             weak_order_branch_policy=request.weak_order_branch_policy,
+            family_specialization_policy=request.family_specialization_policy,
         )
         summary = runner.run()
         counters = dict(
@@ -116,6 +127,7 @@ class FormalSolverAPI:
                 {str(name): int(value) for name, value in counters.items()}
             ),
             assignments=runner.assignment_reports,
+            profiles=runner.collected_profiles,
         )
 
 
@@ -126,7 +138,9 @@ def evaluate_formal_search(
     assignments: Sequence[AssignmentSelection] = (),
     weak_order_random_seed: int | None = None,
     weak_order_branch_policy: WeakOrderBranchPolicy | None = None,
+    family_specialization_policy: FamilySpecializationPolicy | None = None,
     collect_learning_diagnostics: bool = False,
+    collect_profiles: bool = False,
 ) -> SolverAPIResult:
     """Convenience function for clients that do not need request persistence."""
 
@@ -137,6 +151,8 @@ def evaluate_formal_search(
             assignments=tuple(assignments),
             weak_order_random_seed=weak_order_random_seed,
             weak_order_branch_policy=weak_order_branch_policy,
+            family_specialization_policy=family_specialization_policy,
             collect_learning_diagnostics=collect_learning_diagnostics,
+            collect_profiles=collect_profiles,
         )
     )

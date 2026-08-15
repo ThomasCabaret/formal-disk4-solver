@@ -106,14 +106,7 @@ def build_generation_coverage(
         selected_bin=lambda item: _graph_bin(item.candidate),
         seen_ids=seen_graph_ids,
         modes=(
-            str(
-                selection.get(
-                    "selection_mode",
-                    "known_control"
-                    if selection.get("selection") == "known_control"
-                    else "unknown",
-                )
-            )
+            str(selection.get("selection_mode", "unknown"))
             for _evaluation, selection in graph_records
         ),
     )

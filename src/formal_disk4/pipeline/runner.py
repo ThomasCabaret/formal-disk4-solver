@@ -36,6 +36,12 @@ from formal_disk4.preword import (
 from formal_disk4.words.compile import compile_word_case
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
+from formal_disk4.words.specialization_policy import (
+    FamilySpecializationPolicy,
+    SpecializationOutcomeView,
+    specialization_action,
+    specialization_pool_state,
+)
 
 from .checkpoint import CheckpointStore, search_fingerprint
 from .heartbeat import HeartbeatReporter
@@ -88,8 +94,10 @@ class SolverRunner:
         raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
         collect_assignment_reports: bool = False,
         collect_learning_diagnostics: bool = False,
+        collect_profiles: bool = False,
         weak_order_random_seed: int | None = None,
         weak_order_branch_policy: WeakOrderBranchPolicy | None = None,
+        family_specialization_policy: FamilySpecializationPolicy | None = None,
     ) -> None:
         self.config = dict(config)
         self._provided_planar_maps = (
@@ -101,10 +109,13 @@ class SolverRunner:
         }
         self._collect_assignment_reports = bool(collect_assignment_reports)
         self._collect_learning_diagnostics = bool(collect_learning_diagnostics)
+        self._collect_profiles = bool(collect_profiles)
+        self._collected_profiles: list[Mapping[str, object]] = []
         self._weak_order_random_seed = (
             None if weak_order_random_seed is None else int(weak_order_random_seed)
         )
         self._weak_order_branch_policy = weak_order_branch_policy
+        self._family_specialization_policy = family_specialization_policy
         if (
             self._weak_order_random_seed is not None
             and self._weak_order_branch_policy is not None
@@ -194,11 +205,12 @@ class SolverRunner:
         if (
             self._weak_order_random_seed is not None
             or self._weak_order_branch_policy is not None
+            or self._family_specialization_policy is not None
         ) and bool(
             checkpoint_config.get("enabled", True)
         ):
             raise ValueError(
-                "Stochastic weak-order traversal requires checkpoint.enabled=false"
+                "External Lab traversal policies require checkpoint.enabled=false"
             )
         checkpoint_path = self.output_directory / str(
             checkpoint_config.get("file", "checkpoint.sqlite3")
@@ -570,6 +582,10 @@ class SolverRunner:
     @property
     def assignment_reports(self) -> Tuple[AssignmentFilterEvaluation, ...]:
         return tuple(self._assignment_reports)
+
+    @property
+    def collected_profiles(self) -> Tuple[Mapping[str, object], ...]:
+        return tuple(self._collected_profiles)
 
     def _limit_reached(self, counter_name: str, config_name: str) -> bool:
         value = self.config["limits"].get(config_name)
@@ -1635,28 +1651,7 @@ class SolverRunner:
                                     stop_predicate=should_stop_word_case,
                                 )
                             )
-                            while True:
-                                self._set_stage("word_solver", **placement_context)
-                                solver_started = time.perf_counter()
-                                try:
-                                    family = next(family_iterator)
-                                except StopIteration:
-                                    self.stats.add_time(
-                                        "exact_partial_word_solver",
-                                        time.perf_counter() - solver_started,
-                                    )
-                                    break
-                                except Exception:
-                                    self.stats.add_time(
-                                        "exact_partial_word_solver",
-                                        time.perf_counter() - solver_started,
-                                    )
-                                    raise
-                                else:
-                                    self.stats.add_time(
-                                        "exact_partial_word_solver",
-                                        time.perf_counter() - solver_started,
-                                    )
+                            def register_family(family: object) -> None:
                                 self._set_stage(
                                     "family_processing",
                                     **placement_context,
@@ -1681,137 +1676,293 @@ class SolverRunner:
                                         }
                                     )
 
-                                specialization_count = 0
-                                for specialization in expand_family(family, expansion_policy):
-                                    specialization_count += 1
-                                    self.stats.increment("family_specializations")
-                                    self.stats.increment("profile_emission_checks")
-                                    self._set_stage(
-                                        "profile_decoration",
-                                        **placement_context,
-                                        family_id=family.family_id,
+                            def attempt_specialization(
+                                family: object, specialization: object
+                            ) -> SpecializationOutcomeView:
+                                attempt_started = time.perf_counter()
+                                self.stats.increment("family_specializations")
+                                self.stats.increment("profile_emission_checks")
+                                self._set_stage(
+                                    "profile_decoration",
+                                    **placement_context,
+                                    family_id=family.family_id,
+                                )
+                                profile_started = time.perf_counter()
+                                try:
+                                    profile = build_formal_profile(
+                                        planar_map,
+                                        assignment_enumerator.occurrence_names,
+                                        placement,
+                                        compiled,
+                                        family,
+                                        specialization,
+                                        tolerance=tolerance,
                                     )
-                                    profile_started = time.perf_counter()
-                                    try:
-                                        profile = build_formal_profile(
-                                            planar_map,
-                                            assignment_enumerator.occurrence_names,
-                                            placement,
-                                            compiled,
-                                            family,
-                                            specialization,
-                                            tolerance=tolerance,
-                                        )
-                                    except DecorationInfeasible as error:
-                                        self.stats.increment("decoration_rejections")
-                                        self.stats.increment("profile_emission_rejections")
-                                        self.stats.increment(
-                                            f"decoration_rejection_{error.stage}"
-                                        )
-                                        continue
-                                    except Exception as error:
-                                        self.stats.increment("profile_build_errors")
-                                        self.stats.increment("profile_emission_errors")
-                                        self._record_unexpected_error(
-                                            error_writer,
-                                            stage="profile_build",
-                                            error=error,
-                                            context={
-                                                "map": planar_map.name,
-                                                "assignment_id": assignment.assignment_id,
-                                                "placement_id": placement.placement_id,
-                                                "family": family.to_dict(),
-                                                "specialization": specialization.to_dict(),
-                                            },
-                                        )
-                                        continue
-                                    finally:
-                                        self.stats.add_time(
-                                            "profile_decoration",
-                                            time.perf_counter() - profile_started,
-                                        )
-
-                                    filter_started = time.perf_counter()
-                                    filtered_profile, statuses = self.filter_pipeline.apply(profile)
+                                except DecorationInfeasible as error:
+                                    self.stats.increment("decoration_rejections")
+                                    self.stats.increment("profile_emission_rejections")
+                                    self.stats.increment(
+                                        f"decoration_rejection_{error.stage}"
+                                    )
+                                    return SpecializationOutcomeView(
+                                        False,
+                                        False,
+                                        False,
+                                        f"decoration.{error.stage}",
+                                        error.reason,
+                                        time.perf_counter() - attempt_started,
+                                    )
+                                except Exception as error:
+                                    self.stats.increment("profile_build_errors")
+                                    self.stats.increment("profile_emission_errors")
+                                    self._record_unexpected_error(
+                                        error_writer,
+                                        stage="profile_build",
+                                        error=error,
+                                        context={
+                                            "map": planar_map.name,
+                                            "assignment_id": assignment.assignment_id,
+                                            "placement_id": placement.placement_id,
+                                            "family": family.to_dict(),
+                                            "specialization": specialization.to_dict(),
+                                        },
+                                    )
+                                    return SpecializationOutcomeView(
+                                        False,
+                                        False,
+                                        False,
+                                        "profile_build_error",
+                                        f"{type(error).__name__}: {error}",
+                                        time.perf_counter() - attempt_started,
+                                    )
+                                finally:
                                     self.stats.add_time(
-                                        "profile_filters",
-                                        time.perf_counter() - filter_started,
+                                        "profile_decoration",
+                                        time.perf_counter() - profile_started,
                                     )
-                                    if filtered_profile is None:
-                                        self.stats.increment("profile_filter_rejections")
-                                        self.stats.increment("profile_emission_rejections")
-                                        if statuses:
-                                            self.stats.increment(
-                                                f"profile_filter_rejection_{statuses[-1][0]}"
-                                            )
-                                        continue
 
-                                    key = conservative_profile_key(
-                                        planar_map.name,
-                                        assignment.canonical_key,
-                                        placement.blocks,
-                                        specialization.environment_map(),
+                                filter_started = time.perf_counter()
+                                filtered_profile, statuses = self.filter_pipeline.apply(
+                                    profile
+                                )
+                                self.stats.add_time(
+                                    "profile_filters",
+                                    time.perf_counter() - filter_started,
+                                )
+                                if filtered_profile is None:
+                                    self.stats.increment("profile_filter_rejections")
+                                    self.stats.increment("profile_emission_rejections")
+                                    rejection = statuses[-1][0] if statuses else "unknown"
+                                    if statuses:
+                                        self.stats.increment(
+                                            f"profile_filter_rejection_{rejection}"
+                                        )
+                                    return SpecializationOutcomeView(
+                                        False,
+                                        False,
+                                        False,
+                                        f"profile_filter.{rejection}",
+                                        None,
+                                        time.perf_counter() - attempt_started,
                                     )
-                                    if bool(
-                                        self.config["filters"]["deduplicate_exact_profiles"]
-                                    ) and key in self._seen_profile_keys:
-                                        self.stats.increment("duplicate_profiles")
-                                        continue
 
-                                    formal_profile_id = "fp-" + key[:32]
-                                    record = {
-                                        "schema_version": "formal-contour-survivor-v7",
-                                        "formal_profile_id": formal_profile_id,
-                                        "map": planar_map.to_dict(),
-                                        "assignment": assignment.to_dict(
-                                            assignment_enumerator.occurrence_names
-                                        ),
-                                        "placement": placement.to_dict(
-                                            assignment_enumerator.occurrence_names
-                                        ),
-                                        "word_case": compiled.to_dict(),
-                                        "word_family": family.to_dict(),
-                                        "specialization": specialization.to_dict(),
-                                        "profile": filtered_profile.to_dict(),
-                                    }
-                                    is_new = self.checkpoint_store.store_survivor(key, record)
-                                    if not is_new:
-                                        self.stats.increment("duplicate_profiles")
-                                        self._seen_profile_keys.add(key)
-                                        continue
+                                key = conservative_profile_key(
+                                    planar_map.name,
+                                    assignment.canonical_key,
+                                    placement.blocks,
+                                    specialization.environment_map(),
+                                )
+                                formal_profile_id = "fp-" + key[:32]
+                                if bool(
+                                    self.config["filters"]["deduplicate_exact_profiles"]
+                                ) and key in self._seen_profile_keys:
+                                    self.stats.increment("duplicate_profiles")
+                                    return SpecializationOutcomeView(
+                                        True,
+                                        False,
+                                        True,
+                                        "duplicate",
+                                        None,
+                                        time.perf_counter() - attempt_started,
+                                        formal_profile_id,
+                                    )
+
+                                record = {
+                                    "schema_version": "formal-contour-survivor-v7",
+                                    "formal_profile_id": formal_profile_id,
+                                    "map": planar_map.to_dict(),
+                                    "assignment": assignment.to_dict(
+                                        assignment_enumerator.occurrence_names
+                                    ),
+                                    "placement": placement.to_dict(
+                                        assignment_enumerator.occurrence_names
+                                    ),
+                                    "word_case": compiled.to_dict(),
+                                    "word_family": family.to_dict(),
+                                    "specialization": specialization.to_dict(),
+                                    "profile": filtered_profile.to_dict(),
+                                }
+                                is_new = self.checkpoint_store.store_survivor(key, record)
+                                if not is_new:
+                                    self.stats.increment("duplicate_profiles")
                                     self._seen_profile_keys.add(key)
-                                    candidate_writer.write(record)
-                                    self.stats.increment("profiles_emitted")
-                                    print(
-                                        "[SURVIVOR] "
-                                        f"map={planar_map.name} assignment={assignment.assignment_id} "
-                                        f"placement={placement.placement_id} family={family.family_id} "
-                                        f"kind={family.kind} exponents={dict(specialization.exponent_assignment)} "
-                                        f"file={candidate_path}",
-                                        file=sys.stderr,
-                                        flush=True,
+                                    return SpecializationOutcomeView(
+                                        True,
+                                        False,
+                                        True,
+                                        "duplicate",
+                                        None,
+                                        time.perf_counter() - attempt_started,
+                                        formal_profile_id,
                                     )
-                                    print(
-                                        "[DECORATED CONTOUR] "
-                                        + filtered_profile.decorated_terminal_contour()["text"],
-                                        file=sys.stderr,
-                                        flush=True,
-                                    )
-                                    if bool(
-                                        self.config["limits"]["stop_on_first_profile"]
-                                    ):
-                                        self.stats.stop_reason = "first_profile"
-                                        self._stop_requested = True
-                                        exhausted = False
-                                        break
-                                    if self._should_stop():
-                                        exhausted = False
-                                        break
-                                if specialization_count == 0:
-                                    self.stats.increment("families_not_specialized")
+                                self._seen_profile_keys.add(key)
+                                if self._collect_profiles:
+                                    self._collected_profiles.append(record)
+                                candidate_writer.write(record)
+                                self.stats.increment("profiles_emitted")
+                                print(
+                                    "[SURVIVOR] "
+                                    f"map={planar_map.name} assignment={assignment.assignment_id} "
+                                    f"placement={placement.placement_id} family={family.family_id} "
+                                    f"kind={family.kind} exponents={dict(specialization.exponent_assignment)} "
+                                    f"file={candidate_path}",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                                print(
+                                    "[DECORATED CONTOUR] "
+                                    + filtered_profile.decorated_terminal_contour()["text"],
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                                if bool(self.config["limits"]["stop_on_first_profile"]):
+                                    self.stats.stop_reason = "first_profile"
+                                    self._stop_requested = True
                                 if self._should_stop():
-                                    exhausted = False
-                                    break
+                                    nonlocal_exhausted[0] = False
+                                return SpecializationOutcomeView(
+                                    True,
+                                    True,
+                                    False,
+                                    "emitted",
+                                    None,
+                                    time.perf_counter() - attempt_started,
+                                    formal_profile_id,
+                                )
+
+                            # A mutable cell lets the local attempt helper report
+                            # the existing enclosing-loop completion state.
+                            nonlocal_exhausted = [exhausted]
+
+                            def next_family() -> object | None:
+                                self._set_stage("word_solver", **placement_context)
+                                solver_started = time.perf_counter()
+                                try:
+                                    value = next(family_iterator)
+                                except StopIteration:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
+                                    return None
+                                except Exception:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
+                                    raise
+                                else:
+                                    self.stats.add_time(
+                                        "exact_partial_word_solver",
+                                        time.perf_counter() - solver_started,
+                                    )
+                                return value
+
+                            if self._family_specialization_policy is None:
+                                while True:
+                                    family = next_family()
+                                    if family is None:
+                                        break
+                                    register_family(family)
+                                    specializations = tuple(
+                                        expand_family(family, expansion_policy)
+                                    )
+                                    if not specializations:
+                                        self.stats.increment("families_not_specialized")
+                                    for specialization in specializations:
+                                        attempt_specialization(family, specialization)
+                                        if self._should_stop():
+                                            break
+                                    if self._should_stop():
+                                        break
+                            else:
+                                families = []
+                                while True:
+                                    family = next_family()
+                                    if family is None:
+                                        break
+                                    register_family(family)
+                                    families.append(family)
+                                candidates = []
+                                for family in families:
+                                    specializations = tuple(
+                                        expand_family(family, expansion_policy)
+                                    )
+                                    if not specializations:
+                                        self.stats.increment("families_not_specialized")
+                                    candidates.extend(
+                                        (family, specialization)
+                                        for specialization in specializations
+                                    )
+                                if candidates:
+                                    state = specialization_pool_state(
+                                        assignment_id=assignment.assignment_id,
+                                        placement=placement,
+                                        compiled=compiled,
+                                        family_count=len(families),
+                                        candidate_count=len(candidates),
+                                    )
+                                    actions = tuple(
+                                        specialization_action(index, family, specialization)
+                                        for index, (family, specialization) in enumerate(
+                                            candidates
+                                        )
+                                    )
+                                    order = tuple(
+                                        int(value)
+                                        for value in self._family_specialization_policy.select_specializations(
+                                            state, actions
+                                        )
+                                    )
+                                    if (
+                                        len(set(order)) != len(order)
+                                        or any(
+                                            index < 0 or index >= len(candidates)
+                                            for index in order
+                                        )
+                                    ):
+                                        raise ValueError(
+                                            "Family specialization policy must return "
+                                            "unique indices from the legal candidate pool"
+                                        )
+                                    self.stats.increment("specialization_policy_pools")
+                                    self.stats.increment(
+                                        "specialization_policy_candidates", len(candidates)
+                                    )
+                                    self.stats.increment(
+                                        "specialization_policy_selected", len(order)
+                                    )
+                                    for index in order:
+                                        family, specialization = candidates[index]
+                                        outcome = attempt_specialization(
+                                            family, specialization
+                                        )
+                                        self._family_specialization_policy.observe_specialization(
+                                            state, actions[index], outcome
+                                        )
+                                        if self._should_stop():
+                                            break
+                            exhausted = nonlocal_exhausted[0]
                         except Exception as error:
                             solver_failed = True
                             self.stats.increment("solver_errors")
@@ -2138,6 +2289,11 @@ class SolverRunner:
                 "weak_order_branch_policy": (
                     type(self._weak_order_branch_policy).__name__
                     if self._weak_order_branch_policy is not None
+                    else None
+                ),
+                "family_specialization_policy": (
+                    type(self._family_specialization_policy).__name__
+                    if self._family_specialization_policy is not None
                     else None
                 ),
             },

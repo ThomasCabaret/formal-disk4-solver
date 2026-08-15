@@ -14,9 +14,9 @@
   },
   "geometry": {
     "intermediate_points_per_generic_curve": 3,
-    "arc_sample_count": 64,
-    "max_restarts": 96,
-    "max_function_evaluations": 1000,
+    "arc_sample_count": 80,
+    "max_restarts": 128,
+    "max_function_evaluations": 1500,
     "random_seed": 0,
     "maximum_curve_length": 6.0,
     "minimum_curve_length": 1e-06,
@@ -29,10 +29,10 @@
     "intersection_tolerance": 1e-07,
     "minimum_area": 1e-08,
     "minimum_sample_edge_length": 1e-09,
-    "candidate_timeout_seconds": 20.0,
+    "candidate_timeout_seconds": 45.0,
     "enable_clearance_refinement": true,
     "coarse_collision_sample_count": 8,
-    "max_refinement_evaluations": 160
+    "max_refinement_evaluations": 320
   },
   "limits": {
     "max_candidates": null,

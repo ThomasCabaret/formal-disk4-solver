@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 from formal_disk4.config import load_config
 from formal_disk4.maps.registry import build_map
 from formal_disk4.orchestration.catalog import CaseCatalog, CaseDefinition
+from formal_disk4.pipeline.output import atomic_replace
 
 from .isomorphism import IsomorphismIndex
 from .space import DualGraphCandidate, GraphSpace, candidate_from_planar_map
@@ -215,7 +216,7 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    temporary.replace(path)
+    atomic_replace(temporary, path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -250,9 +251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path = root / config_path
     config = json.loads(config_path.read_text(encoding="utf-8"))
     space_config = dict(config.get("space", {}))
-    # This measures the complete unlearned prior, including its stochastic
-    # neighbourhood bias around known structural templates. It still performs
-    # no direct known-control injection and uses no learned/archive proposal.
+    # Catalog cases are loaded only as post-hoc coverage oracles; they never
+    # enter GraphSpace or influence a proposal probability.
     space = GraphSpace.from_config(space_config)
     domain = collect_catalog_graph_classes(
         root, maximum_tiles=space.maximum_tiles

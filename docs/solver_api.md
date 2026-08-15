@@ -51,11 +51,20 @@ Clients must use `target_order` rather than assuming that internal counter names
 or dictionary order are stable.  Rejection witnesses are deliberately excluded
 from reason totals because several witnesses can describe one rejection.
 
+With `SolverAPIRequest.collect_profiles=True`, emitted formal profiles are
+returned directly in `SolverAPIResult.profiles` and the request's candidate
+JSONL stream is disabled. This lets experimental callers consume the exact
+production records without serializing and immediately reparsing a temporary
+file; normal CLI output behavior is unchanged.
+
 ## Current boundary
 
-The API can target graphs and complete contour mappings and can return labels
-for all currently executed weak-order, pre-word and exact-word gates.  Weak-order
-child selection is still the deterministic production DFS.  A subsequent Lab
-layer can add stochastic bounded sub-rollouts while continuing to call this API
-for the authoritative filter labels; changing the production CLI ordering is
-not required.
+The API can target graphs and complete contour mappings, return labels for all
+currently executed weak-order, pre-word and exact-word gates, and optionally
+accept a `WeakOrderBranchPolicy` and a `FamilySpecializationPolicy`. The latter
+receives the complete family-specialization pool for one solved word case, must
+return unique legal indices for that bounded API rollout, and observes each exact
+decoration/profile-filter outcome. Unselected candidates are local non-selections,
+not solver contradictions or persistent exclusions. The normal CLI passes no policy and retains deterministic
+production DFS and historical family order; Graph Lab can drive bounded
+stochastic sub-rollouts while continuing to use the same authoritative filters.

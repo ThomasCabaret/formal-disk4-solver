@@ -144,7 +144,21 @@ class MappingEvaluation:
     profiles: tuple[Mapping[str, object], ...]
     tainted: bool
     stop_reasons: tuple[str, ...]
+    reach_vector: tuple[float | None, ...] = ()
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reach_vector:
+            object.__setattr__(
+                self,
+                "reach_vector",
+                tuple(
+                    None if self.tainted else (1.0 if observation.entered else 0.0)
+                    for observation in self.filters.observations
+                ),
+            )
+        if len(self.reach_vector) != len(self.filters.observations):
+            raise ValueError("Mapping reach vector does not align with filter report")
 
     @property
     def target_vector(self) -> tuple[float | None, ...]:
@@ -164,6 +178,7 @@ class MappingEvaluation:
             "proposal": self.proposal.to_dict(),
             "filter_report": self.filters.to_dict(),
             "target_vector": list(self.target_vector),
+            "reach_vector": list(self.reach_vector),
             "deepest_filter_index": self.deepest_filter_index,
             "counters": dict(self.counters),
             "rollout_count": self.rollout_count,
@@ -190,9 +205,22 @@ class MappingEvaluation:
         restored_profiles.extend(
             {} for _ in range(max(0, profile_count - len(restored_profiles)))
         )
+        filters = FilterReport.from_dict(report_payload)
+        raw_reach = payload.get("reach_vector")
+        reach_vector = (
+            tuple(None if value is None else float(value) for value in raw_reach)
+            if isinstance(raw_reach, Sequence)
+            and not isinstance(raw_reach, (str, bytes))
+            else tuple(
+                None
+                if bool(payload.get("tainted", False))
+                else (1.0 if observation.entered else 0.0)
+                for observation in filters.observations
+            )
+        )
         return cls(
             proposal=MappingProposal.from_dict(payload["proposal"]),  # type: ignore[arg-type]
-            filters=FilterReport.from_dict(report_payload),
+            filters=filters,
             counters={
                 str(name): int(value)
                 for name, value in dict(payload.get("counters", {})).items()  # type: ignore[arg-type]
@@ -204,6 +232,7 @@ class MappingEvaluation:
             stop_reasons=tuple(
                 str(value) for value in payload.get("stop_reasons", ())  # type: ignore[union-attr]
             ),
+            reach_vector=reach_vector,
             error=str(payload["error"]) if payload.get("error") else None,
         )
 

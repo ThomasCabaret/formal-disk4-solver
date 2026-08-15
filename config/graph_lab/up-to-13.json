@@ -1,34 +1,17 @@
 {
-  "schema_version": "graph-lab-config-v3",
+  "schema_version": "graph-lab-config-v6",
   "output": {
     "directory": "output/graph_lab/up-to-13",
     "max_training_megabytes": 8192
   },
   "space": {
     "maximum_tiles": 13,
-    "size_bias": 1.4,
+    "size_growth_factor": 1.4,
     "symmetric_prior_fraction": 0.45,
     "imposed_symmetry_bias": 0.75,
-    "known_prior_fraction": 0.30,
-    "known_prior_mutation_fraction": 0.50,
-    "known_seeds": [
-      {"map": "c4"},
-      {"map": "double-cycle-3", "symmetry": "rotation_1"},
-      {"map": "double-cycle-4", "symmetry": "rotation_1"},
-      {"map": "double-cycle-5", "symmetry": "rotation_1"},
-      {"map": "double-cycle-6", "symmetry": "rotation_1"},
-      {"map": "double-cycle-offset-3", "symmetry": "rotation_1"},
-      {"map": "double-cycle-offset-4", "symmetry": "rotation_1"},
-      {"map": "double-cycle-offset-5", "symmetry": "rotation_1"},
-      {"map": "double-cycle-offset-6", "symmetry": "rotation_1"},
-      {"map": "inner-cycle-boundary-points-3", "symmetry": "rotation_1"},
-      {"map": "inner-cycle-boundary-points-4", "symmetry": "rotation_1"},
-      {"map": "inner-cycle-boundary-points-5", "symmetry": "rotation_1"},
-      {"map": "inner-cycle-boundary-points-6", "symmetry": "rotation_1"},
-      {"map": "centered-double-cycle-6", "symmetry": "rotation_1"},
-      {"map": "centered-double-cycle-offset-6", "symmetry": "rotation_1"},
-      {"map": "centered-inner-cycle-boundary-points-6", "symmetry": "rotation_1"}
-    ]
+    "symmetry_order_bias": 1.5,
+    "symmetric_edge_subset_fraction": 0.20,
+    "symmetric_edge_subset_attempts": 24
   },
   "sampling": {
     "seed": 20260809,
@@ -37,9 +20,12 @@
     "pool_multiplier": 6,
     "exploration_fraction": 0.25,
     "mutation_fraction": 0.65,
-    "known_seeds_per_generation": 0,
-    "geometry_weight": 8.0,
-    "novelty_weight": 1.5,
+    "geometry_weight": 0.2,
+    "geometry_solution_weight": 0.2,
+    "nontrivial_solution_weight": 0.4,
+    "novelty_weight": 0.25,
+    "temperature": 0.7,
+    "epsilon": 0.15,
     "cost_weight": 0.08
   },
   "learning": {
@@ -62,6 +48,8 @@
     "exploration_fraction": 0.25,
     "rollout_seed": 20260810,
     "cost_weight": 0.02,
+    "temperature": 0.7,
+    "epsilon": 0.15,
     "preserve_from_filter_index": 21
   },
   "mapping_learning": {
@@ -72,6 +60,14 @@
     "learning_rate": 0.001,
     "weight_decay": 0.0001,
     "cost_loss_weight": 0.05,
+    "curriculum_minimum_support": 64,
+    "curriculum_mastery_rate": 0.85,
+    "curriculum_frontier_weight": 1.0,
+    "curriculum_local_pass_weight": 0.2,
+    "curriculum_ranking_pairs_per_step": 4,
+    "terminal_profile_weight": 0.2,
+    "geometry_solution_weight": 0.2,
+    "nontrivial_solution_weight": 0.4,
     "bootstrap_steps": 100,
     "steps_per_generation": 8,
     "batch_size": 16,
@@ -96,11 +92,43 @@
     "learning_rate": 0.001,
     "weight_decay": 0.0001,
     "cost_loss_weight": 0.02,
+    "curriculum_minimum_support": 64,
+    "curriculum_mastery_rate": 0.85,
+    "curriculum_frontier_weight": 1.0,
+    "curriculum_local_pass_weight": 0.2,
+    "curriculum_ranking_pairs_per_step": 4,
+    "terminal_profile_weight": 0.2,
+    "geometry_solution_weight": 0.2,
+    "nontrivial_solution_weight": 0.4,
     "bootstrap_steps": 100,
     "steps_per_generation": 8,
     "batch_size": 16,
     "replay_rollouts": 50000,
     "metric_decisions": 512,
+    "torch_threads": 1
+  },
+  "specialization_sampling": {
+    "enabled": true,
+    "visits_per_pool": 4,
+    "exploration_fraction": 0.25,
+    "temperature": 0.7,
+    "epsilon": 0.15
+  },
+  "specialization_learning": {
+    "seed": 20260815,
+    "tile_feature_scale": 13,
+    "hidden_size": 64,
+    "message_layers": 3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "minimum_class_support": 8,
+    "ranking_loss_weight": 0.5,
+    "ranking_pairs_per_step": 4,
+    "bootstrap_steps": 100,
+    "steps_per_generation": 8,
+    "batch_size": 16,
+    "replay_pools": 20000,
+    "metric_pools": 512,
     "torch_threads": 1
   },
   "evaluation": {

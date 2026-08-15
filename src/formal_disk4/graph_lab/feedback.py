@@ -59,36 +59,7 @@ def formal_profile_ids(
 def is_ring_candidate(candidate: DualGraphCandidate) -> bool:
     """Conservatively recognize an outside star plus one simple tile cycle."""
 
-    tile_count = candidate.tile_count
-    if tile_count < 3 or len(candidate.edges) != 2 * tile_count:
-        return False
-    edges = {tuple(sorted((int(left), int(right)))) for left, right in candidate.edges}
-    if len(edges) != len(candidate.edges):
-        return False
-    tiles = set(range(tile_count))
-    outside = {(-1, tile) for tile in tiles}
-    if not outside.issubset(edges):
-        return False
-    internal = edges - outside
-    if len(internal) != tile_count:
-        return False
-    adjacency = {tile: set() for tile in tiles}
-    for left, right in internal:
-        if left not in tiles or right not in tiles:
-            return False
-        adjacency[left].add(right)
-        adjacency[right].add(left)
-    if any(len(neighbours) != 2 for neighbours in adjacency.values()):
-        return False
-    seen = {0}
-    pending = [0]
-    while pending:
-        current = pending.pop()
-        for neighbour in adjacency[current]:
-            if neighbour not in seen:
-                seen.add(neighbour)
-                pending.append(neighbour)
-    return seen == tiles
+    return candidate.is_simple_ring
 
 
 @dataclass(frozen=True)

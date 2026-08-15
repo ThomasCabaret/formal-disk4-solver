@@ -25,6 +25,19 @@ class _FirstWeakOrderPolicy:
         return (actions[0].mask,)
 
 
+class _ReverseSpecializationPolicy:
+    def __init__(self) -> None:
+        self.pools = 0
+        self.outcomes = []
+
+    def select_specializations(self, _state, actions):
+        self.pools += 1
+        return tuple(reversed(range(len(actions))))
+
+    def observe_specialization(self, _state, _action, outcome):
+        self.outcomes.append(outcome)
+
+
 class FilterReportTests(unittest.TestCase):
     def test_report_exposes_stable_conditional_rates_and_ignores_witness_counts(self) -> None:
         report = FilterReport.from_counters(
@@ -132,6 +145,50 @@ class SolverAPITests(unittest.TestCase):
                 "surviving_placements", 0
             ),
             1,
+        )
+
+    def test_profiles_can_be_returned_in_memory_without_candidate_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._small_config(directory)
+            result = FormalSolverAPI.evaluate(
+                SolverAPIRequest(
+                    config=config,
+                    assignments=(AssignmentSelection("c3", (0,)),),
+                    collect_profiles=True,
+                )
+            )
+
+        self.assertEqual(
+            len(result.profiles),
+            int(result.summary["statistics"]["counters"].get("profiles_emitted", 0)),
+        )
+
+    def test_optional_specialization_policy_ranks_complete_word_case_pool(self) -> None:
+        policy = _ReverseSpecializationPolicy()
+        with tempfile.TemporaryDirectory() as directory:
+            result = FormalSolverAPI.evaluate(
+                SolverAPIRequest(
+                    config=self._small_config(directory),
+                    assignments=(AssignmentSelection("c3", (0,)),),
+                    family_specialization_policy=policy,
+                    collect_profiles=True,
+                )
+            )
+
+        self.assertGreater(policy.pools, 0)
+        self.assertGreater(len(policy.outcomes), 0)
+        self.assertEqual(
+            result.summary["api_input"]["family_specialization_policy"],
+            "_ReverseSpecializationPolicy",
+        )
+        counters = result.summary["statistics"]["counters"]
+        self.assertEqual(
+            counters.get("specialization_policy_candidates"),
+            len(policy.outcomes),
+        )
+        self.assertEqual(
+            counters.get("specialization_policy_selected"),
+            len(policy.outcomes),
         )
 
 

@@ -7,9 +7,12 @@ import random
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
+
+import numpy as np
 
 from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
+from formal_disk4.pipeline.output import atomic_replace
 
 from .evaluator import GRAPH_STAGES, GraphEvaluation, GraphFormalEvaluator
 from .feedback import read_learning_feedback
@@ -19,6 +22,10 @@ from .mapping_model import MappingLearningModel
 from .model import GraphLearningModel
 from .rollout_audit import build_generation_coverage, weak_trajectory_id
 from .space import DualGraphCandidate, GraphSpace, graph_feature_payload
+from .specialization_model import (
+    SpecializationLearningModel,
+    SpecializationPoolObservation,
+)
 from .weak_model import WeakOrderLearningModel, WeakOrderRolloutObservation
 
 
@@ -37,11 +44,32 @@ RESTART_FILES = (
     "rollout_coverage_metrics.jsonl",
     "weak_order_model.pt",
     "deep_weak_order_candidates.jsonl",
+    "specialization_pools.jsonl",
+    "specialization_training_metrics.jsonl",
+    "specialization_model.pt",
     "state.json",
     "report.json",
     "report.md",
     "effective_config.json",
 )
+
+
+def _checkpoint_fingerprint(config: Mapping[str, object]) -> str:
+    """Hash only checkpoint-shape/semantics settings.
+
+    Ring exclusion changes the future proposal distribution, not model shapes,
+    solver targets, or stored record schemas.  It is intentionally omitted so
+    a run can use rings as pre-training and later transfer those weights to the
+    non-ring domain (or temporarily enable rings again).
+    """
+
+    compatible = json.loads(json.dumps(config))
+    space = compatible.get("space")
+    if isinstance(space, dict):
+        space.pop("exclude_rings", None)
+    return hashlib.sha256(
+        json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
@@ -50,7 +78,7 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    temporary.replace(path)
+    atomic_replace(temporary, path)
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
@@ -119,16 +147,33 @@ class DiversityArchive:
         )
         return 1.0 / math.sqrt(1.0 + amount)
 
-    def choose_parent(self, rng: random.Random) -> GraphEvaluation | None:
+    def choose_parent(
+        self,
+        rng: random.Random,
+        *,
+        size_weight: Callable[[int], float] | None = None,
+    ) -> GraphEvaluation | None:
         nonempty = [values for values in self.cells.values() if values]
         if not nonempty:
             return None
+        weight_for = size_weight or (lambda _tile_count: 1.0)
         if rng.random() < 0.75:
-            values = rng.choice(nonempty)
+            values = rng.choices(
+                nonempty,
+                weights=[
+                    max(1e-12, float(weight_for(items[0].candidate.tile_count)))
+                    for items in nonempty
+                ],
+                k=1,
+            )[0]
             weights = [max(0.1, self.reward(item) + 1.0) for item in values]
             return rng.choices(values, weights=weights, k=1)[0]
         all_values = [item for values in nonempty for item in values]
-        weights = [max(0.1, self.reward(item) + 1.0) for item in all_values]
+        weights = [
+            max(0.1, self.reward(item) + 1.0)
+            * max(1e-12, float(weight_for(item.candidate.tile_count)))
+            for item in all_values
+        ]
         return rng.choices(all_values, weights=weights, k=1)[0]
 
 
@@ -160,6 +205,7 @@ class GraphLabRunner:
             else None
         )
         self.space = GraphSpace.from_config(dict(config.get("space", {})))
+        self.exclude_rings = self.space.exclude_rings
         self.sampling = dict(config.get("sampling", {}))
         self.learning = dict(config.get("learning", {}))
         self.mapping_sampling = dict(config.get("mapping_sampling", {}))
@@ -173,29 +219,49 @@ class GraphLabRunner:
             self.mapping_learning_enabled
             and self.weak_order_sampling.get("enabled", False)
         )
+        self.specialization_sampling = dict(
+            config.get("specialization_sampling", {})
+        )
+        self.specialization_learning = dict(
+            config.get("specialization_learning", {})
+        )
+        self.specialization_learning_enabled = bool(
+            self.weak_order_learning_enabled
+            and self.specialization_sampling.get("enabled", False)
+        )
         self.evaluator = GraphFormalEvaluator(
             self.root, dict(config.get("evaluation", {}))
         )
-        self.fingerprint = hashlib.sha256(
-            json.dumps(self.config, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        self.fingerprint = _checkpoint_fingerprint(self.config)
 
     @classmethod
-    def from_file(cls, root: Path, path: Path | str) -> "GraphLabRunner":
+    def from_file(
+        cls,
+        root: Path,
+        path: Path | str,
+        *,
+        exclude_rings: bool | None = None,
+    ) -> "GraphLabRunner":
         source = Path(path)
         if not source.is_absolute():
             source = root / source
         config = json.loads(source.read_text(encoding="utf-8"))
         if not isinstance(config, dict):
             raise ValueError("Graph Lab config must be a JSON object")
+        if exclude_rings is not None:
+            space = dict(config.get("space", {}))
+            space["exclude_rings"] = bool(exclude_rings)
+            config["space"] = space
         return cls(root, config)
 
     def restart_outputs(self) -> None:
         self.output.mkdir(parents=True, exist_ok=True)
         for name in RESTART_FILES:
             path = self.output / name
-            if path.exists():
-                path.unlink()
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            for stale in (path, temporary):
+                if stale.exists():
+                    stale.unlink()
 
     def _load_observations(self) -> list[GraphEvaluation]:
         return [
@@ -214,6 +280,26 @@ class GraphLabRunner:
             WeakOrderRolloutObservation.from_dict(value)
             for value in _load_jsonl(self.output / "weak_order_rollouts.jsonl")
         ]
+
+    def _load_specialization_pools(self) -> list[SpecializationPoolObservation]:
+        proposals: dict[str, MappingProposal] = {}
+        pools = []
+        for value in _load_jsonl(self.output / "specialization_pools.jsonl"):
+            raw_proposal = value.get("proposal")
+            proposal = (
+                MappingProposal.from_dict(raw_proposal)
+                if isinstance(raw_proposal, Mapping)
+                else proposals.get(str(value.get("mapping_id", "")))
+            )
+            if proposal is None:
+                raise ValueError(
+                    "Specialization journal references a mapping before its full record"
+                )
+            proposals[proposal.mapping_id] = proposal
+            pools.append(
+                SpecializationPoolObservation.from_dict(value, proposal=proposal)
+            )
+        return pools
 
     def _select_mappings(
         self,
@@ -238,37 +324,12 @@ class GraphLabRunner:
             ),
         )
         scored = []
-        active_values = [
-            index
-            for index, active in enumerate(model.active_value_heads)
-            if active
-        ]
+        curriculum = model.curriculum_state()
         for proposal in pool:
             prediction = model.predict(proposal)
-            utility = (
-                math.log(max(1e-12, prediction.terminal_probability))
-                if active_values
-                else 0.0
-            )
-            if 1 in active_values:
-                utility += float(
-                    self.mapping_sampling.get("geometry_solution_weight", 1.0)
-                ) * prediction.value_probabilities[1]
-            if 2 in active_values:
-                utility += float(
-                    self.mapping_sampling.get(
-                        "nontrivial_solution_weight", 2.0
-                    )
-                ) * prediction.value_probabilities[2]
-            utility += float(
-                self.mapping_sampling.get("deeper_utility_weight", 0.05)
-            ) * prediction.auxiliary_progress
-            utility -= float(
-                self.mapping_sampling.get("cost_weight", 0.02)
-            ) * math.log1p(prediction.expected_seconds)
+            utility = model.policy_score(prediction)
             scored.append((utility, proposal, prediction))
-        scored.sort(key=lambda item: (-item[0], item[1].mapping_id))
-        if not active_values:
+        if not model.has_policy_signal:
             selected = [
                 (item, "exploration") for item in rng.sample(scored, amount)
             ]
@@ -277,9 +338,29 @@ class GraphLabRunner:
                 rng.sample(scored, exploration) if exploration else []
             )
             control_ids = {item[1].mapping_id for item in random_control}
-            learned = [
+            remaining = [
                 item for item in scored if item[1].mapping_id not in control_ids
-            ][: amount - exploration]
+            ]
+            learned = []
+            temperature = max(
+                1e-3, float(self.mapping_sampling.get("temperature", 0.7))
+            )
+            epsilon = min(
+                1.0, max(0.0, float(self.mapping_sampling.get("epsilon", 0.15)))
+            )
+            while remaining and len(learned) < amount - exploration:
+                values = np.asarray(
+                    [item[0] for item in remaining], dtype=np.float64
+                ) / temperature
+                values -= np.max(values)
+                weights = np.exp(np.clip(values, -60.0, 0.0))
+                weights = (1.0 - epsilon) * weights / max(
+                    1e-12, float(np.sum(weights))
+                ) + epsilon / len(remaining)
+                chosen = rng.choices(
+                    range(len(remaining)), weights=weights, k=1
+                )[0]
+                learned.append(remaining.pop(chosen))
             selected = [(item, "learned") for item in learned]
             selected.extend((item, "exploration") for item in random_control)
         return [
@@ -291,11 +372,17 @@ class GraphLabRunner:
                     "predicted_conditional_probabilities": list(
                         prediction.conditional_probabilities
                     ),
+                    "predicted_reach_probabilities": list(
+                        prediction.reach_probabilities
+                    ),
                     "predicted_value_probabilities": list(
                         prediction.value_probabilities
                     ),
                     "predicted_seconds": prediction.expected_seconds,
-                    "ranking_target": "profile_emitted",
+                    "ranking_target": (
+                        curriculum.frontier_id or "waiting_for_filter_contrast"
+                    ),
+                    "curriculum": curriculum.to_dict(),
                 },
             )
             for (score, proposal, prediction), mode in selected
@@ -306,6 +393,7 @@ class GraphLabRunner:
         candidate: DualGraphCandidate,
         model: MappingLearningModel,
         weak_model: WeakOrderLearningModel,
+        specialization_model: SpecializationLearningModel,
         rng: random.Random,
         generation: int,
     ) -> tuple[
@@ -313,6 +401,7 @@ class GraphLabRunner:
         list[tuple[MappingEvaluation, Mapping[str, object]]],
         list[WeakOrderRolloutObservation],
         tuple[MappingProposal, ...],
+        list[SpecializationPoolObservation],
     ]:
         amount = max(1, int(self.mapping_sampling.get("mappings_per_graph", 4)))
         pool_size = max(
@@ -333,6 +422,8 @@ class GraphLabRunner:
         seed = int(self.mapping_sampling.get("rollout_seed", 20260810))
         records: list[tuple[MappingEvaluation, Mapping[str, object]]] = []
         weak_records: list[WeakOrderRolloutObservation] = []
+        specialization_records: list[SpecializationPoolObservation] = []
+        specialization_proposals_written: set[str] = set()
 
         def preserve_rollout(observation: WeakOrderRolloutObservation) -> None:
             payload = observation.to_dict()
@@ -356,6 +447,18 @@ class GraphLabRunner:
                 )
             weak_records.append(observation)
 
+        def preserve_specialization(
+            observation: SpecializationPoolObservation,
+        ) -> None:
+            mapping_id = observation.proposal.mapping_id
+            payload = observation.to_dict(
+                include_proposal=mapping_id not in specialization_proposals_written
+            )
+            specialization_proposals_written.add(mapping_id)
+            payload["generation"] = generation
+            _append_jsonl(self.output / "specialization_pools.jsonl", payload)
+            specialization_records.append(observation)
+
         for selection_index, (proposal, metadata) in enumerate(selected):
             evaluation = self.evaluator.evaluate_mapping(
                 proposal,
@@ -372,6 +475,17 @@ class GraphLabRunner:
                 weak_sampling=self.weak_order_sampling,
                 rollout_sink=(
                     preserve_rollout if self.weak_order_learning_enabled else None
+                ),
+                specialization_model=(
+                    specialization_model
+                    if self.specialization_learning_enabled
+                    else None
+                ),
+                specialization_sampling=self.specialization_sampling,
+                specialization_sink=(
+                    preserve_specialization
+                    if self.specialization_learning_enabled
+                    else None
                 ),
             )
             payload = evaluation.to_dict()
@@ -400,6 +514,7 @@ class GraphLabRunner:
             records,
             weak_records,
             pool,
+            specialization_records,
         )
 
     def _mapping_generation_metrics(
@@ -433,6 +548,15 @@ class GraphLabRunner:
                             }
                             for filter_id in LEARNING_FILTER_IDS
                         },
+                        "reach": {
+                            filter_id: {
+                                "eligible": 0,
+                                "passed": 0.0,
+                                "prediction_sum": 0.0,
+                                "prediction_count": 0,
+                            }
+                            for filter_id in LEARNING_FILTER_IDS
+                        },
                     },
                 )
                 bucket["count"] = int(bucket["count"]) + 1
@@ -452,7 +576,18 @@ class GraphLabRunner:
                     else ()
                 )
                 filters = bucket["filters"]
+                reaches = bucket["reach"]
                 assert isinstance(filters, dict)
+                assert isinstance(reaches, dict)
+                raw_reach_predictions = selection.get(
+                    "predicted_reach_probabilities", ()
+                )
+                reach_predictions = (
+                    raw_reach_predictions
+                    if isinstance(raw_reach_predictions, Sequence)
+                    and not isinstance(raw_reach_predictions, (str, bytes))
+                    else ()
+                )
                 for head, observation in enumerate(evaluation.filters.observations):
                     target = filters[observation.filter_id]
                     assert isinstance(target, dict)
@@ -464,6 +599,22 @@ class GraphLabRunner:
                         ) + float(predictions[head])
                         target["prediction_count"] = int(
                             target["prediction_count"]
+                        ) + 1
+                    reach_target = reaches[observation.filter_id]
+                    assert isinstance(reach_target, dict)
+                    reach_value = evaluation.reach_vector[head]
+                    if reach_value is None:
+                        continue
+                    reach_target["eligible"] = int(reach_target["eligible"]) + 1
+                    reach_target["passed"] = float(reach_target["passed"]) + float(
+                        reach_value
+                    )
+                    if head < len(reach_predictions):
+                        reach_target["prediction_sum"] = float(
+                            reach_target["prediction_sum"]
+                        ) + float(reach_predictions[head])
+                        reach_target["prediction_count"] = int(
+                            reach_target["prediction_count"]
                         ) + 1
             return modes
 
@@ -529,6 +680,15 @@ class GraphLabRunner:
                             }
                             for filter_id in LEARNING_FILTER_IDS
                         },
+                        "reach": {
+                            filter_id: {
+                                "eligible": 0,
+                                "passed": 0,
+                                "prediction_sum": 0.0,
+                                "prediction_count": 0,
+                            }
+                            for filter_id in LEARNING_FILTER_IDS
+                        },
                     },
                 )
                 bucket["count"] = int(bucket["count"]) + 1
@@ -548,7 +708,9 @@ class GraphLabRunner:
                     decision.policy_entropy for decision in rollout.decisions
                 )
                 filters = bucket["filters"]
+                reaches = bucket["reach"]
                 assert isinstance(filters, dict)
+                assert isinstance(reaches, dict)
                 for head, observation in enumerate(rollout.filters.observations):
                     target = filters[observation.filter_id]
                     assert isinstance(target, dict)
@@ -565,6 +727,23 @@ class GraphLabRunner:
                             ) + decision.predicted_conditional_probabilities[head]
                             target["prediction_count"] = int(
                                 target["prediction_count"]
+                            ) + 1
+                    reach_target = reaches[observation.filter_id]
+                    assert isinstance(reach_target, dict)
+                    reach_value = rollout.reach_vector[head]
+                    if reach_value is None:
+                        continue
+                    reach_target["eligible"] = int(reach_target["eligible"]) + 1
+                    reach_target["passed"] = int(reach_target["passed"]) + int(
+                        reach_value
+                    )
+                    for decision in rollout.decisions:
+                        if head < len(decision.predicted_reach_probabilities):
+                            reach_target["prediction_sum"] = float(
+                                reach_target["prediction_sum"]
+                            ) + decision.predicted_reach_probabilities[head]
+                            reach_target["prediction_count"] = int(
+                                reach_target["prediction_count"]
                             ) + 1
             return modes
 
@@ -593,6 +772,136 @@ class GraphLabRunner:
                 "scope": "same_generation_and_mapping",
                 "comparable_parent_count": len(comparable_parents),
                 "excluded_parent_count": len(parent_modes) - len(comparable_parents),
+            },
+            "model": dict(model_metrics),
+        }
+
+    def _specialization_generation_metrics(
+        self,
+        generation: int,
+        records: Sequence[SpecializationPoolObservation],
+        model_metrics: Mapping[str, object],
+    ) -> dict[str, object]:
+        filter_ids = (
+            "specialization.profile_valid",
+            "specialization.profile_emitted",
+        )
+
+        def aggregate(
+            selected: Sequence[SpecializationPoolObservation],
+        ) -> dict[str, dict[str, object]]:
+            modes: dict[str, dict[str, object]] = {}
+            for pool in selected:
+                for decision in pool.decisions:
+                    bucket = modes.setdefault(
+                        decision.selection_mode,
+                        {
+                            "count": 0,
+                            "profile_emitting_count": 0,
+                            "profile_count": 0,
+                            "decision_count": 0,
+                            "candidate_count_sum": 0,
+                            "entropy_sum": 0.0,
+                            "filters": {
+                                name: {
+                                    "eligible": 0,
+                                    "passed": 0,
+                                    "prediction_sum": 0.0,
+                                    "prediction_count": 0,
+                                }
+                                for name in filter_ids
+                            },
+                            "reach": {
+                                name: {
+                                    "eligible": 0,
+                                    "passed": 0,
+                                    "prediction_sum": 0.0,
+                                    "prediction_count": 0,
+                                }
+                                for name in filter_ids
+                            },
+                        },
+                    )
+                    bucket["count"] = int(bucket["count"]) + 1
+                    bucket["profile_emitting_count"] = int(
+                        bucket["profile_emitting_count"]
+                    ) + int(decision.outcome.emitted)
+                    bucket["profile_count"] = int(bucket["profile_count"]) + int(
+                        decision.outcome.emitted
+                    )
+                    bucket["decision_count"] = int(bucket["decision_count"]) + 1
+                    bucket["candidate_count_sum"] = int(
+                        bucket["candidate_count_sum"]
+                    ) + pool.state.candidate_count
+                    bucket["entropy_sum"] = float(bucket["entropy_sum"]) + float(
+                        decision.policy_entropy
+                    )
+                    values = (
+                        (
+                            "specialization.profile_valid",
+                            decision.valid_target,
+                            decision.predicted_valid_probability,
+                        ),
+                        (
+                            "specialization.profile_emitted",
+                            decision.emission_target,
+                            decision.predicted_emission_probability,
+                        ),
+                    )
+                    for name, actual, prediction in values:
+                        if actual is None:
+                            continue
+                        for collection in (bucket["filters"], bucket["reach"]):
+                            assert isinstance(collection, dict)
+                            target = collection[name]
+                            assert isinstance(target, dict)
+                            target["eligible"] = int(target["eligible"]) + 1
+                            target["passed"] = int(target["passed"]) + int(actual)
+                            target["prediction_sum"] = float(
+                                target["prediction_sum"]
+                            ) + float(prediction)
+                            target["prediction_count"] = int(
+                                target["prediction_count"]
+                            ) + 1
+            return modes
+
+        comparable_ids = {
+            pool.pool_id
+            for pool in records
+            if {item.selection_mode for item in pool.decisions}
+            >= {"exploration", "learned"}
+        }
+        comparable = [pool for pool in records if pool.pool_id in comparable_ids]
+        legal_candidates = sum(pool.state.candidate_count for pool in records)
+        visited_candidates = sum(len(pool.decisions) for pool in records)
+        return {
+            "schema_version": "graph-lab-specialization-generation-metrics-v1",
+            "generation": generation,
+            "evaluated": sum(len(pool.decisions) for pool in records),
+            "geometry_ready": sum(
+                decision.outcome.emitted
+                for pool in records
+                for decision in pool.decisions
+            ),
+            "filter_order": list(filter_ids),
+            "selection_modes": aggregate(records),
+            "comparable_selection_modes": aggregate(comparable),
+            "comparison": {
+                "scope": "same_word_case_specialization_pool",
+                "comparable_parent_count": len(comparable_ids),
+                "excluded_parent_count": len(records) - len(comparable_ids),
+            },
+            "pool_coverage": {
+                "pools": len(records),
+                "legal_candidates": legal_candidates,
+                "visited_candidates": visited_candidates,
+                "locally_not_selected": max(
+                    0, legal_candidates - visited_candidates
+                ),
+                "permanently_closed": 0,
+                "semantics": (
+                    "Unselected siblings remain eligible on every repeated rollout"
+                ),
             },
             "model": dict(model_metrics),
         }
@@ -641,13 +950,22 @@ class GraphLabRunner:
         attempts = 0
         while len(pool) < target and attempts < target * 200:
             attempts += 1
-            parent = archive.choose_parent(rng) if rng.random() < mutation_fraction else None
+            parent = (
+                archive.choose_parent(
+                    rng,
+                    size_weight=self.space.size_sampling_weight,
+                )
+                if rng.random() < mutation_fraction
+                else None
+            )
             candidate = (
                 self.space.mutate(parent.candidate, rng)
                 if parent is not None
                 else self.space.sample_prior(rng)
             )
             if candidate is None:
+                continue
+            if self.exclude_rings and candidate.is_simple_ring:
                 continue
             if local.add(candidate):
                 pool.append(candidate)
@@ -665,6 +983,10 @@ class GraphLabRunner:
         rng: random.Random,
         amount: int,
     ) -> list[tuple[DualGraphCandidate, Mapping[str, object]]]:
+        if self.exclude_rings and any(item.is_simple_ring for item in pool):
+            raise ValueError(
+                "A simple ring reached the graph ranker while exclude_rings is enabled"
+            )
         exploration = min(
             amount,
             max(1, int(round(amount * float(self.sampling.get("exploration_fraction", 0.25))))),
@@ -686,8 +1008,7 @@ class GraphLabRunner:
                 cost_weight=float(self.sampling.get("cost_weight", 0.08)),
             )
             scored.append((score, candidate, prediction, novelty))
-        scored.sort(key=lambda item: (-item[0], item[1].graph_id))
-        if not any(bool(value) for value in model.active_value_heads):
+        if not model.has_policy_signal:
             return [
                 (
                     candidate,
@@ -718,9 +1039,22 @@ class GraphLabRunner:
         # artificially weak and overstate learned enrichment.
         random_control = rng.sample(scored, exploration) if exploration else []
         control_ids = {item[1].graph_id for item in random_control}
-        learned = [
+        remaining = [
             item for item in scored if item[1].graph_id not in control_ids
-        ][:exploit]
+        ]
+        learned = []
+        temperature = max(1e-3, float(self.sampling.get("temperature", 0.7)))
+        epsilon = min(1.0, max(0.0, float(self.sampling.get("epsilon", 0.15))))
+        while remaining and len(learned) < exploit:
+            values = np.asarray([item[0] for item in remaining], dtype=np.float64)
+            values = values / temperature
+            values -= np.max(values)
+            weights = np.exp(np.clip(values, -60.0, 0.0))
+            weights = (1.0 - epsilon) * weights / max(
+                1e-12, float(np.sum(weights))
+            ) + epsilon / len(remaining)
+            chosen = rng.choices(range(len(remaining)), weights=weights, k=1)[0]
+            learned.append(remaining.pop(chosen))
         selected = [(item, "learned") for item in learned]
         selected.extend((item, "exploration") for item in random_control)
         return [
@@ -754,14 +1088,7 @@ class GraphLabRunner:
 
         modes: dict[str, dict[str, object]] = {}
         for evaluation, selection in records:
-            mode = str(
-                selection.get(
-                    "selection_mode",
-                    "known_control"
-                    if selection.get("selection") == "known_control"
-                    else "unknown",
-                )
-            )
+            mode = str(selection.get("selection_mode", "unknown"))
             bucket = modes.setdefault(
                 mode,
                 {
@@ -874,16 +1201,6 @@ class GraphLabRunner:
         sizes = Counter(item.candidate.tile_count for item in observations)
         symmetries = Counter(item.candidate.symmetry_order for item in observations)
         origins = Counter(item.candidate.origin for item in observations)
-        known = {
-            item.candidate.source_map_name: {
-                "graph_id": item.candidate.graph_id,
-                "stage": item.stage_name,
-                "profiles": int(item.counters.get("profiles_emitted", 0)),
-                "stop_reason": item.stop_reason,
-            }
-            for item in observations
-            if item.candidate.source_map_name is not None
-        }
         geometry = [
             {
                 "graph_id": item.candidate.graph_id,
@@ -914,6 +1231,10 @@ class GraphLabRunner:
             "max_training_bytes": self.max_training_bytes,
             "stage_histogram": dict(stage_histogram),
             "reached_counts": reached,
+            "tile_count_prior": {
+                str(size): probability
+                for size, probability in self.space.size_sampling_distribution()
+            },
             "tile_count_histogram": dict(sorted(sizes.items())),
             "symmetry_order_histogram": dict(sorted(symmetries.items())),
             "origin_histogram": dict(origins),
@@ -922,7 +1243,6 @@ class GraphLabRunner:
                 name: len(values)
                 for name, values in sorted(diversity_archive.cells.items())
             },
-            "known_seed_results": known,
             "geometry_ready": geometry,
             "geometry_ready_evaluations": len(geometry),
             "geometry_ready_unique_graphs": unique_geometry_count,
@@ -955,26 +1275,26 @@ class GraphLabRunner:
                 else "Training output limit: disabled"
             ),
             "",
-            "## Pipeline depth",
+            "## Tile-count sampling",
             "",
-            "| Stage reached | Count |",
-            "|---|---:|",
+            "| Tiles | Configured prior probability | Evaluated |",
+            "|---:|---:|---:|",
         ]
-        for name in GRAPH_STAGES:
-            lines.append(f"| {name} | {reached[name]} |")
+        for size, probability in self.space.size_sampling_distribution():
+            lines.append(
+                f"| {size} | {100.0 * probability:.3f}% | {sizes.get(size, 0)} |"
+            )
         lines.extend(
             [
                 "",
-                "## Known controls",
+                "## Pipeline depth",
                 "",
-                "| Map | Deepest stage | Profiles | Stop reason |",
-                "|---|---|---:|---|",
+                "| Stage reached | Count |",
+                "|---|---:|",
             ]
         )
-        for name, value in sorted(known.items()):
-            lines.append(
-                f"| {name} | {value['stage']} | {value['profiles']} | {value['stop_reason']} |"
-            )
+        for name in GRAPH_STAGES:
+            lines.append(f"| {name} | {reached[name]} |")
         lines.extend(
             [
                 "",
@@ -1011,6 +1331,7 @@ class GraphLabRunner:
         observations = self._load_observations()
         mapping_observations = self._load_mapping_observations()
         weak_order_rollouts = self._load_weak_order_rollouts()
+        specialization_pools = self._load_specialization_pools()
         seen_graph_ids = {
             observation.candidate.graph_id for observation in observations
         }
@@ -1035,6 +1356,9 @@ class GraphLabRunner:
         )
         weak_order_model = WeakOrderLearningModel.load_or_create(
             self.output / "weak_order_model.pt", self.weak_order_learning
+        )
+        specialization_model = SpecializationLearningModel.load_or_create(
+            self.output / "specialization_model.pt", self.specialization_learning
         )
         feedback = read_learning_feedback(self.output)
         if observations and not (self.output / "model.pt").exists():
@@ -1063,6 +1387,19 @@ class GraphLabRunner:
                 generation=-1,
                 feedback=feedback,
             )
+        if specialization_pools and not (
+            self.output / "specialization_model.pt"
+        ).exists():
+            specialization_model.train(
+                specialization_pools,
+                steps=int(
+                    self.specialization_learning.get("bootstrap_steps", 100)
+                ),
+                batch_size=int(
+                    self.specialization_learning.get("batch_size", 16)
+                ),
+                generation=-1,
+            )
 
         start = self._state_generation()
         total_generations = max(
@@ -1081,11 +1418,6 @@ class GraphLabRunner:
                 else self.sampling.get("batch_size", 8)
             ),
         )
-        pending_known = [
-            candidate
-            for candidate in self.space.known_seeds
-            if evaluated_graph_index.equivalent(candidate) is None
-        ]
         if self.max_training_bytes is None:
             disk_limit = "off"
         elif self.max_training_bytes >= 1024**3:
@@ -1094,8 +1426,9 @@ class GraphLabRunner:
             disk_limit = f"{self.max_training_bytes / 1024**2:.0f}MiB"
         print(
             f"graph-lab generations={start}..{total_generations - 1} "
-            f"batch={target_batch} known-pending={len(pending_known)} "
+            f"batch={target_batch} "
             f"tiles<= {self.space.maximum_tiles} "
+            f"exclude-rings={'on' if self.exclude_rings else 'off'} "
             f"disk-limit={disk_limit}",
             flush=True,
         )
@@ -1122,23 +1455,9 @@ class GraphLabRunner:
                 rng = random.Random(
                     int(self.sampling.get("seed", 20260809)) + generation * 1000003
                 )
-                known_quota = min(
-                    len(pending_known),
-                    target_batch,
-                    max(0, int(self.sampling.get("known_seeds_per_generation", 2))),
-                )
-                selected: list[tuple[DualGraphCandidate, Mapping[str, object]]] = [
-                    (
-                        pending_known.pop(0),
-                        {
-                            "selection": "known_control",
-                            "selection_mode": "known_control",
-                        },
-                    )
-                    for _ in range(known_quota)
-                ]
+                selected: list[tuple[DualGraphCandidate, Mapping[str, object]]] = []
                 generation_graph_pool: list[DualGraphCandidate] = []
-                remaining = target_batch - len(selected)
+                remaining = target_batch
                 if remaining:
                     pool = self._candidate_pool(
                         rng,
@@ -1159,6 +1478,9 @@ class GraphLabRunner:
                 generation_weak_order_records: list[
                     WeakOrderRolloutObservation
                 ] = []
+                generation_specialization_records: list[
+                    SpecializationPoolObservation
+                ] = []
                 generation_records: list[
                     tuple[GraphEvaluation, Mapping[str, object]]
                 ] = []
@@ -1172,11 +1494,13 @@ class GraphLabRunner:
                             new_mapping_records,
                             new_weak_order_records,
                             new_mapping_pool,
+                            new_specialization_records,
                         ) = (
                             self._evaluate_with_mapping_ranker(
                                 candidate,
                                 mapping_model,
                                 weak_order_model,
+                                specialization_model,
                                 rng,
                                 generation,
                             )
@@ -1189,12 +1513,17 @@ class GraphLabRunner:
                         generation_weak_order_records.extend(
                             new_weak_order_records
                         )
+                        generation_specialization_records.extend(
+                            new_specialization_records
+                        )
                     else:
                         evaluation = self.evaluator.evaluate(candidate)
                         new_mapping_observations = []
                         new_weak_order_records = []
+                        new_specialization_records = []
                     mapping_observations.extend(new_mapping_observations)
                     weak_order_rollouts.extend(new_weak_order_records)
+                    specialization_pools.extend(new_specialization_records)
                     observation = evaluation.to_dict()
                     observation["generation"] = generation
                     observation["selection"] = dict(selection)
@@ -1286,6 +1615,34 @@ class GraphLabRunner:
                     weak_order_metrics = weak_order_model.metrics(
                         weak_order_rollouts, feedback=feedback
                     )
+                if self.specialization_learning_enabled:
+                    specialization_metrics = specialization_model.train(
+                        specialization_pools,
+                        steps=int(
+                            self.specialization_learning.get(
+                                "steps_per_generation", 8
+                            )
+                        ),
+                        batch_size=int(
+                            self.specialization_learning.get("batch_size", 16)
+                        ),
+                        generation=generation,
+                    )
+                    specialization_model.save(
+                        self.output / "specialization_model.pt"
+                    )
+                    _append_jsonl(
+                        self.output / "specialization_training_metrics.jsonl",
+                        self._specialization_generation_metrics(
+                            generation,
+                            generation_specialization_records,
+                            specialization_metrics,
+                        ),
+                    )
+                else:
+                    specialization_metrics = specialization_model.metrics(
+                        specialization_pools
+                    )
                 _append_jsonl(
                     self.output / "training_metrics.jsonl",
                     self._generation_metrics(
@@ -1325,10 +1682,12 @@ class GraphLabRunner:
                     {
                         "schema_version": "graph-lab-state-v1",
                         "fingerprint": self.fingerprint,
+                        "exclude_rings": self.exclude_rings,
                         "next_generation": generation + 1,
                         "observations": len(observations),
                         "mapping_observations": len(mapping_observations),
                         "weak_order_rollouts": len(weak_order_rollouts),
+                        "specialization_pools": len(specialization_pools),
                     },
                 )
                 report = self._report(
@@ -1356,6 +1715,7 @@ class GraphLabRunner:
                     f"graph_examples={metrics['examples']} "
                     f"mapping_examples={mapping_metrics['examples']}",
                     f" weak_rollouts={weak_order_metrics.get('rollouts', 0)}",
+                    f" specialization_pools={specialization_metrics.get('pools', 0)}",
                     flush=True,
                 )
                 if stop_reason == "max_training_output_bytes":
@@ -1373,6 +1733,8 @@ class GraphLabRunner:
                 mapping_model.save(self.output / "mapping_model.pt")
             if self.weak_order_learning_enabled:
                 weak_order_model.save(self.output / "weak_order_model.pt")
+            if self.specialization_learning_enabled:
+                specialization_model.save(self.output / "specialization_model.pt")
             self._report(
                 observations,
                 model,

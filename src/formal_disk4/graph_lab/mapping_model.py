@@ -11,8 +11,10 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
+from formal_disk4.pipeline.output import atomic_replace
 
 from .mapping import MappingEvaluation, MappingProposal
+from .curriculum import build_curriculum, curriculum_utility, normalized_cost
 from .model import GLOBAL_FEATURES, NODE_FEATURES, graph_tensors
 from .feedback import (
     LearningFeedback,
@@ -31,7 +33,7 @@ except ImportError as error:  # pragma: no cover
     ) from error
 
 
-MODEL_VERSION = "graph-lab-mapping-gnn-v2"
+MODEL_VERSION = "graph-lab-mapping-gnn-v3-reach-curriculum"
 MAPPING_FEATURES = 8
 EDGE_FEATURES = 8
 
@@ -122,6 +124,7 @@ class MappingGraphNetwork(nn.Module):
             nn.ReLU(),
         )
         self.filter_heads = nn.Linear(hidden_size, len(LEARNING_FILTER_IDS))
+        self.reach_heads = nn.Linear(hidden_size, len(LEARNING_FILTER_IDS))
         self.value_heads = nn.Linear(hidden_size, len(VALUE_TARGET_IDS))
         self.cost_head = nn.Linear(hidden_size, 1)
 
@@ -132,7 +135,7 @@ class MappingGraphNetwork(nn.Module):
         global_features: torch.Tensor,
         outside_index: int,
         edge_features: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         hidden = torch.relu(self.node_input(node_features))
         node_count = len(hidden)
         for message_layer, update_layer in zip(
@@ -162,6 +165,7 @@ class MappingGraphNetwork(nn.Module):
         representation = self.trunk(pooled)
         return (
             self.filter_heads(representation),
+            self.reach_heads(representation),
             self.value_heads(representation),
             self.cost_head(representation).squeeze(0),
         )
@@ -170,6 +174,7 @@ class MappingGraphNetwork(nn.Module):
 @dataclass(frozen=True)
 class MappingPrediction:
     conditional_probabilities: tuple[float, ...]
+    reach_probabilities: tuple[float, ...]
     value_probabilities: tuple[float, ...]
     auxiliary_progress: float
     expected_seconds: float
@@ -198,7 +203,15 @@ class MappingLearningModel:
             weight_decay=float(config.get("weight_decay", 1e-4)),
         )
         self.active_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
+        self.pass_supports = np.zeros(len(LEARNING_FILTER_IDS), dtype=np.int64)
         self.empirical_rates = np.full(len(LEARNING_FILTER_IDS), 0.5, dtype=np.float32)
+        self.active_reach_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
+        self.reach_supports = np.zeros(len(LEARNING_FILTER_IDS), dtype=np.int64)
+        self.empirical_reach_rates = np.full(
+            len(LEARNING_FILTER_IDS), 0.5, dtype=np.float32
+        )
+        self.best_filter_auc = np.full(len(LEARNING_FILTER_IDS), np.nan)
+        self.best_reach_auc = np.full(len(LEARNING_FILTER_IDS), np.nan)
         self.active_value_heads = np.zeros(len(VALUE_TARGET_IDS), dtype=bool)
         self.empirical_value_rates = np.full(
             len(VALUE_TARGET_IDS), 0.5, dtype=np.float32
@@ -232,8 +245,23 @@ class MappingLearningModel:
             ]
             positive = sum(float(value) for value in labels)
             negative = len(labels) - positive
+            self.pass_supports[head] = len(labels)
             self.active_heads[head] = positive > 0.0 and negative > 0.0
             self.empirical_rates[head] = float((positive + 0.5) / (len(labels) + 1.0))
+            reach_labels = [
+                item.reach_vector[head]
+                for item in observations
+                if item.reach_vector[head] is not None
+            ]
+            reach_positive = sum(reach_labels)
+            reach_negative = len(reach_labels) - reach_positive
+            self.reach_supports[head] = len(reach_labels)
+            self.active_reach_heads[head] = (
+                reach_positive > 0.0 and reach_negative > 0.0
+            )
+            self.empirical_reach_rates[head] = float(
+                (reach_positive + 0.5) / (len(reach_labels) + 1.0)
+            )
 
     def _value_targets(
         self,
@@ -261,21 +289,66 @@ class MappingLearningModel:
                 (positive + 0.5) / (len(labels) + 1.0)
             )
 
+    def curriculum_state(self):
+        return build_curriculum(
+            empirical_reach_rates=self.empirical_reach_rates,
+            reach_supports=self.reach_supports,
+            active_reach_heads=self.active_reach_heads,
+            active_pass_heads=self.active_heads,
+            config=self.config,
+        )
+
+    @property
+    def has_policy_signal(self) -> bool:
+        return bool(
+            np.any(self.active_reach_heads)
+            or np.any(self.active_heads)
+            or np.any(self.active_value_heads)
+        )
+
+    def policy_score(self, prediction: MappingPrediction) -> float:
+        score = curriculum_utility(
+            self.curriculum_state(),
+            prediction.reach_probabilities,
+            prediction.conditional_probabilities,
+        )
+        if self.active_value_heads[0]:
+            score += float(self.config.get("terminal_profile_weight", 0.20)) * (
+                prediction.value_probabilities[0]
+            )
+        if len(prediction.value_probabilities) > 1 and self.active_value_heads[1]:
+            score += float(self.config.get("geometry_solution_weight", 0.20)) * (
+                prediction.value_probabilities[1]
+            )
+        if len(prediction.value_probabilities) > 2 and self.active_value_heads[2]:
+            score += float(self.config.get("nontrivial_solution_weight", 0.40)) * (
+                prediction.value_probabilities[2]
+            )
+        score -= float(self.config.get("cost_weight", 0.02)) * normalized_cost(
+            prediction.expected_seconds, self.config
+        )
+        return score
+
     def predict(self, proposal: MappingProposal) -> MappingPrediction:
         self.network.eval()
         with torch.no_grad():
-            logits, value_logits, log_cost = self.network(
+            logits, reach_logits, value_logits, log_cost = self.network(
                 *mapping_tensors(proposal, tile_scale=self.tile_scale)
             )
             probabilities = torch.sigmoid(logits).cpu().numpy()
+            reach_probabilities = torch.sigmoid(reach_logits).cpu().numpy()
             value_probabilities = torch.sigmoid(value_logits).cpu().numpy()
         probabilities[~self.active_heads] = self.empirical_rates[~self.active_heads]
+        reach_probabilities[~self.active_reach_heads] = self.empirical_reach_rates[
+            ~self.active_reach_heads
+        ]
         value_probabilities[~self.active_value_heads] = self.empirical_value_rates[
             ~self.active_value_heads
         ]
-        active = probabilities[self.active_heads]
+        active = reach_probabilities[self.active_reach_heads]
         return MappingPrediction(
             conditional_probabilities=tuple(float(value) for value in probabilities),
+            reach_probabilities=tuple(float(value) for value in reach_probabilities),
             value_probabilities=tuple(float(value) for value in value_probabilities),
             auxiliary_progress=float(np.mean(active)) if len(active) else 0.5,
             expected_seconds=max(
@@ -308,6 +381,11 @@ class MappingLearningModel:
             len(LEARNING_FILTER_IDS),
             maximum=float(self.config.get("maximum_class_weight", 50.0)),
         )
+        reach_weights = balanced_binary_weights(
+            tuple(item.reach_vector for item in training),
+            len(LEARNING_FILTER_IDS),
+            maximum=float(self.config.get("maximum_class_weight", 50.0)),
+        )
         value_weights = balanced_binary_weights(
             tuple(value_targets.values()),
             len(VALUE_TARGET_IDS),
@@ -332,6 +410,21 @@ class MappingLearningModel:
                 negative = [item for item, target in labelled if target == 0.0]
                 if positive and negative:
                     rankable.append((head, positive, negative))
+        curriculum = self.curriculum_state()
+        reach_rankable: list[tuple[MappingEvaluation, MappingEvaluation]] = []
+        if curriculum.frontier_index is not None:
+            head = curriculum.frontier_index
+            for values in groups.values():
+                ordered = sorted(
+                    (item for item in values if item.reach_vector[head] is not None),
+                    key=lambda item: float(item.reach_vector[head]),
+                )
+                if (
+                    ordered
+                    and float(ordered[0].reach_vector[head])
+                    < float(ordered[-1].reach_vector[head])
+                ):
+                    reach_rankable.append((ordered[-1], ordered[0]))
         rng = random.Random(self.seed + int(generation) * 130363)
         losses: list[float] = []
         self.network.train()
@@ -344,7 +437,7 @@ class MappingLearningModel:
             loss = torch.tensor(0.0)
             terms = 0
             for observation in selected:
-                logits, value_logits, log_cost = self.network(
+                logits, reach_logits, value_logits, log_cost = self.network(
                     *mapping_tensors(observation.proposal, tile_scale=self.tile_scale)
                 )
                 for head, target in enumerate(observation.target_vector):
@@ -356,6 +449,18 @@ class MappingLearningModel:
                     )
                     loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
                         logits[head], torch.tensor(float(target), dtype=torch.float32)
+                    )
+                    terms += 1
+                for head, target in enumerate(observation.reach_vector):
+                    if target is None or not self.active_reach_heads[head]:
+                        continue
+                    weight = (
+                        reach_weights[head][0] * float(target)
+                        + reach_weights[head][1] * (1.0 - float(target))
+                    )
+                    loss = loss + float(weight) * torch.nn.functional.binary_cross_entropy_with_logits(
+                        reach_logits[head],
+                        torch.tensor(float(target), dtype=torch.float32),
                     )
                     terms += 1
                 for head, target in enumerate(
@@ -387,16 +492,35 @@ class MappingLearningModel:
                 for head, positive, negative in rng.sample(rankable, pair_amount):
                     better = positive[rng.randrange(len(positive))]
                     worse = negative[rng.randrange(len(negative))]
-                    _filters, better_values, _cost = self.network(
+                    _filters, _reaches, better_values, _cost = self.network(
                         *mapping_tensors(better.proposal, tile_scale=self.tile_scale)
                     )
-                    _filters, worse_values, _cost = self.network(
+                    _filters, _reaches, worse_values, _cost = self.network(
                         *mapping_tensors(worse.proposal, tile_scale=self.tile_scale)
                     )
                     loss = loss + float(
                         self.config.get("ranking_loss_weight", 0.5)
                     ) * torch.nn.functional.softplus(
                         -(better_values[head] - worse_values[head])
+                    )
+                    terms += 1
+            reach_pair_amount = min(
+                len(reach_rankable),
+                max(0, int(self.config.get("curriculum_ranking_pairs_per_step", 4))),
+            )
+            if reach_pair_amount and curriculum.frontier_index is not None:
+                head = curriculum.frontier_index
+                for better, worse in rng.sample(reach_rankable, reach_pair_amount):
+                    _passes, better_reaches, _values, _cost = self.network(
+                        *mapping_tensors(better.proposal, tile_scale=self.tile_scale)
+                    )
+                    _passes, worse_reaches, _values, _cost = self.network(
+                        *mapping_tensors(worse.proposal, tile_scale=self.tile_scale)
+                    )
+                    loss = loss + float(
+                        self.config.get("curriculum_ranking_loss_weight", 0.5)
+                    ) * torch.nn.functional.softplus(
+                        -(better_reaches[head] - worse_reaches[head])
                     )
                     terms += 1
             loss = loss / max(1, terms)
@@ -462,6 +586,7 @@ class MappingLearningModel:
             measured = measured[-max(1, int(maximum_examples)):]
         predictions = [self.predict(item.proposal) for item in measured]
         filters: dict[str, object] = {}
+        reach: dict[str, object] = {}
         for head, filter_id in enumerate(LEARNING_FILTER_IDS):
             eligible = [
                 index
@@ -474,13 +599,76 @@ class MappingLearningModel:
             scores = np.asarray(
                 [predictions[index].conditional_probabilities[head] for index in eligible]
             )
+            filter_auc = self._auc(labels >= 0.5, scores)
+            filter_best = self.best_filter_auc[head]
             filters[filter_id] = {
                 "eligible": len(eligible),
                 "mean_conditional_pass_rate": float(np.mean(labels)) if len(labels) else None,
                 "mean_prediction": float(np.mean(scores)) if len(scores) else None,
-                "binary_auc": self._auc(labels >= 0.5, scores),
+                "binary_auc": filter_auc,
+                "best_binary_auc": (
+                    None if np.isnan(filter_best) else float(filter_best)
+                ),
+                "auc_regression": bool(
+                    filter_auc is not None
+                    and not np.isnan(filter_best)
+                    and filter_auc + 0.05 < filter_best
+                ),
+                "brier_score": (
+                    float(np.mean((scores - labels) ** 2)) if len(labels) else None
+                ),
                 "active": bool(self.active_heads[head]),
             }
+            reach_eligible = [
+                index
+                for index, item in enumerate(measured)
+                if item.reach_vector[head] is not None
+            ]
+            reach_labels = np.asarray(
+                [float(measured[index].reach_vector[head]) for index in reach_eligible]
+            )
+            reach_scores = np.asarray(
+                [predictions[index].reach_probabilities[head] for index in reach_eligible]
+            )
+            reach_auc = self._auc(reach_labels >= 0.5, reach_scores)
+            reach_best = self.best_reach_auc[head]
+            reach[filter_id] = {
+                "eligible": len(reach_labels),
+                "mean_reach_rate": (
+                    float(np.mean(reach_labels)) if len(reach_labels) else None
+                ),
+                "mean_prediction": (
+                    float(np.mean(reach_scores)) if len(reach_scores) else None
+                ),
+                "binary_auc": reach_auc,
+                "best_binary_auc": (
+                    None if np.isnan(reach_best) else float(reach_best)
+                ),
+                "auc_regression": bool(
+                    reach_auc is not None
+                    and not np.isnan(reach_best)
+                    and reach_auc + 0.05 < reach_best
+                ),
+                "brier_score": (
+                    float(np.mean((reach_scores - reach_labels) ** 2))
+                    if len(reach_labels)
+                    else None
+                ),
+                "active": bool(self.active_reach_heads[head]),
+                "training_support": int(self.reach_supports[head]),
+            }
+            if filter_auc is not None:
+                self.best_filter_auc[head] = (
+                    filter_auc
+                    if np.isnan(filter_best)
+                    else max(float(filter_best), filter_auc)
+                )
+            if reach_auc is not None:
+                self.best_reach_auc[head] = (
+                    reach_auc
+                    if np.isnan(reach_best)
+                    else max(float(reach_best), reach_auc)
+                )
         values: dict[str, object] = {}
         for head, value_id in enumerate(VALUE_TARGET_IDS):
             labels_and_scores = [
@@ -524,6 +712,26 @@ class MappingLearningModel:
                 "accuracy": pair_correct / pair_total if pair_total else None,
                 "scope": "same_graph",
             }
+        curriculum = self.curriculum_state()
+        frontier_pairs = 0
+        frontier_correct = 0
+        if curriculum.frontier_index is not None:
+            head = curriculum.frontier_index
+            for items in by_graph.values():
+                for left_index, left in enumerate(items):
+                    for right in items[left_index + 1 :]:
+                        left_target = left[0].reach_vector[head]
+                        right_target = right[0].reach_vector[head]
+                        if left_target is None or right_target is None:
+                            continue
+                        if abs(left_target - right_target) < 1e-9:
+                            continue
+                        frontier_pairs += 1
+                        left_score = left[1].reach_probabilities[head]
+                        right_score = right[1].reach_probabilities[head]
+                        frontier_correct += int(
+                            (left_score - right_score) * (left_target - right_target) > 0
+                        )
         return {
             "schema_version": "graph-lab-mapping-metrics-v1",
             "examples": len(observations),
@@ -532,7 +740,17 @@ class MappingLearningModel:
             "metric_partition": "validation" if validation else "training_fallback",
             "metric_examples": len(measured),
             "filters": filters,
+            "reach": reach,
             "values": values,
+            "curriculum": {
+                **curriculum.to_dict(),
+                "within_parent_pairs": frontier_pairs,
+                "within_parent_pair_accuracy": (
+                    frontier_correct / frontier_pairs if frontier_pairs else None
+                ),
+                "learnable_reach_heads": int(np.count_nonzero(self.active_reach_heads)),
+                "learnable_conditional_heads": int(np.count_nonzero(self.active_heads)),
+            },
             "pairwise_ranking": pairwise,
             "within_parent_pair_accuracy": pairwise["profile_emitted"]["accuracy"],
             "within_parent_pairs": pairwise["profile_emitted"]["pairs"],
@@ -548,13 +766,19 @@ class MappingLearningModel:
                 "network": self.network.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "active_heads": self.active_heads,
+                "pass_supports": self.pass_supports,
                 "empirical_rates": self.empirical_rates,
+                "active_reach_heads": self.active_reach_heads,
+                "reach_supports": self.reach_supports,
+                "empirical_reach_rates": self.empirical_reach_rates,
+                "best_filter_auc": self.best_filter_auc,
+                "best_reach_auc": self.best_reach_auc,
                 "active_value_heads": self.active_value_heads,
                 "empirical_value_rates": self.empirical_value_rates,
             },
             temporary,
         )
-        temporary.replace(path)
+        atomic_replace(temporary, path)
 
     @classmethod
     def load_or_create(
@@ -570,7 +794,17 @@ class MappingLearningModel:
         result.network.load_state_dict(payload["network"])
         result.optimizer.load_state_dict(payload["optimizer"])
         result.active_heads = np.asarray(payload["active_heads"], dtype=bool)
+        result.pass_supports = np.asarray(payload["pass_supports"], dtype=np.int64)
         result.empirical_rates = np.asarray(payload["empirical_rates"], dtype=np.float32)
+        result.active_reach_heads = np.asarray(
+            payload["active_reach_heads"], dtype=bool
+        )
+        result.reach_supports = np.asarray(payload["reach_supports"], dtype=np.int64)
+        result.empirical_reach_rates = np.asarray(
+            payload["empirical_reach_rates"], dtype=np.float32
+        )
+        result.best_filter_auc = np.asarray(payload["best_filter_auc"], dtype=float)
+        result.best_reach_auc = np.asarray(payload["best_reach_auc"], dtype=float)
         result.active_value_heads = np.asarray(
             payload["active_value_heads"], dtype=bool
         )

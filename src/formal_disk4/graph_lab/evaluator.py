@@ -17,7 +17,7 @@ from formal_disk4.pipeline.api import (
     FormalSolverAPI,
     SolverAPIRequest,
 )
-from formal_disk4.pipeline.filter_report import FilterReport
+from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS, FilterReport
 from formal_disk4.pipeline.runner import SolverRunner
 
 from .mapping import MappingEvaluation, MappingProposal, sum_counters
@@ -25,6 +25,10 @@ from .feedback import formal_profile_ids
 from .space import DynamicPlanarMap, DualGraphCandidate, build_dynamic_planar_map
 
 if TYPE_CHECKING:
+    from .specialization_model import (
+        SpecializationLearningModel,
+        SpecializationPoolObservation,
+    )
     from .weak_model import WeakOrderLearningModel, WeakOrderRolloutObservation
 
 
@@ -238,11 +242,16 @@ class GraphFormalEvaluator:
         weak_model: WeakOrderLearningModel | None = None,
         weak_sampling: Mapping[str, object] | None = None,
         rollout_sink: Callable[[WeakOrderRolloutObservation], None] | None = None,
+        specialization_model: SpecializationLearningModel | None = None,
+        specialization_sampling: Mapping[str, object] | None = None,
+        specialization_sink: Callable[[SpecializationPoolObservation], None]
+        | None = None,
     ) -> MappingEvaluation:
         """Run bounded stochastic weak-order descendants of one fixed mapping."""
 
         started = time.perf_counter()
         counter_values: list[Mapping[str, int]] = []
+        clean_rollout_reports: list[FilterReport] = []
         profiles: list[Mapping[str, object]] = []
         reasons: list[str] = []
         tainted = False
@@ -281,6 +290,16 @@ class GraphFormalEvaluator:
                     if weak_model is not None
                     else None
                 )
+                specialization_policy = None
+                if specialization_model is not None:
+                    from .specialization_model import SpecializationRankedPolicy
+
+                    specialization_policy = SpecializationRankedPolicy(
+                        proposal,
+                        specialization_model,
+                        dict(specialization_sampling or {}),
+                        random_seed=rollout_seed + 7919,
+                    )
                 with tempfile.TemporaryDirectory(
                     prefix="formal-disk4-mapping-rollout-"
                 ) as raw:
@@ -308,9 +327,13 @@ class GraphFormalEvaluator:
                                         rollout_seed if branch_policy is None else None
                                     ),
                                     weak_order_branch_policy=branch_policy,
+                                    family_specialization_policy=specialization_policy,
                                     collect_learning_diagnostics=True,
+                                    collect_profiles=True,
                                 )
                             )
+                    if not bool(result.summary.get("tainted", False)):
+                        clean_rollout_reports.append(result.filters)
                     statistics = dict(result.summary.get("statistics", {}))
                     counters = {
                         str(name): int(value)
@@ -321,18 +344,11 @@ class GraphFormalEvaluator:
                     counter_values.append(counters)
                     reasons.append(str(statistics.get("stop_reason", "unknown")))
                     tainted |= bool(result.summary.get("tainted", False))
-                    rollout_profiles: list[Mapping[str, object]] = []
-                    candidate_path = directory / str(
-                        config["output"]["candidates_file"]
-                    )
-                    if candidate_path.exists():
-                        with candidate_path.open("r", encoding="utf-8") as stream:
-                            for line in stream:
-                                if line.strip():
-                                    value = json.loads(line)
-                                    if isinstance(value, dict):
-                                        profiles.append(value)
-                                        rollout_profiles.append(value)
+                    rollout_profiles = list(result.profiles)
+                    profiles.extend(rollout_profiles)
+                    if specialization_policy is not None and specialization_sink is not None:
+                        for pool_observation in specialization_policy.observations:
+                            specialization_sink(pool_observation)
                     if branch_policy is not None and rollout_sink is not None:
                         from .weak_model import WeakOrderRolloutObservation
 
@@ -360,6 +376,14 @@ class GraphFormalEvaluator:
                             )
                         )
             counters = sum_counters(counter_values)
+            reach_vector = tuple(
+                sum(
+                    1.0 if report.observations[index].entered else 0.0
+                    for report in clean_rollout_reports
+                )
+                / len(clean_rollout_reports)
+                for index in range(len(LEARNING_FILTER_IDS))
+            ) if clean_rollout_reports else tuple(None for _ in LEARNING_FILTER_IDS)
             return MappingEvaluation(
                 proposal=proposal,
                 filters=FilterReport.from_counters(counters),
@@ -369,9 +393,18 @@ class GraphFormalEvaluator:
                 profiles=tuple(profiles),
                 tainted=tainted,
                 stop_reasons=tuple(reasons),
+                reach_vector=reach_vector,
             )
         except Exception as error:
             counters = sum_counters(counter_values)
+            reach_vector = tuple(
+                sum(
+                    1.0 if report.observations[index].entered else 0.0
+                    for report in clean_rollout_reports
+                )
+                / len(clean_rollout_reports)
+                for index in range(len(LEARNING_FILTER_IDS))
+            ) if clean_rollout_reports else tuple(None for _ in LEARNING_FILTER_IDS)
             return MappingEvaluation(
                 proposal=proposal,
                 filters=FilterReport.from_counters(counters),
@@ -381,6 +414,7 @@ class GraphFormalEvaluator:
                 profiles=tuple(profiles),
                 tainted=True,
                 stop_reasons=tuple(reasons),
+                reach_vector=reach_vector,
                 error=f"{type(error).__name__}: {error}",
             )
 

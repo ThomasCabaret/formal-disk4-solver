@@ -23,6 +23,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--generations", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument(
+        "--exclude-rings",
+        action="store_true",
+        help=(
+            "exclude outside-star plus simple tile-cycle graphs before graph ranking"
+        ),
+    )
+    parser.add_argument(
         "--restart",
         action="store_true",
         help="replace only the known generated files in this Graph Lab output",
@@ -32,7 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    runner = GraphLabRunner.from_file(Path(args.root).resolve(), args.config)
+    runner = GraphLabRunner.from_file(
+        Path(args.root).resolve(),
+        args.config,
+        exclude_rings=True if args.exclude_rings else None,
+    )
     result = runner.run(
         restart=bool(args.restart),
         generations=args.generations,

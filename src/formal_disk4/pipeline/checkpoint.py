@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
+from .output import atomic_replace
+
 
 CHECKPOINT_SCHEMA_VERSION = 1
 SEARCH_SEMANTICS_VERSION = "formal-contour-search-v17"
@@ -255,7 +257,7 @@ class CheckpointStore:
                 handle.write(str(payload_json))
                 handle.write("\n")
                 count += 1
-        temporary.replace(path)
+        atomic_replace(temporary, path)
         return count
 
     def survivor_count(self) -> int:
