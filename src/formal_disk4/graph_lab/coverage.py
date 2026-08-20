@@ -8,7 +8,7 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import AbstractSet, Any, Mapping, Sequence
 
 from formal_disk4.config import load_config
 from formal_disk4.maps.registry import build_map
@@ -52,7 +52,10 @@ def _imposed_symmetry(case: CaseDefinition) -> str | None:
 
 
 def collect_catalog_graph_classes(
-    root: Path, *, maximum_tiles: int
+    root: Path,
+    *,
+    maximum_tiles: int,
+    allowed_tile_counts: AbstractSet[int] | None = None,
 ) -> CatalogCoverageDomain:
     """Collapse catalog cases into graph + imposed-symmetry isomorphism classes."""
 
@@ -79,6 +82,13 @@ def collect_catalog_graph_classes(
                 raise ValueError(
                     f"{tile_count} tiles exceeds the configured maximum "
                     f"of {maximum_tiles}"
+                )
+            if (
+                allowed_tile_counts is not None
+                and tile_count not in allowed_tile_counts
+            ):
+                raise ValueError(
+                    f"{tile_count} tiles is omitted from the configured domain"
                 )
             candidate = candidate_from_planar_map(
                 case.map_name,
@@ -230,6 +240,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", default=".")
     parser.add_argument("--config", default="config/graph_lab/up-to-13.json")
     parser.add_argument("--samples", type=int, default=1_000_000)
+    parser.add_argument(
+        "--tile-counts",
+        metavar="DOMAIN",
+        help="override the tile-count domain, for example 3-13,18-19",
+    )
     parser.add_argument("--seed", type=int)
     parser.add_argument("--report-every", type=int, default=10_000)
     parser.add_argument(
@@ -251,11 +266,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path = root / config_path
     config = json.loads(config_path.read_text(encoding="utf-8"))
     space_config = dict(config.get("space", {}))
+    if args.tile_counts is not None:
+        space_config["tile_counts"] = args.tile_counts
     # Catalog cases are loaded only as post-hoc coverage oracles; they never
     # enter GraphSpace or influence a proposal probability.
     space = GraphSpace.from_config(space_config)
     domain = collect_catalog_graph_classes(
-        root, maximum_tiles=space.maximum_tiles
+        root,
+        maximum_tiles=space.maximum_tiles,
+        allowed_tile_counts=space.allowed_tile_counts,
     )
     seed = int(
         args.seed

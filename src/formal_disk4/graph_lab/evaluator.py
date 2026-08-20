@@ -214,12 +214,31 @@ class GraphFormalEvaluator:
         rng: random.Random,
         amount: int,
     ) -> tuple[MappingProposal, ...]:
-        """Sample cheap complete mappings; quotient rejection remains a target."""
+        """Sample cheap complete mappings; quotient rejection remains a target.
+
+        Cyclic-shift equivariance is an imposed search restriction, not a rare
+        downstream event.  Sampling the unrestricted raw assignment space here
+        would make almost every Stein mapping die before its first weak-order
+        decision, leaving the ranker with no useful contrast.
+        """
 
         with tempfile.TemporaryDirectory(prefix="formal-disk4-mapping-domain-") as raw:
             dynamic, config = self._configured_dynamic(candidate, Path(raw))
             enumerator = self._assignment_enumerator(dynamic, config)
-            total = enumerator.raw_assignment_count()
+            cyclic_automorphism = (
+                dynamic.imposed_automorphism
+                if dynamic.imposed_equivariance_mode == "cyclic_shift"
+                else None
+            )
+            total = (
+                enumerator.cyclic_shift_compatible_assignment_count(
+                    cyclic_automorphism
+                )
+                if cyclic_automorphism is not None
+                else enumerator.raw_assignment_count()
+            )
+            if total <= 0:
+                return ()
             target = min(max(1, int(amount)), total)
             selected: set[int] = set()
             while len(selected) < target:
@@ -227,7 +246,13 @@ class GraphFormalEvaluator:
             return tuple(
                 MappingProposal.from_assignment(
                     candidate,
-                    enumerator.assignment_at(assignment_id),
+                    (
+                        enumerator.cyclic_shift_compatible_assignment_at(
+                            cyclic_automorphism, assignment_id
+                        )
+                        if cyclic_automorphism is not None
+                        else enumerator.assignment_at(assignment_id)
+                    ),
                     dynamic.planar_map,
                 )
                 for assignment_id in sorted(selected)

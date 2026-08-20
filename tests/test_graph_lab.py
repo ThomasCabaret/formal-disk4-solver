@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
@@ -24,7 +25,12 @@ from formal_disk4.graph_lab.specialization_model import (
     SpecializationPrediction,
     SpecializationRankedPolicy,
 )
-from formal_disk4.graph_lab.runner import DiversityArchive, GraphLabRunner
+from formal_disk4.graph_lab.runner import (
+    DiversityArchive,
+    GraphLabRunner,
+    _extend_bounded_replay,
+    _weak_trajectory_id_from_journal_line,
+)
 from formal_disk4.graph_lab.space import DualGraphCandidate
 from formal_disk4.graph_lab.weak_model import (
     WeakOrderDecisionObservation,
@@ -38,6 +44,7 @@ from formal_disk4.enumeration.weak_policy import (
     WeakOrderActionView,
     WeakOrderStateView,
 )
+from formal_disk4.enumeration.weak_orders import WeakOrderEnumerator
 from formal_disk4.words.specialization_policy import (
     SpecializationActionView,
     SpecializationOutcomeView,
@@ -68,6 +75,103 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(weights[0][0], 50.0)
         self.assertAlmostEqual(weights[0][1], 1000 / 1998)
 
+    def test_resume_loader_streams_full_identity_sets_but_keeps_bounded_replay(
+        self,
+    ) -> None:
+        output_root = ROOT / "output"
+        output_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as raw_output:
+            output = Path(raw_output)
+            runner = GraphLabRunner(
+                ROOT,
+                {
+                    "output": {"directory": raw_output},
+                    "space": {"maximum_tiles": 4},
+                    "sampling": {},
+                    "learning": {"hidden_size": 8, "message_layers": 1},
+                    "mapping_learning": {"replay_examples": 2},
+                    "weak_order_learning": {"replay_rollouts": 2},
+                    "evaluation": {
+                        "base_search_config": "config/cycle_campaign/search.json"
+                    },
+                },
+            )
+            (output / "mapping_observations.jsonl").write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "index": index,
+                            "proposal": {"mapping_id": f"mapping-{index}"},
+                        }
+                    )
+                    + "\n"
+                    for index in range(5)
+                ),
+                encoding="utf-8",
+            )
+            (output / "weak_order_rollouts.jsonl").write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "index": index,
+                            "proposal": {"mapping_id": f"mapping-{index}"},
+                            "decisions": [{"action": {"mask": index + 1}}],
+                        }
+                    )
+                    + "\n"
+                    for index in range(5)
+                ),
+                encoding="utf-8",
+            )
+
+            def record(payload):
+                index = int(payload["index"])
+                return SimpleNamespace(
+                    index=index,
+                    proposal=SimpleNamespace(mapping_id=f"mapping-{index}"),
+                )
+
+            with (
+                mock.patch(
+                    "formal_disk4.graph_lab.runner.MappingEvaluation.from_dict",
+                    side_effect=record,
+                ),
+                mock.patch(
+                    "formal_disk4.graph_lab.runner.WeakOrderRolloutObservation.from_dict",
+                    side_effect=record,
+                ),
+            ):
+                mappings, mapping_ids, mapping_total = (
+                    runner._load_mapping_observations()
+                )
+                rollouts, trajectory_ids, rollout_total = (
+                    runner._load_weak_order_rollouts()
+                )
+
+        self.assertEqual([item.index for item in mappings], [3, 4])
+        self.assertEqual([item.index for item in rollouts], [3, 4])
+        self.assertEqual(mapping_total, 5)
+        self.assertEqual(rollout_total, 5)
+        self.assertEqual(mapping_ids, {f"mapping-{index}" for index in range(5)})
+        self.assertEqual(
+            trajectory_ids,
+            {
+                _weak_trajectory_id_from_journal_line(
+                    json.dumps(
+                        {
+                            "proposal": {"mapping_id": f"mapping-{index}"},
+                            "decisions": [{"action": {"mask": index + 1}}],
+                        }
+                    ).encode("utf-8")
+                )
+                for index in range(5)
+            },
+        )
+
+        replay = [1, 2]
+        _extend_bounded_replay(replay, [3, 4], limit=3)
+        self.assertEqual(replay, [2, 3, 4])
+
     def test_mutation_parent_sampling_uses_the_same_size_growth_prior(self) -> None:
         def observation(tile_count: int) -> SimpleNamespace:
             return SimpleNamespace(
@@ -94,9 +198,10 @@ class GraphLabTests(unittest.TestCase):
         self.assertGreater(selected.count(4), 0)
 
     def test_curriculum_uses_direct_reach_without_cross_filter_products(self) -> None:
-        rates = [0.95, 0.40] + [0.0] * 24
-        supports = [100] * 26
-        active = [True, True] + [False] * 24
+        tail = len(LEARNING_FILTER_IDS) - 2
+        rates = [0.95, 0.40] + [0.0] * tail
+        supports = [100] * len(LEARNING_FILTER_IDS)
+        active = [True, True] + [False] * tail
         state = build_curriculum(
             empirical_reach_rates=rates,
             reach_supports=supports,
@@ -107,8 +212,8 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(state.frontier_index, 1)
         score = curriculum_utility(
             state,
-            (0.1, 0.8) + (0.0,) * 24,
-            (0.5,) * 26,
+            (0.1, 0.8) + (0.0,) * tail,
+            (0.5,) * len(LEARNING_FILTER_IDS),
         )
         self.assertGreater(score, 0.8)
         self.assertIn("never multiplied", state.to_dict()["probability_semantics"])
@@ -431,9 +536,65 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(arguments.port, 8766)
         self.assertEqual(arguments.geometry_config, "config/graph_lab/geometry.json")
         self.assertFalse(arguments.exclude_rings)
+        self.assertIsNone(arguments.tile_counts)
+        self.assertFalse(arguments.stein_symmetric)
+        self.assertIsNone(arguments.symmetry_orders)
+        self.assertIsNone(arguments.output_directory)
         self.assertTrue(
             build_lab_app_parser().parse_args(["--exclude-rings"]).exclude_rings
         )
+        self.assertEqual(
+            build_lab_app_parser()
+            .parse_args(["--tile-counts", "3-13,18-19"])
+            .tile_counts,
+            "3-13,18-19",
+        )
+        stein = build_lab_app_parser().parse_args(
+            [
+                "--stein-symmetric",
+                "--symmetry-orders",
+                "2-4,6",
+                "--output-directory",
+                "output/graph_lab/stein-test",
+            ]
+        )
+        self.assertTrue(stein.stein_symmetric)
+        self.assertEqual(stein.symmetry_orders, "2-4,6")
+        self.assertEqual(
+            stein.output_directory, "output/graph_lab/stein-test"
+        )
+
+    def test_stein_mode_filters_before_the_graph_ranker(self) -> None:
+        output_root = ROOT / "output"
+        output_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as raw_output:
+            runner = GraphLabRunner(
+                ROOT,
+                {
+                    "output": {"directory": raw_output},
+                    "space": {
+                        "tile_counts": "3-13",
+                        "stein_symmetric": True,
+                    },
+                    "sampling": {"mutation_fraction": 0.0},
+                    "learning": {
+                        "hidden_size": 8,
+                        "message_layers": 1,
+                        "torch_threads": 1,
+                    },
+                    "evaluation": {
+                        "base_search_config": "config/cycle_campaign/search.json"
+                    },
+                },
+            )
+            pool = runner._candidate_pool(
+                random.Random(20260820), DiversityArchive(()), 6
+            )
+
+        self.assertTrue(runner.stein_symmetric)
+        self.assertTrue(all(runner.space.allows_candidate(item) for item in pool))
+        self.assertTrue(all(item.symmetry_order >= 2 for item in pool))
+        self.assertTrue(all(item.stein_center_tile is not None for item in pool))
 
     def test_ring_exclusion_filters_the_generator_before_graph_ranking(self) -> None:
         output_root = ROOT / "output"
@@ -513,6 +674,13 @@ class GraphLabTests(unittest.TestCase):
             self.assertEqual(without_rings._state_generation(), 624)
             self.assertEqual(with_rings._state_generation(), 624)
 
+            expanded_config = json.loads(json.dumps(base_config))
+            expanded_config["space"]["tile_counts"] = "3-4,18-19"
+            expanded = GraphLabRunner(ROOT, expanded_config)
+            self.assertEqual(with_rings.fingerprint, expanded.fingerprint)
+            self.assertEqual(expanded._state_generation(), 624)
+            self.assertEqual(expanded.space.tile_counts, (3, 4, 18, 19))
+
     def test_mapping_comparison_excludes_exploration_only_parents(self) -> None:
         def record(
             graph_id: str, mode: str, *, passed: bool
@@ -555,7 +723,7 @@ class GraphLabTests(unittest.TestCase):
 
     def test_weak_order_action_pool_is_uniform_without_mandatory_shapes(self) -> None:
         class PoolOnlyModel:
-            active_heads = np.zeros(26, dtype=bool)
+            active_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
 
             @staticmethod
             def prepare_mapping(_proposal):
@@ -564,15 +732,21 @@ class GraphLabTests(unittest.TestCase):
         state = WeakOrderStateView(
             assignment_id=0,
             path=(),
-            counters=(0,) * 13,
-            targets=(2,) * 13,
+            counters=(0,) * 19,
+            targets=(2,) * 19,
             block_count=0,
             resolved_length_equations=0,
             resolved_angle_equations=0,
-            available_mask=(1 << 13) - 1,
+            available_mask=(1 << 19) - 1,
             reference_index=0,
         )
-        masks = tuple(range(1, 1 << 13))
+        enumerator = object.__new__(WeakOrderEnumerator)
+        enumerator.piece_names = tuple(f"T{index}" for index in range(19))
+        enumerator.reference_index = 0
+        enumerator.required_equivariance_transform = None
+        masks = enumerator._candidate_mask_domain(
+            state.available_mask, require_reference=True
+        )
         policy = WeakOrderRankedPolicy(
             object(),
             PoolOnlyModel(),
@@ -621,7 +795,9 @@ class GraphLabTests(unittest.TestCase):
 
     def test_weak_order_ranker_changes_the_stochastic_action_distribution(self) -> None:
         class FakeModel:
-            active_heads = np.asarray([True] + [False] * 25)
+            active_heads = np.asarray(
+                [True] + [False] * (len(LEARNING_FILTER_IDS) - 1)
+            )
             active_value_heads = np.asarray([True, False, False])
             has_policy_signal = True
 
@@ -638,9 +814,9 @@ class GraphLabTests(unittest.TestCase):
                 return tuple(
                     WeakOrderPrediction(
                         conditional_probabilities=(probabilities[index],)
-                        + (0.5,) * 25,
+                        + (0.5,) * (len(LEARNING_FILTER_IDS) - 1),
                         reach_probabilities=(probabilities[index],)
-                        + (0.5,) * 25,
+                        + (0.5,) * (len(LEARNING_FILTER_IDS) - 1),
                         value_probabilities=(probabilities[index], 0.5, 0.5),
                         auxiliary_progress=0.5,
                         expected_seconds=0.0,
@@ -782,17 +958,27 @@ class GraphLabTests(unittest.TestCase):
                 .splitlines()[0]
             )
         self.assertEqual(result.observations, 1)
-        self.assertEqual(len(mapping_record["target_vector"]), 26)
-        self.assertEqual(len(mapping_record["reach_vector"]), 26)
+        self.assertEqual(
+            len(mapping_record["target_vector"]), len(LEARNING_FILTER_IDS)
+        )
+        self.assertEqual(
+            len(mapping_record["reach_vector"]), len(LEARNING_FILTER_IDS)
+        )
         self.assertEqual(mapping_record["rollout_count"], 2)
         self.assertEqual(mapping_metrics["model"]["examples"], 1)
         self.assertEqual(mapping_metrics["selection_modes"]["exploration"]["count"], 1)
         self.assertEqual(len(weak_records), 2)
         self.assertTrue(
-            all(len(record["target_vector"]) == 26 for record in weak_records)
+            all(
+                len(record["target_vector"]) == len(LEARNING_FILTER_IDS)
+                for record in weak_records
+            )
         )
         self.assertTrue(
-            all(len(record["reach_vector"]) == 26 for record in weak_records)
+            all(
+                len(record["reach_vector"]) == len(LEARNING_FILTER_IDS)
+                for record in weak_records
+            )
         )
         self.assertEqual(weak_metrics["model"]["rollouts"], 2)
         self.assertEqual(

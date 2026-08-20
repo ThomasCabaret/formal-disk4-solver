@@ -27,6 +27,28 @@ class GraphLabCoverageTests(unittest.TestCase):
             sum(len(target.case_ids) for target in domain.classes),
         )
 
+    def test_catalog_oracle_respects_a_discontinuous_size_domain(self) -> None:
+        allowed = frozenset({3, 4, 18, 19})
+        domain = collect_catalog_graph_classes(
+            ROOT,
+            maximum_tiles=19,
+            allowed_tile_counts=allowed,
+        )
+
+        self.assertTrue(domain.classes)
+        self.assertTrue(
+            all(
+                target.representative.tile_count in allowed
+                for target in domain.classes
+            )
+        )
+        self.assertTrue(
+            any(
+                "omitted from the configured domain" in str(item["reason"])
+                for item in domain.excluded_cases
+            )
+        )
+
     def test_unlearned_prior_quickly_rediscovers_small_cycle_controls(self) -> None:
         targets = tuple(
             CatalogGraphClass(

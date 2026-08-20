@@ -154,11 +154,6 @@ class SolverRunner:
                 raise ValueError(
                     "Dynamic planar-map names must exactly match config['maps']"
                 )
-            if bool(self.config.get("checkpoint", {}).get("enabled", True)):
-                raise ValueError(
-                    "Dynamic planar maps require checkpoint.enabled=false because "
-                    "their structure is not part of the production config fingerprint"
-                )
         self.stats = RunStats()
         self._last_progress = self.stats.started_at
         self._stop_requested = False
@@ -224,6 +219,7 @@ class SolverRunner:
                     if self._raw_assignment_ids_by_map
                     else None
                 ),
+                planar_maps=self._provided_planar_maps,
             ),
             interval_seconds=float(checkpoint_config.get("interval_seconds", 60.0)),
             enabled=bool(checkpoint_config.get("enabled", True)),

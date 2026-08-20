@@ -27,6 +27,112 @@ OUTSIDE = -1
 GRAPH_SPACE_VERSION = "dual-planar-graph-space-v1"
 
 
+def parse_tile_count_spec(value: str | Sequence[int]) -> tuple[int, ...]:
+    """Parse a tile-count domain such as ``3-13,18-19``."""
+
+    counts: set[int] = set()
+    if isinstance(value, str):
+        tokens = [token.strip() for token in value.split(",")]
+        if not tokens or any(not token for token in tokens):
+            raise ValueError("Tile-count specification contains an empty item")
+        for token in tokens:
+            if "-" not in token:
+                try:
+                    counts.add(int(token))
+                except ValueError as error:
+                    raise ValueError(
+                        f"Invalid tile count {token!r}; expected N or N-M"
+                    ) from error
+                continue
+            parts = [part.strip() for part in token.split("-")]
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Invalid tile-count range {token!r}; expected N-M"
+                )
+            try:
+                first, last = (int(part) for part in parts)
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid tile-count range {token!r}; expected N-M"
+                ) from error
+            if first > last:
+                raise ValueError(
+                    f"Invalid descending tile-count range {token!r}"
+                )
+            counts.update(range(first, last + 1))
+    else:
+        try:
+            counts.update(int(item) for item in value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Tile counts must be integers") from error
+    if not counts:
+        raise ValueError("At least one tile count is required")
+    if min(counts) < 3:
+        raise ValueError("Graph Lab tile counts must be at least 3")
+    return tuple(sorted(counts))
+
+
+def format_tile_count_spec(tile_counts: Sequence[int]) -> str:
+    """Compact a tile-count domain back to ``N-M,K`` notation."""
+
+    counts = parse_tile_count_spec(tile_counts)
+    ranges: list[str] = []
+    first = previous = counts[0]
+    for value in counts[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        ranges.append(str(first) if first == previous else f"{first}-{previous}")
+        first = previous = value
+    ranges.append(str(first) if first == previous else f"{first}-{previous}")
+    return ",".join(ranges)
+
+
+def parse_symmetry_order_spec(value: str | Sequence[int]) -> tuple[int, ...]:
+    """Parse a symmetry-order domain such as ``2-4,6,8``."""
+
+    # Reuse the range parser by shifting the minimum-domain validation out of
+    # its way.  Symmetry order one is deliberately not a Stein-symmetric mode.
+    if isinstance(value, str):
+        prefixed: list[int] = []
+        for token in (item.strip() for item in value.split(",")):
+            if not token:
+                raise ValueError("Symmetry-order specification contains an empty item")
+            if "-" not in token:
+                try:
+                    prefixed.append(int(token))
+                except ValueError as error:
+                    raise ValueError(
+                        f"Invalid symmetry order {token!r}; expected N or N-M"
+                    ) from error
+                continue
+            parts = [part.strip() for part in token.split("-")]
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Invalid symmetry-order range {token!r}; expected N-M"
+                )
+            try:
+                first, last = (int(part) for part in parts)
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid symmetry-order range {token!r}; expected N-M"
+                ) from error
+            if first > last:
+                raise ValueError(
+                    f"Invalid descending symmetry-order range {token!r}"
+                )
+            prefixed.extend(range(first, last + 1))
+        orders = tuple(sorted(set(prefixed)))
+    else:
+        try:
+            orders = tuple(sorted({int(item) for item in value}))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Symmetry orders must be integers") from error
+    if not orders or min(orders) < 2:
+        raise ValueError("Stein symmetry orders must all be at least two")
+    return orders
+
+
 def _canonical_cycle(values: Sequence[int]) -> tuple[int, ...]:
     cycle = tuple(int(value) for value in values)
     if not cycle:
@@ -62,6 +168,65 @@ def _permutation_order(permutation: Sequence[int]) -> int:
             length += 1
         result = math.lcm(result, max(1, length))
     return result
+
+
+def _permutation_power(
+    permutation: Sequence[int], exponent: int
+) -> tuple[int, ...]:
+    """Return a nonnegative power using the map's source-to-target convention."""
+
+    base = tuple(int(value) for value in permutation)
+    result = tuple(range(len(base)))
+    for _ in range(int(exponent)):
+        result = tuple(base[result[index]] for index in range(len(base)))
+    return result
+
+
+def _positive_stein_generator_name(
+    planar_map: PlanarMap,
+    candidate: "DualGraphCandidate",
+    automorphism_names: Mapping[tuple[int, ...], str],
+) -> str:
+    """Normalize a Stein rotation to the solver's positive contour shift.
+
+    A cyclic subgroup has several equivalent generators.  The weak-order
+    construction calls one fundamental-domain advance positive, so feeding it
+    the inverse generator would make the same symmetric mapping appear empty.
+    Pick the generator whose action on the distinguished central contour is
+    exactly that positive advance.  This changes only the generator, never the
+    imposed subgroup or the set of symmetric solutions.
+    """
+
+    permutation = candidate.imposed_permutation
+    center = candidate.stein_center_tile
+    if permutation is None or center is None:
+        raise ValueError("Stein generator normalization needs a center and an action")
+    order = _permutation_order(permutation)
+    if order < 2:
+        raise ValueError("Stein symmetry must have nontrivial order")
+    center_piece = planar_map.piece_map()[f"T{center}"]
+    contour = tuple(center_piece.contour_vertices)
+    if len(contour) % order:
+        raise ValueError(
+            "The central contour length is incompatible with the Stein symmetry"
+        )
+    positive_shift = len(contour) // order
+    automorphisms = {item.name: item for item in planar_map.automorphisms}
+    for exponent in range(1, order):
+        if math.gcd(exponent, order) != 1:
+            continue
+        powered = _permutation_power(permutation, exponent)
+        name = automorphism_names.get(powered)
+        if name is None:
+            continue
+        automorphism = automorphisms[name]
+        mapped = tuple(automorphism.map_vertex(vertex) for vertex in contour)
+        if mapped == contour[positive_shift:] + contour[:positive_shift]:
+            return name
+    raise ValueError(
+        "No generator of the imposed Stein subgroup advances the central "
+        "contour by one positive fundamental domain"
+    )
 
 
 def _graph_from_edges(tile_count: int, edges: Sequence[Sequence[int]]) -> nx.Graph:
@@ -133,17 +298,95 @@ def _faces(
 
 
 def _automorphism_permutations(graph: nx.Graph) -> tuple[tuple[int, ...], ...]:
-    matcher = nx.algorithms.isomorphism.GraphMatcher(
-        graph,
-        graph,
-        node_match=lambda left, right: bool(left.get("outside"))
-        == bool(right.get("outside")),
-    )
-    output = {
-        tuple(int(mapping[index]) for index in range(len(graph) - 1))
-        for mapping in matcher.isomorphisms_iter()
-        if int(mapping[OUTSIDE]) == OUTSIDE
+    """Enumerate automorphisms fixing outside from the planar rotation system.
+
+    Graph Lab admits only 3-connected planar dual graphs.  By uniqueness of
+    their spherical embedding, every automorphism either preserves or reverses
+    all cyclic neighbour orders.  Once the image of one outside half-edge and
+    that global orientation are chosen, the complete vertex map is forced.
+
+    This produces the same group as a generic graph-isomorphism search while
+    avoiding its combinatorial search tree on highly symmetric 18/19-tile
+    candidates.
+    """
+
+    embedding = _embedding(graph)
+    rotations = {
+        node: tuple(embedding.neighbors_cw_order(node)) for node in embedding
     }
+    outside_rotation = rotations[OUTSIDE]
+    if not outside_rotation:
+        return ()
+    source_anchor = outside_rotation[0]
+    output: set[tuple[int, ...]] = set()
+
+    for target_anchor in outside_rotation:
+        for orientation in (1, -1):
+            mapping: dict[int, int] = {
+                OUTSIDE: OUTSIDE,
+                source_anchor: target_anchor,
+            }
+            inverse: dict[int, int] = {
+                OUTSIDE: OUTSIDE,
+                target_anchor: source_anchor,
+            }
+            pending = [OUTSIDE, source_anchor]
+            valid = True
+            while pending and valid:
+                source = pending.pop()
+                target = mapping[source]
+                source_rotation = rotations[source]
+                target_rotation = rotations[target]
+                if len(source_rotation) != len(target_rotation):
+                    valid = False
+                    break
+                known = next(
+                    (neighbour for neighbour in source_rotation if neighbour in mapping),
+                    None,
+                )
+                if known is None:
+                    valid = False
+                    break
+                mapped_known = mapping[known]
+                if mapped_known not in target_rotation:
+                    valid = False
+                    break
+                source_offset = source_rotation.index(known)
+                target_offset = target_rotation.index(mapped_known)
+                degree = len(source_rotation)
+                for step in range(degree):
+                    source_neighbour = source_rotation[
+                        (source_offset + step) % degree
+                    ]
+                    target_neighbour = target_rotation[
+                        (target_offset + orientation * step) % degree
+                    ]
+                    existing = mapping.get(source_neighbour)
+                    inverse_existing = inverse.get(target_neighbour)
+                    if (
+                        existing is not None
+                        and existing != target_neighbour
+                    ) or (
+                        inverse_existing is not None
+                        and inverse_existing != source_neighbour
+                    ):
+                        valid = False
+                        break
+                    if existing is None:
+                        mapping[source_neighbour] = target_neighbour
+                        inverse[target_neighbour] = source_neighbour
+                        pending.append(source_neighbour)
+
+            tile_count = len(graph) - 1
+            if not valid or len(mapping) != len(graph):
+                continue
+            permutation = tuple(mapping[index] for index in range(tile_count))
+            if any(
+                not graph.has_edge(mapping[left], mapping[right])
+                for left, right in graph.edges()
+            ):
+                continue
+            output.add(permutation)
     return tuple(sorted(output))
 
 
@@ -170,6 +413,44 @@ def _direct_automorphisms(graph: nx.Graph) -> tuple[tuple[int, ...], ...]:
     return tuple(sorted(set(direct)))
 
 
+def _is_direct_automorphism(
+    graph: nx.Graph, permutation: Sequence[int]
+) -> bool:
+    """Test one known permutation without enumerating the automorphism group.
+
+    Three-connectivity makes the spherical embedding unique up to reflection.
+    A direct automorphism preserves the cyclic neighbour order at every vertex.
+    Checking the supplied action is linear in the embedding; enumerating the
+    complete group can be factorial on deliberately high-symmetry candidates.
+    """
+
+    tile_count = len(graph) - 1
+    normalized = tuple(int(value) for value in permutation)
+    if tuple(sorted(normalized)) != tuple(range(tile_count)):
+        return False
+    mapping = {OUTSIDE: OUTSIDE}
+    mapping.update({index: normalized[index] for index in range(tile_count)})
+    if any(
+        not graph.has_edge(mapping[left], mapping[right])
+        for left, right in graph.edges()
+    ):
+        return False
+
+    embedding = _embedding(graph)
+    rotations = {
+        node: tuple(embedding.neighbors_cw_order(node)) for node in embedding
+    }
+    preserving = True
+    reversing = True
+    for source, rotation in rotations.items():
+        mapped = tuple(mapping[value] for value in rotation)
+        target = rotations[mapping[source]]
+        preserving &= _cyclic_equal(mapped, target)
+        reversing &= _cyclic_equal(mapped, tuple(reversed(target)))
+    identity = tuple(range(tile_count))
+    return bool(preserving and (not reversing or normalized == identity))
+
+
 @dataclass(frozen=True)
 class DualGraphCandidate:
     tile_count: int
@@ -180,6 +461,7 @@ class DualGraphCandidate:
     parent_id: str | None = None
     source_map_name: str | None = None
     source_symmetry: str | None = None
+    stein_center_tile: int | None = None
 
     @property
     def graph_id(self) -> str:
@@ -189,6 +471,10 @@ class DualGraphCandidate:
             "edges": self.edges,
             "imposed": self.imposed_permutation,
         }
+        # Keep historical non-Stein graph identifiers stable while making the
+        # distinguished central tile part of a Stein structural candidate.
+        if self.stein_center_tile is not None:
+            payload["stein_center"] = self.stein_center_tile
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return "dg-" + hashlib.sha256(encoded).hexdigest()[:32]
 
@@ -259,6 +545,7 @@ class DualGraphCandidate:
             "parent_id": self.parent_id,
             "source_map_name": self.source_map_name,
             "source_symmetry": self.source_symmetry,
+            "stein_center_tile": self.stein_center_tile,
         }
 
     @classmethod
@@ -290,6 +577,11 @@ class DualGraphCandidate:
             source_symmetry=(
                 str(payload["source_symmetry"])
                 if payload.get("source_symmetry")
+                else None
+            ),
+            stein_center_tile=(
+                int(payload["stein_center_tile"])
+                if payload.get("stein_center_tile") is not None
                 else None
             ),
         )
@@ -466,6 +758,7 @@ def build_dynamic_planar_map(candidate: DualGraphCandidate) -> DynamicPlanarMap:
     face_index = {_canonical_cycle(face): index for index, face in enumerate(faces)}
     permutations = _automorphism_permutations(graph)
     automorphisms: list[MapAutomorphism] = []
+    automorphism_names: dict[tuple[int, ...], str] = {}
     imposed_name = None
     orders: list[int] = []
     for index, permutation in enumerate(permutations):
@@ -490,25 +783,39 @@ def build_dynamic_planar_map(candidate: DualGraphCandidate) -> DynamicPlanarMap:
                     vertex_map=tuple(vertex_map),
                 )
             )
+            automorphism_names[tuple(permutation)] = name
             orders.append(_permutation_order(permutation))
             if candidate.imposed_permutation == permutation:
                 imposed_name = name
 
+    reference_tile = (
+        candidate.stein_center_tile
+        if candidate.stein_center_tile is not None
+        else 0
+    )
+    if not 0 <= reference_tile < candidate.tile_count:
+        raise ValueError("The distinguished Stein center tile is out of range")
     result = PlanarMap(
         name=f"graph-lab-{candidate.graph_id[3:15]}",
         pieces=tuple(pieces),
         vertices=vertices,
         interfaces=tuple(interfaces),
         automorphisms=tuple(automorphisms),
-        reference_piece=piece_names[0],
+        reference_piece=piece_names[reference_tile],
         hypotheses=ProblemHypotheses(
             piecewise_c2_boundary=True,
-            center_strictly_inside_one_tile=False,
+            center_strictly_inside_one_tile=(
+                candidate.stein_center_tile is not None
+            ),
         ),
     )
     result.validate()
     if candidate.imposed_permutation is not None and imposed_name is None:
         raise ValueError("The imposed permutation does not preserve the chosen embedding")
+    if candidate.stein_center_tile is not None:
+        imposed_name = _positive_stein_generator_name(
+            result, candidate, automorphism_names
+        )
     return DynamicPlanarMap(
         result,
         imposed_name,
@@ -565,6 +872,10 @@ class GraphSpace:
         self,
         *,
         maximum_tiles: int = 13,
+        tile_counts: str | Sequence[int] | None = None,
+        stein_symmetric: bool = False,
+        symmetry_orders: str | Sequence[int] | None = None,
+        stein_symmetry_order_decay: float = 1.25,
         size_growth_factor: float = 1.4,
         symmetric_prior_fraction: float = 0.45,
         imposed_symmetry_bias: float = 0.75,
@@ -573,13 +884,48 @@ class GraphSpace:
         symmetric_edge_subset_attempts: int = 24,
         exclude_rings: bool = False,
     ) -> None:
-        self.maximum_tiles = max(3, min(13, int(maximum_tiles)))
         self.exclude_rings = bool(exclude_rings)
-        if self.exclude_rings and self.maximum_tiles < 4:
+        self.stein_symmetric = bool(stein_symmetric)
+        self.symmetry_orders = (
+            parse_symmetry_order_spec(symmetry_orders)
+            if symmetry_orders is not None
+            else None
+        )
+        if self.symmetry_orders is not None and not self.stein_symmetric:
+            raise ValueError("symmetry_orders requires stein_symmetric mode")
+        decay = float(stein_symmetry_order_decay)
+        if not math.isfinite(decay) or decay < 0.0:
+            raise ValueError(
+                "stein_symmetry_order_decay must be finite and nonnegative"
+            )
+        self.stein_symmetry_order_decay = decay
+        requested = parse_tile_count_spec(
+            tile_counts
+            if tile_counts is not None
+            else tuple(range(3, max(3, int(maximum_tiles)) + 1))
+        )
+        self.requested_tile_counts = tuple(
+            value for value in requested if not (self.exclude_rings and value == 3)
+        )
+        self.tile_counts = tuple(
+            value
+            for value in self.requested_tile_counts
+            if not self.stein_symmetric
+            or self._stein_feasible_symmetry_orders(value)
+        )
+        if not self.tile_counts:
+            if self.stein_symmetric:
+                raise ValueError(
+                    "The requested tile-count/symmetry domain contains no "
+                    "rotational Stein size n=1+k*m with m>=2 and k>=2"
+                )
             raise ValueError(
                 "Excluding simple rings leaves no valid 3-connected graph "
-                "when maximum_tiles is below four"
+                "in the requested tile-count domain"
             )
+        self.allowed_tile_counts = frozenset(self.tile_counts)
+        self.minimum_tiles = min(self.tile_counts)
+        self.maximum_tiles = max(self.tile_counts)
         self.size_growth_factor = float(size_growth_factor)
         if not math.isfinite(self.size_growth_factor) or self.size_growth_factor <= 0:
             raise ValueError("size_growth_factor must be finite and strictly positive")
@@ -597,6 +943,12 @@ class GraphSpace:
     def from_config(cls, config: Mapping[str, object]) -> "GraphSpace":
         return cls(
             maximum_tiles=int(config.get("maximum_tiles", 13)),
+            tile_counts=config.get("tile_counts"),  # type: ignore[arg-type]
+            stein_symmetric=bool(config.get("stein_symmetric", False)),
+            symmetry_orders=config.get("symmetry_orders"),  # type: ignore[arg-type]
+            stein_symmetry_order_decay=float(
+                config.get("stein_symmetry_order_decay", 1.25)
+            ),
             size_growth_factor=float(config.get("size_growth_factor", 1.4)),
             symmetric_prior_fraction=float(
                 config.get("symmetric_prior_fraction", 0.45)
@@ -627,8 +979,8 @@ class GraphSpace:
         positive probability.
         """
 
-        minimum = 4 if self.exclude_rings else 3
-        sizes = tuple(range(minimum, self.maximum_tiles + 1))
+        minimum = self.minimum_tiles
+        sizes = self.tile_counts
         raw = tuple(
             self.size_growth_factor ** (size - minimum) for size in sizes
         )
@@ -638,8 +990,10 @@ class GraphSpace:
     def size_sampling_weight(self, tile_count: int) -> float:
         """Unnormalised size weight, also used by mutation-parent sampling."""
 
-        minimum = 4 if self.exclude_rings else 3
-        return self.size_growth_factor ** (int(tile_count) - minimum)
+        return self.size_growth_factor ** (int(tile_count) - self.minimum_tiles)
+
+    def allows_tile_count(self, tile_count: int) -> bool:
+        return int(tile_count) in self.allowed_tile_counts
 
     def _sample_size(self, rng: random.Random) -> int:
         distribution = self.size_sampling_distribution()
@@ -672,6 +1026,8 @@ class GraphSpace:
     ) -> DualGraphCandidate:
         graph = _normalized_graph(graph)
         validate_dual_graph(graph, maximum_tiles=self.maximum_tiles)
+        if not self.allows_tile_count(len(graph) - 1):
+            raise ValueError("The candidate tile count is outside the requested domain")
         edges = tuple(
             sorted((min(left, right), max(left, right)) for left, right in graph.edges())
         )
@@ -759,10 +1115,13 @@ class GraphSpace:
         origin: str,
         mutation: str,
         parent_id: str | None,
+        stein_center_tile: int | None = None,
     ) -> DualGraphCandidate:
         graph = _normalized_graph(graph)
         validate_dual_graph(graph, maximum_tiles=self.maximum_tiles)
         tile_count = len(graph) - 1
+        if not self.allows_tile_count(tile_count):
+            raise ValueError("The candidate tile count is outside the requested domain")
         if sorted(permutation) != list(range(tile_count)):
             raise ValueError("The imposed permutation does not cover every tile")
         edges = {
@@ -772,19 +1131,23 @@ class GraphSpace:
             self._mapped_edge(edge, permutation) not in edges for edge in edges
         ):
             raise ValueError("The equivariant mutation broke the imposed symmetry")
-        if permutation not in _direct_automorphisms(graph):
+        if not _is_direct_automorphism(graph, permutation):
             raise ValueError(
                 "The imposed cyclic action is not an orientation-preserving "
                 "automorphism of the planar embedding"
             )
-        return DualGraphCandidate(
+        candidate = DualGraphCandidate(
             tile_count=tile_count,
             edges=tuple(sorted(edges)),
             imposed_permutation=permutation,
             origin=origin,
             mutation=mutation,
             parent_id=parent_id,
+            stein_center_tile=stein_center_tile,
         )
+        if stein_center_tile is not None:
+            self._validate_stein_symmetric_candidate(candidate)
+        return candidate
 
     @staticmethod
     def _feasible_symmetry_orders(tile_count: int) -> tuple[int, ...]:
@@ -801,6 +1164,143 @@ class GraphSpace:
             order
             for order in range(2, int(tile_count) + 1)
             if int(tile_count) % order in (0, 1)
+        )
+
+    def _stein_feasible_symmetry_orders(
+        self, tile_count: int
+    ) -> tuple[int, ...]:
+        """Orders allowed by Theorem 2 and Corollary 3 of the Stein note.
+
+        ``docs/rotational_stein_structural_note.tex`` proves that a Stein
+        rotation fixes exactly the central tile, that every other tile belongs
+        to a full orbit, and that at least two non-central orbits are needed.
+        Thus ``tile_count = 1 + k*order`` with ``k >= 2``.
+        """
+
+        permitted = set(self.symmetry_orders) if self.symmetry_orders else None
+        return tuple(
+            order
+            for order in range(2, int(tile_count))
+            if (int(tile_count) - 1) % order == 0
+            and (int(tile_count) - 1) // order >= 2
+            and (permitted is None or order in permitted)
+        )
+
+    @staticmethod
+    def _tile_orbits(permutation: Sequence[int]) -> tuple[tuple[int, ...], ...]:
+        unseen = set(range(len(permutation)))
+        output = []
+        while unseen:
+            seed = min(unseen)
+            orbit = []
+            current = seed
+            while current in unseen:
+                unseen.remove(current)
+                orbit.append(current)
+                current = int(permutation[current])
+            if current != seed:
+                raise ValueError("The imposed tile action is not a permutation")
+            output.append(tuple(orbit))
+        return tuple(output)
+
+    @staticmethod
+    def _has_two_orbit_stein_reflection(
+        candidate: DualGraphCandidate,
+        moving_orbits: Sequence[Sequence[int]],
+    ) -> bool:
+        """Check the dihedral graph action forced by Theorem 4 of the note."""
+
+        permutation = candidate.imposed_permutation
+        center = candidate.stein_center_tile
+        if permutation is None or center is None or len(moving_orbits) != 2:
+            return False
+        first, second = (set(orbit) for orbit in moving_orbits)
+        inverse = [0] * len(permutation)
+        for source, target in enumerate(permutation):
+            inverse[target] = source
+        direct = set(_direct_automorphisms(candidate.graph()))
+        for reflection in _automorphism_permutations(candidate.graph()):
+            if reflection in direct or _permutation_order(reflection) != 2:
+                continue
+            if reflection[center] != center:
+                continue
+            if {reflection[tile] for tile in first} != second:
+                continue
+            # s R s = R^{-1}, the defining relation of the D_m action proved
+            # in Theorem 4(d).
+            if all(
+                reflection[permutation[reflection[tile]]] == inverse[tile]
+                for tile in range(candidate.tile_count)
+            ):
+                return True
+        return False
+
+    def _validate_stein_symmetric_candidate(
+        self, candidate: DualGraphCandidate
+    ) -> None:
+        """Validate only audited necessary Stein/rotation conditions.
+
+        The graph-only checks come from Theorem 2 and Corollary 3 of
+        ``docs/rotational_stein_structural_note.tex``.  The centered matching
+        conclusion is intentionally not checked here: it depends on a contour
+        mapping, not on the unlabelled contact graph alone.
+        """
+
+        permutation = candidate.imposed_permutation
+        center = candidate.stein_center_tile
+        if permutation is None or candidate.symmetry_order < 2:
+            raise ValueError("A symmetric Stein candidate needs a nontrivial rotation")
+        if center is None or not 0 <= center < candidate.tile_count:
+            raise ValueError("A symmetric Stein candidate needs one central tile")
+        order = candidate.symmetry_order
+        orbits = self._tile_orbits(permutation)
+        fixed = tuple(orbit[0] for orbit in orbits if len(orbit) == 1)
+        if fixed != (center,):
+            raise ValueError("The Stein center must be the unique fixed tile")
+        moving_orbits = tuple(orbit for orbit in orbits if orbit != (center,))
+        if any(len(orbit) != order for orbit in moving_orbits):
+            raise ValueError("Every non-central Stein tile must have a full orbit")
+        if len(moving_orbits) < 2:
+            raise ValueError("A rotational Stein graph needs at least two free tile orbits")
+        graph = candidate.graph()
+        if graph.has_edge(OUTSIDE, center):
+            raise ValueError("The Stein center cannot have a nondegenerate outer arc")
+        orbit_index = {
+            tile: index
+            for index, orbit in enumerate(orbits)
+            for tile in orbit
+        }
+        outer_orbits = {
+            orbit_index[tile]
+            for tile in graph.neighbors(OUTSIDE)
+            if tile != center
+        }
+        if len(outer_orbits) < 2:
+            raise ValueError(
+                "At least two distinct non-central rotation orbits must meet the boundary"
+            )
+        if len(moving_orbits) == 2:
+            noncentral = set(range(candidate.tile_count)) - {center}
+            if set(graph.neighbors(OUTSIDE)) != noncentral:
+                raise ValueError(
+                    "Theorem 4 forces every tile in a two-orbit Stein graph to be outer"
+                )
+            if not self._has_two_orbit_stein_reflection(candidate, moving_orbits):
+                raise ValueError(
+                    "Theorem 4 forces a dihedral reflection exchanging the two outer orbits"
+                )
+
+    def allows_candidate(self, candidate: DualGraphCandidate) -> bool:
+        if not self.allows_tile_count(candidate.tile_count):
+            return False
+        if not self.stein_symmetric:
+            return True
+        try:
+            self._validate_stein_symmetric_candidate(candidate)
+        except ValueError:
+            return False
+        return candidate.symmetry_order in self._stein_feasible_symmetry_orders(
+            candidate.tile_count
         )
 
     @staticmethod
@@ -829,6 +1329,28 @@ class GraphSpace:
         order = int(rng.choices(orders, weights=weights, k=1)[0])
         return order, self._cyclic_permutation(tile_count, order)
 
+    def _choose_stein_cyclic_action(
+        self, tile_count: int, rng: random.Random
+    ) -> tuple[int, tuple[int, ...], int] | None:
+        orders = self._stein_feasible_symmetry_orders(tile_count)
+        if not orders:
+            return None
+        # Lower rotational orders receive more proposals, but every compatible
+        # order remains reachable.  This is topology-agnostic: it depends only
+        # on the abstract C_m action, never on a known successful graph family.
+        weights = tuple(
+            (2.0 / float(order)) ** self.stein_symmetry_order_decay
+            for order in orders
+        )
+        order = int(rng.choices(orders, weights=weights, k=1)[0])
+        permutation = self._cyclic_permutation(tile_count, order)
+        fixed = tuple(
+            index for index, target in enumerate(permutation) if index == target
+        )
+        if len(fixed) != 1:
+            raise RuntimeError("A Stein cyclic action must have exactly one fixed tile")
+        return order, permutation, fixed[0]
+
     def _all_edge_orbits(
         self, tile_count: int, permutation: tuple[int, ...]
     ) -> tuple[tuple[tuple[int, int], ...], ...]:
@@ -850,6 +1372,7 @@ class GraphSpace:
         rng: random.Random,
         *,
         attempts: int | None = None,
+        stein_center_tile: int | None = None,
     ) -> DualGraphCandidate | None:
         """Sample complete edge orbits without assuming a graph family.
 
@@ -892,6 +1415,7 @@ class GraphSpace:
                     origin="prior",
                     mutation="symmetric_edge_orbit_subset",
                     parent_id=None,
+                    stein_center_tile=stein_center_tile,
                 )
             except (ValueError, nx.NetworkXError):
                 continue
@@ -906,6 +1430,8 @@ class GraphSpace:
         order: int,
         permutation: tuple[int, ...],
         rng: random.Random,
+        *,
+        stein_center_tile: int | None = None,
     ) -> DualGraphCandidate | None:
         """Build a generic cyclic planar scaffold from orbit data alone.
 
@@ -974,6 +1500,7 @@ class GraphSpace:
                 origin="prior",
                 mutation="symmetric_orbit_scaffold",
                 parent_id=None,
+                stein_center_tile=stein_center_tile,
             )
         except (ValueError, nx.NetworkXError):
             return None
@@ -1031,6 +1558,7 @@ class GraphSpace:
                         origin="mutation",
                         mutation=action,
                         parent_id=parent.graph_id,
+                        stein_center_tile=parent.stein_center_tile,
                     )
                 except (ValueError, nx.NetworkXError):
                     continue
@@ -1096,6 +1624,69 @@ class GraphSpace:
             return apply_imposition(current)
         return None
 
+    def _sample_stein_symmetric_prior(
+        self, tile_count: int, rng: random.Random
+    ) -> DualGraphCandidate | None:
+        """Sample only audited rotational Stein graph/symmetry structures.
+
+        The shell scaffold is a cheap proposal, not a restriction.  The
+        invariant edge-orbit sampler has positive support on every labelled
+        simple graph admitting the selected cyclic action; exact planarity,
+        3-connectivity, and the audited Stein conditions are then checked.
+        No catalog graph or known solution is injected.
+        """
+
+        for _attempt in range(48):
+            action = self._choose_stein_cyclic_action(tile_count, rng)
+            if action is None:
+                return None
+            order, permutation, center = action
+            current = None
+            if rng.random() < self.symmetric_edge_subset_fraction:
+                current = self._sample_invariant_edge_subset(
+                    tile_count,
+                    permutation,
+                    rng,
+                    stein_center_tile=center,
+                )
+            if current is None:
+                current = self._symmetric_scaffold(
+                    tile_count,
+                    order,
+                    permutation,
+                    rng,
+                    stein_center_tile=center,
+                )
+            if current is None:
+                current = self._sample_invariant_edge_subset(
+                    tile_count,
+                    permutation,
+                    rng,
+                    stein_center_tile=center,
+                )
+            if current is None:
+                continue
+            mutations = []
+            for _step in range(rng.randrange(0, 7)):
+                mutated = self._mutate_equivariant_edges(current, rng)
+                if mutated is None:
+                    break
+                current = mutated
+                mutations.append(mutated.mutation)
+            if not self.allows_candidate(current):
+                continue
+            if mutations:
+                current = DualGraphCandidate(
+                    tile_count=current.tile_count,
+                    edges=current.edges,
+                    imposed_permutation=current.imposed_permutation,
+                    origin="prior",
+                    mutation="stein_symmetric_orbit_walk:" + "+".join(mutations),
+                    stein_center_tile=current.stein_center_tile,
+                )
+            return current
+        return None
+
     @staticmethod
     def _edge_flip(graph: nx.Graph, rng: random.Random) -> nx.Graph | None:
         embedding = _embedding(graph)
@@ -1120,6 +1711,13 @@ class GraphSpace:
 
     def sample_prior(self, rng: random.Random) -> DualGraphCandidate:
         tile_count = self._sample_size(rng)
+        if self.stein_symmetric:
+            candidate = self._sample_stein_symmetric_prior(tile_count, rng)
+            if candidate is None:
+                raise RuntimeError(
+                    "Could not sample a valid rotational Stein graph in the requested domain"
+                )
+            return candidate
         if rng.random() < self.symmetric_prior_fraction:
             symmetric = self._sample_symmetric_prior(tile_count, rng)
             if symmetric is not None:
@@ -1142,6 +1740,15 @@ class GraphSpace:
     def mutate(
         self, parent: DualGraphCandidate, rng: random.Random
     ) -> DualGraphCandidate | None:
+        if not self.allows_tile_count(parent.tile_count):
+            return None
+        if self.stein_symmetric:
+            if not self.allows_candidate(parent):
+                return None
+            # Stein mutations edit a complete edge orbit and therefore retain
+            # tile count, rotation order, the unique fixed center, and a
+            # strictly positive chance of revisiting every prior topology.
+            return self._mutate_equivariant_edges(parent, rng)
         if (
             parent.imposed_permutation is not None
             and parent.symmetry_order > 1
@@ -1154,9 +1761,9 @@ class GraphSpace:
                 return equivariant
         base = parent.graph()
         actions = ["edge_add", "edge_delete", "edge_flip"]
-        if parent.tile_count < self.maximum_tiles:
+        if self.allows_tile_count(parent.tile_count + 1):
             actions.append("tile_add")
-        if parent.tile_count > 3:
+        if self.allows_tile_count(parent.tile_count - 1):
             actions.append("tile_delete")
         for _ in range(40):
             action = rng.choice(actions)

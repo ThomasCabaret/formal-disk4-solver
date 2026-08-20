@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import product
+from itertools import combinations, product
+from math import lcm
 from typing import Dict, Iterator, List, Sequence, Tuple
 
 from formal_disk4.maps.base import MapAutomorphism, Occurrence, PlanarMap
@@ -141,6 +142,16 @@ class AssignmentEnumerator:
             else ((), ())
         )
         self._equivariance_piece_orbits = self._build_equivariance_piece_orbits()
+        self._cyclic_shift_assignment_domains: Dict[
+            str,
+            Tuple[
+                Tuple[
+                    Tuple[int, ...],
+                    Tuple[Tuple[Tuple[int, ...], ...], ...],
+                ],
+                ...,
+            ],
+        ] = {}
 
     @property
     def symmetry_enabled(self) -> bool:
@@ -504,6 +515,203 @@ class AssignmentEnumerator:
         for orbit in self._equivariance_piece_orbits:
             count *= len(options[orbit[0]])
         return count
+
+    @staticmethod
+    def _permutation_order(permutation: Sequence[int]) -> int:
+        """Return the order of a finite permutation."""
+
+        if set(permutation) != set(range(len(permutation))):
+            raise ValueError("Cyclic-shift action is not a permutation")
+        order = 1
+        unseen = set(range(len(permutation)))
+        while unseen:
+            seed = min(unseen)
+            current = seed
+            cycle_length = 0
+            while current in unseen:
+                unseen.remove(current)
+                cycle_length += 1
+                current = int(permutation[current])
+            if current != seed:
+                raise ValueError("Cyclic-shift action is not a permutation cycle")
+            order = lcm(order, cycle_length)
+        return order
+
+    @staticmethod
+    def _weak_compositions(total: int, parts: int) -> Iterator[Tuple[int, ...]]:
+        """Yield ordered nonnegative ``parts``-tuples summing to ``total``."""
+
+        for dividers in combinations(range(total + parts - 1), parts - 1):
+            positions = (-1,) + dividers + (total + parts - 1,)
+            yield tuple(
+                positions[index + 1] - positions[index] - 1
+                for index in range(parts)
+            )
+
+    def _cyclic_shift_piece_orbits(
+        self, piece_map: Sequence[int], order: int
+    ) -> Tuple[Tuple[int, ...], ...]:
+        unseen = set(range(len(self.piece_names)))
+        output: List[Tuple[int, ...]] = []
+        while unseen:
+            seed = min(unseen)
+            orbit: List[int] = []
+            current = seed
+            while current not in orbit:
+                orbit.append(current)
+                unseen.discard(current)
+                current = int(piece_map[current])
+            if current != seed or len(orbit) not in (1, order):
+                raise ValueError(
+                    "Cyclic-shift piece orbits must be fixed or have full action order"
+                )
+            if self.reference_index in orbit:
+                offset = orbit.index(self.reference_index)
+                orbit = orbit[offset:] + orbit[:offset]
+            output.append(tuple(orbit))
+        return tuple(output)
+
+    def _build_cyclic_shift_assignment_domain(
+        self, automorphism_name: str
+    ) -> Tuple[
+        Tuple[
+            Tuple[int, ...],
+            Tuple[Tuple[Tuple[int, ...], ...], ...],
+        ],
+        ...,
+    ]:
+        """Factor the mappings compatible with an imposed cyclic shift.
+
+        A rotationally symmetric solution does not permit independent contour
+        orientations on every tile.  For a full tile orbit, one representative
+        sequence and one weak composition determine every other sequence.  A
+        fixed tile is retained only when its contour action advances exactly
+        one rotational fundamental domain.  Factoring the domain this way lets
+        Graph Lab sample only admissible mappings without enumerating their
+        usually astronomical unrestricted complement.
+        """
+
+        name = str(automorphism_name)
+        cached = self._cyclic_shift_assignment_domains.get(name)
+        if cached is not None:
+            return cached
+        if self._required_automorphism is not None:
+            raise ValueError(
+                "Cyclic-shift assignment sampling cannot be combined with "
+                "pointwise required equivariance"
+            )
+        transform = self.transform_for_automorphism(name)
+        if transform.reverse_cycle:
+            raise ValueError("Cyclic-shift equivariance must preserve orientation")
+        order = self._permutation_order(transform.occurrence_map)
+        if order < 2:
+            raise ValueError("Cyclic-shift equivariance needs a nontrivial action")
+        for seed in range(len(transform.occurrence_map)):
+            current = seed
+            orbit = set()
+            while current not in orbit:
+                orbit.add(current)
+                current = transform.occurrence_map[current]
+            if current != seed or len(orbit) != order:
+                raise ValueError(
+                    "Cyclic-shift equivariance requires a free occurrence action"
+                )
+
+        piece_options = self._piece_options()
+        factors = []
+        for orbit in self._cyclic_shift_piece_orbits(transform.piece_map, order):
+            lengths = {len(self.base_sequences[index]) for index in orbit}
+            if len(lengths) != 1:
+                raise ValueError("Cyclic-shift piece orbits need equal contour lengths")
+            contour_length = lengths.pop()
+            choices: set[Tuple[Tuple[int, ...], ...]] = set()
+            if len(orbit) == 1:
+                piece_index = orbit[0]
+                if contour_length % order:
+                    self._cyclic_shift_assignment_domains[name] = ()
+                    return ()
+                split = contour_length // order
+                for sequence in piece_options[piece_index]:
+                    mapped = tuple(
+                        transform.map_occurrence_id(item) for item in sequence
+                    )
+                    if mapped == rotate(sequence, split):
+                        choices.add((sequence,))
+            else:
+                for representative in piece_options[orbit[0]]:
+                    for prefixes in self._weak_compositions(contour_length, order):
+                        split = dict(zip(orbit, prefixes))
+                        sequences = {orbit[0]: representative}
+                        valid = True
+                        for source in orbit[:-1]:
+                            target = transform.piece_map[source]
+                            mapped = tuple(
+                                transform.map_occurrence_id(item)
+                                for item in sequences[source]
+                            )
+                            target_sequence = rotate(mapped, -split[target])
+                            if target_sequence not in piece_options[target]:
+                                valid = False
+                                break
+                            sequences[target] = target_sequence
+                        if not valid:
+                            continue
+                        source = orbit[-1]
+                        mapped = tuple(
+                            transform.map_occurrence_id(item)
+                            for item in sequences[source]
+                        )
+                        if mapped != rotate(representative, split[orbit[0]]):
+                            continue
+                        choices.add(tuple(sequences[index] for index in orbit))
+            if not choices:
+                self._cyclic_shift_assignment_domains[name] = ()
+                return ()
+            factors.append((orbit, tuple(sorted(choices))))
+        domain = tuple(factors)
+        self._cyclic_shift_assignment_domains[name] = domain
+        return domain
+
+    def cyclic_shift_compatible_assignment_count(
+        self, automorphism_name: str
+    ) -> int:
+        """Return the exact number of mappings compatible with a cyclic action."""
+
+        domain = self._build_cyclic_shift_assignment_domain(automorphism_name)
+        if not domain:
+            return 0
+        count = 1
+        for _orbit, choices in domain:
+            count *= len(choices)
+        return count
+
+    def cyclic_shift_compatible_assignment_at(
+        self, automorphism_name: str, compatible_assignment_id: int
+    ) -> ContourAssignment:
+        """Decode one mixed-radix slot of the compatible mapping domain."""
+
+        domain = self._build_cyclic_shift_assignment_domain(automorphism_name)
+        total = self.cyclic_shift_compatible_assignment_count(automorphism_name)
+        position = int(compatible_assignment_id)
+        if position < 0 or position >= total:
+            raise IndexError("Assignment index outside the cyclic-shift domain")
+        selected: List[Tuple[Tuple[int, ...], ...]] = [()] * len(domain)
+        for factor_index in range(len(domain) - 1, -1, -1):
+            choices = domain[factor_index][1]
+            choice_index = position % len(choices)
+            position //= len(choices)
+            selected[factor_index] = choices[choice_index]
+        sequences: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
+        for (orbit, _choices), orbit_sequences in zip(domain, selected):
+            for piece_index, sequence in zip(orbit, orbit_sequences):
+                sequences[piece_index] = sequence
+        complete = tuple(sequence for sequence in sequences if sequence is not None)
+        if len(complete) != len(self.piece_names):
+            raise RuntimeError("Incomplete cyclic-shift-compatible assignment")
+        raw_assignment_id = self.assignment_id_for_sequences(complete)
+        if raw_assignment_id is None:
+            raise RuntimeError("Compatible assignment is absent from the raw domain")
+        return self.assignment_at(raw_assignment_id)
 
     def transform_for_automorphism(self, name: str) -> AssignmentTransform:
         """Return a certified occurrence/piece transform by declared map name."""

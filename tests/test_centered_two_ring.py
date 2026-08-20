@@ -44,6 +44,7 @@ class CenteredTwoRingMapTests(unittest.TestCase):
                     self.assertTrue(
                         centered.hypotheses.center_strictly_inside_one_tile
                     )
+                    self.assertEqual(centered.reference_piece, "C")
                     self.assertEqual(
                         centered.piece_map()["C"].outer_boundary_contact, "none"
                     )

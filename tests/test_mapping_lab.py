@@ -83,19 +83,30 @@ class MappingLabTests(unittest.TestCase):
             self.assertGreaterEqual(probe.normalized_length_slack, 0.0)
 
     def test_hard_timeout_restarts_the_evaluation_worker(self) -> None:
-        first = self.space.sample(random.Random(42))
         second = self.space.sample(random.Random(7))
-        self.assertIsNotNone(first)
         self.assertIsNotNone(second)
-        assert first is not None and second is not None
+        assert second is not None
         with EvaluationWorker(
             ROOT,
             CASE_ID,
             {},
             startup_timeout_seconds=60.0,
         ) as worker:
-            timed_out = worker.evaluate(first, 0.001)
+            # Sound early filters may now reject some candidates in under the
+            # minimum 1 ms worker timeout.  Find a descendant that actually
+            # exercises the kill/restart path instead of assuming one fixed
+            # random mapping is necessarily slow on every machine.
+            timed_out = None
+            for seed in range(128):
+                first = self.space.sample(random.Random(seed))
+                assert first is not None
+                result = worker.evaluate(first, 0.001)
+                if result.status == "timeout":
+                    timed_out = result
+                    break
             recovered = worker.evaluate(second, 10.0)
+        self.assertIsNotNone(timed_out)
+        assert timed_out is not None
         self.assertEqual(timed_out.status, "timeout")
         self.assertNotIn(recovered.status, {"timeout", "evaluation_error"})
 

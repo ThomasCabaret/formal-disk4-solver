@@ -1,0 +1,283 @@
+\documentclass[10.5pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[a4paper,margin=27mm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlist{nosep,leftmargin=*}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\B}{\mathbb B}
+\newcommand{\Sph}{\mathbb S}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\interior}{\operatorname{int}}
+\newcommand{\Orb}{\operatorname{Orb}}
+
+\title{Structural Constraints on Rotationally Symmetric Stein Tilings of the Disk\\\large An audited working note}
+\author{}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+\begin{abstract}
+Let the closed unit disk be monohedrally tiled by congruent Jordan regions, and assume that its center lies in the interior of exactly one tile (the Stein configuration). We study the additional assumption that the tiling has a non-trivial rotational symmetry of order $m$. The main result is a boundary-orbit matching theorem: at least two distinct rotational orbits of non-central tiles must meet the outer circle in non-degenerate arcs, and two such orbits contain tiles related by an isometry fixing the center of the disk. Consequently the number of tiles has the form $1+km$ with $k\ge 2$. We also give a sharp normal form for the still-unexcluded case $k=2$: the outer arcs alternate, all have length $\pi/m$, the centered matching must be a reflection, the whole tiling is dihedrally symmetric, and every non-central tile is confined to a sector of angle $\pi/m$.
+
+The note deliberately does \emph{not} claim $k\ge3$: an earlier informal argument for that stronger statement contained a gap in the reflection case. The purpose here is to record only statements that survive a proof audit.
+\end{abstract}
+
+\section{Setting and terminology}
+
+Let
+\[
+ \B^2=\{x\in\mathbb R^2:|x|\le 1\},\qquad O=(0,0),\qquad \Sph^1=\partial\B^2.
+\]
+A \emph{monohedral tiling} of $\B^2$ is a finite family $\mathcal T$ of congruent compact Jordan regions whose interiors are pairwise disjoint and whose union is $\B^2$.
+
+We call such a tiling a \emph{Stein tiling} if there is a tile $C\in\mathcal T$ with
+\[
+ O\in\interior C.
+\]
+This tile is unique: no other tile can contain $O$, even on its boundary, because every neighbourhood of a boundary point of a Jordan region contains interior points of that region, while $C$ contains a neighbourhood of $O$.
+
+Assume throughout that a rotation $R$ about $O$, of exact order $m\ge2$, permutes the tiles. A tile is called \emph{outer} if its intersection with $\Sph^1$ contains a non-degenerate circular arc. An \emph{outer orbit} is an $R$-orbit containing an outer tile.
+
+\paragraph{Plain-language picture.}
+There is one distinguished tile containing the center. All other tiles occur in rotational families. The question is how many different families are forced, and how the families that reach the outer circle must be related.
+
+\section{External facts used}
+
+We use the following facts from Kurusa--L\'angi--V\'igh \cite{KLV2020}. Their notation is $S_i=D_i\cap\Sph^1$.
+
+\begin{enumerate}[label=(K\arabic*)]
+\item \textbf{Connected outer trace} (Lemma 2.6). The intersection of a tile with the outer circle is a connected circular arc in the non-empty case. We only use the conclusion that a non-empty outer trace cannot split into separated arcs.
+
+\item \textbf{Transport to the convex hull} (Remark 2.7). If an outer trace $S_i$ is transported by a congruence from tile $D_i$ to tile $D_j$, its image lies on $\partial\conv D_j$.
+
+\item \textbf{No partial overlap} (Remark 2.8). Two outer traces transported to the same tile either coincide, or meet at most at endpoints.
+\end{enumerate}
+
+For convenience, we reprove below the only global consequence of these facts that we need. We also use the standard Brouwer fixed-point theorem: every continuous self-map of a topological closed disk has a fixed point.
+
+\section{A boundary-overlap lemma}
+
+\begin{lemma}[Boundary overlap on the central prototile]\label{lem:overlap}
+Let $C$ be the Stein tile in a rotationally symmetric Stein tiling. Transport every non-degenerate outer trace to $C$ by arbitrary congruences. Then at least two of the transported arcs coincide.
+\end{lemma}
+
+\begin{proof}
+First observe that $C\cap\Sph^1=\varnothing$. Indeed, $C$ is fixed by $R$. By (K1), if $C\cap\Sph^1$ were non-empty it would be a connected circular arc invariant under a non-trivial finite rotation. Such a set can only be the whole circle. That would force the Jordan disk $C$ to be the whole disk, contrary to the existence of other tiles.
+
+Hence $C$ is compactly contained in $\interior\B^2$, and therefore
+\[
+ P(\conv C)<2\pi,
+\]
+where $P$ denotes convex perimeter.
+
+The non-degenerate outer traces of all tiles cover $\Sph^1$ up to finitely many endpoints, and their relative interiors are disjoint; therefore the sum of their arc lengths is $2\pi$. By (K2), after transporting them to $C$ they all lie on $\partial\conv C$. By (K3), if no two transported arcs coincided, their interiors on $\partial\conv C$ would be pairwise disjoint. Their total length would then give
+\[
+ P(\conv C)\ge2\pi,
+\]
+a contradiction.
+\end{proof}
+
+This is the same convex-hull mechanism underlying Lemma 2.9 of \cite{KLV2020}, but restricted explicitly to the non-degenerate outer traces; this avoids any ambiguity caused by tiles that do not meet the outer circle.
+
+\section{Main structural theorem}
+
+\begin{theorem}[Rotational boundary-orbit matching]\label{thm:main}
+Let $\mathcal T$ be a Stein tiling of $\B^2$ invariant under a rotation $R$ of exact order $m\ge2$. Let $C$ be the unique tile containing $O$ in its interior. Then:
+
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $C$ is fixed by $R$, while every other tile has an $R$-orbit of size exactly $m$. Hence
+\[
+ |\mathcal T|=1+km
+\]
+for some integer $k\ge1$.
+
+\item At least two \emph{distinct} non-central $R$-orbits are outer.
+
+\item There exist two distinct outer orbits $\mathcal O_A,\mathcal O_B$, tiles $A\in\mathcal O_A$, $B\in\mathcal O_B$, and a Euclidean isometry $h$ such that
+\[
+ h(A)=B,\qquad h(O)=O.
+\]
+Thus $h$ is either a rotation about $O$ or a reflection in a line through $O$.
+\end{enumerate}
+\end{theorem}
+
+\paragraph{Plain-language statement.}
+A rotational Stein candidate cannot have just one kind of tile around the center. At least two different rotational families must reach the boundary, and two boundary-reaching families must contain tiles that are the same not merely up to an arbitrary translation, but up to an isometry that keeps the center of the big disk fixed.
+
+\begin{proof}
+Since $C$ is the unique tile whose interior contains $O$, every symmetry of the tiling fixes $C$; hence $R(C)=C$.
+
+Let $T\ne C$. If the $R$-orbit of $T$ had size $d<m$, then $R^d(T)=T$ for a non-identity rotation $R^d$. The restriction $R^d:T\to T$ is a continuous self-map of a topological closed disk, so Brouwer gives a fixed point in $T$. A non-identity rotation about $O$ has the unique fixed point $O$, hence $O\in T$, impossible. Therefore every non-central orbit has size $m$, proving (i).
+
+We now make the transports in Lemma~\ref{lem:overlap} equivariant orbit by orbit. Fix an outer orbit and a representative tile $T$, and choose an isometry
+\[
+ f:C\longrightarrow T.
+\]
+Write $S_T=T\cap\Sph^1$ and
+\[
+ A=f^{-1}(S_T)\subset\partial\conv C.
+\]
+For $T_j=R^jT$ use the congruence
+\[
+ f_j=R^j f R^{-j}:C\longrightarrow T_j.
+\]
+The transported outer trace is then
+\[
+ f_j^{-1}(T_j\cap\Sph^1)=R^jA.
+\]
+
+No two non-degenerate arcs $R^jA$ and $R^\ell A$ from the same orbit can coincide when $j\not\equiv\ell\pmod m$. Indeed, $A$ lies on a unit circle centered at
+\[
+ q=f^{-1}(O).
+\]
+If $R^jA=R^\ell A$ as non-degenerate arcs, their supporting unit circles coincide, so $R^{j-\ell}q=q$. Since $R^{j-\ell}$ is a non-identity rotation, this gives $q=O$, hence $f(O)=O$. But then $O\in\interior T$, contradicting the uniqueness of $C$.
+
+Lemma~\ref{lem:overlap} therefore forces a coincidence between transported arcs belonging to two \emph{different} rotational orbits. This proves (ii). More precisely, for suitable outer tiles $A_0,B_0$ in distinct orbits there are isometries
+\[
+ \phi_A:A_0\to C,\qquad \phi_B:B_0\to C
+\]
+such that
+\[
+ \phi_A(A_0\cap\Sph^1)=\phi_B(B_0\cap\Sph^1)
+\]
+as a non-degenerate arc. Put
+\[
+ h=\phi_B^{-1}\phi_A.
+\]
+Then $h(A_0)=B_0$, and $h$ maps a non-degenerate arc of the unit circle $\Sph^1$ to another non-degenerate arc of the same unit circle. An isometry mapping a non-degenerate arc of a circle onto an arc of the same circle must preserve the supporting circle, hence its center. Therefore $h(O)=O$, proving (iii).
+\end{proof}
+
+\begin{corollary}[Immediate numerical consequence]\label{cor:k2}
+Under the hypotheses of Theorem~\ref{thm:main},
+\[
+ k\ge2,
+ \qquad
+ |\mathcal T|\ge 2m+1.
+\]
+\end{corollary}
+
+The divisibility $|\mathcal T|-1\equiv0\pmod m$ is elementary; the substantive part is that at least two of those $m$-orbits are forced and must be centrally matched as in Theorem~\ref{thm:main}(iii).
+
+\section{Exact normal form if only two non-central orbits exist}
+
+The previous theorem does not by itself exclude $k=2$. It does, however, reduce that case to a very rigid geometry.
+
+\begin{theorem}[Two-orbit normal form]\label{thm:twoorbit}
+Assume the hypotheses of Theorem~\ref{thm:main} and suppose that $k=2$. Write the two non-central orbits as
+\[
+ \mathcal O_A=\{A_0,\ldots,A_{m-1}\},
+ \qquad
+ \mathcal O_B=\{B_0,\ldots,B_{m-1}\}.
+\]
+Then all of the following are necessary.
+
+\begin{enumerate}[label=\textup{(\alph*)}]
+\item Both orbits are outer, and every outer trace has length $\pi/m$.
+
+\item Around $\Sph^1$ the traces alternate
+\[
+ A,B,A,B,\ldots,A,B.
+\]
+
+\item A centered matching between the two orbits cannot be a rotation. After relabeling, it must be reflection in the radius through the common endpoint of two adjacent outer arcs.
+
+\item Consequently the whole tiling has dihedral symmetry $D_m$.
+
+\item Every non-central tile is contained in one of the $2m$ closed sectors cut out by the $m$ reflection axes; each such sector has angle
+\[
+ \frac{\pi}{m}.
+\]
+\end{enumerate}
+\end{theorem}
+
+\paragraph{Plain-language statement.}
+If a counterexample with only two non-central rotational families exists at all, it is not a generic $C_m$-symmetric object. It is forced into a dihedral ``spoke'' geometry: the two families alternate on the circle, adjacent members are mirror images, and every outer tile is trapped in a wedge of angle $\pi/m$.
+
+\begin{proof}
+By Theorem~\ref{thm:main}(ii), both non-central orbits are outer. The central tile does not meet $\Sph^1$, so the $2m$ outer traces cover the circle. Let their lengths in the two orbits be $a$ and $b$. Theorem~\ref{thm:main}(iii) gives a centered isometry from a tile in one orbit to a tile in the other; it preserves $\Sph^1$, hence $a=b$. Therefore
+\[
+ m(a+b)=2\pi,
+\]
+so
+\[
+ a=b=\frac{\pi}{m}.
+\]
+Since $R$ rotates by $2\pi/m$, each orbit occupies every second arc of this equal subdivision of $\Sph^1$, proving (a) and (b).
+
+Normalize the centered matching by composing it with a power of $R$ so that it maps an $A$-tile to the adjacent $B$-tile. An isometry fixing $O$ and mapping one circular arc of length $\pi/m$ to the adjacent one is, up to reversing the indexing, either
+\[
+ \rho=\operatorname{Rot}_O(\pi/m)
+\]
+or the reflection $s$ in the radius through their common endpoint.
+
+Suppose first that the matching is $\rho$. Then $\rho^2=R$, $\rho$ swaps the two non-central orbits, and therefore preserves their union. Since it preserves the disk, it also preserves the remaining tile $C$. Thus $\rho$ is a symmetry of the whole tiling of order $2m$, under which all $2m$ non-central tiles form a single orbit. This contradicts Theorem~\ref{thm:main}(ii), applied to the rotational symmetry $\rho$. Hence the matching must be the reflection $s$, proving (c).
+
+The relations $sRs=R^{-1}$ and $s^2=1$ show that $R$ and $s$ generate a dihedral action. The reflection $s$ interchanges the two outer orbits, hence preserves their union; again the unique remaining tile $C$ is preserved. This proves (d).
+
+Finally the reflections $R^js$ have $m$ distinct axes through $O$, spaced by angle $\pi/m$. For a fixed non-central tile $T$, each of these reflections sends $T$ to a distinct tile in the other orbit. Hence $\interior T$ cannot meet any reflection axis: a point of intersection would be fixed by the reflection and would lie in the interiors of two distinct tiles. Since $\interior T$ is connected, it lies in one connected component of the complement of the axes. Those components are precisely the open sectors of angle $\pi/m$. Taking closures proves (e).
+\end{proof}
+
+\section{Graph-theoretic reading}
+
+Add one vertex $E$ representing the exterior of the disk, and connect $E$ to a tile whenever the tile has a non-degenerate outer trace. Let the rotation act on this augmented contact structure.
+
+Theorem~\ref{thm:main} says that the quotient by $C_m$ must contain at least two distinct non-central tile-orbits adjacent to $E$. Moreover, two such quotient vertices must admit representatives related by an isometry fixing $O$. Thus the quotient graph alone is not sufficient: one needs the quotient graph together with a \emph{centered matching label} on at least one pair of exterior orbits.
+
+If there are exactly two non-central orbits, Theorem~\ref{thm:twoorbit} says that the corresponding geometric realization is necessarily dihedral and sector-confined. This is the natural next class to attack if one wants to strengthen $k\ge2$ to $k\ge3$.
+
+\section{Audit status and open target}
+
+The following statements are established in this note under the sole geometric hypotheses stated in Section 1:
+\[
+\boxed{
+\begin{minipage}{0.88\linewidth}
+A rotationally symmetric Stein tiling of order $m$ has one fixed central tile and full $m$-orbits outside it. At least two distinct non-central orbits meet the outer circle, and two outer orbits contain tiles related by an isometry fixing the center $O$. Hence $|\mathcal T|=1+km$ with $k\ge2$.
+\end{minipage}}
+\]
+
+The stronger claim $k\ge3$ is \emph{not} asserted here. The only unresolved two-orbit architecture after the present reduction is the reflection case of Theorem~\ref{thm:twoorbit}: a $D_m$-symmetric configuration with alternating outer orbits, each tile confined to a sector of angle $\pi/m$. Eliminating this sector configuration for every $m$ would immediately upgrade Corollary~\ref{cor:k2} to $k\ge3$.
+
+\section*{References}
+\begin{thebibliography}{9}
+
+\bibitem{KLV2020}
+A. Kurusa, Z. L\'angi and V. V\'igh,
+\emph{Tiling a Circular Disc with Congruent Pieces},
+Mediterranean Journal of Mathematics \textbf{17} (2020), Article 156.
+\href{https://doi.org/10.1007/s00009-020-01595-3}{doi:10.1007/s00009-020-01595-3}.
+See in particular Lemma 2.6 and Remarks 2.7--2.8; Lemma 2.9 contains the closely related convex-hull overlap argument.
+
+\bibitem{NV2023}
+K. Nagy and V. V\'igh,
+\emph{Monohedral Tilings of a Convex Disc with a Smooth Boundary},
+Discrete Mathematics \textbf{346} (2023), 113140.
+\href{https://doi.org/10.1016/j.disc.2022.113140}{doi:10.1016/j.disc.2022.113140}.
+This paper places the Stein question in the broader setting of smooth convex disks and proves further partial classification results under additional hypotheses.
+
+\bibitem{HW2016}
+J. A. Haddley and S. Worsley,
+\emph{Infinite Families of Monohedral Disk Tilings},
+arXiv:1512.03794v2 (2016).
+The paper gives large families of monohedral disk tilings and records the Stein configuration as an unresolved case in its classification programme.
+
+\end{thebibliography}
+
+\end{document}

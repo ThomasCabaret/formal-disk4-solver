@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
+from formal_disk4.maps.base import PlanarMap
+
 from .output import atomic_replace
 
 
@@ -24,6 +26,7 @@ def search_fingerprint(
     config: Mapping[str, Any],
     *,
     raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
+    planar_maps: Sequence[PlanarMap] | None = None,
 ) -> str:
     """Hash only options that change which mathematical cases are processed.
 
@@ -44,6 +47,25 @@ def search_fingerprint(
             str(map_name): [int(item) for item in assignment_ids]
             for map_name, assignment_ids in sorted(raw_assignment_ids_by_map.items())
         }
+    if planar_maps is not None:
+        # A name is sufficient for registry-backed maps because their builders
+        # are part of SEARCH_SEMANTICS_VERSION. API-provided maps need their
+        # complete combinatorial structure in the fingerprint so a checkpoint
+        # can never be resumed against a different graph using the same name.
+        payload["provided_planar_maps"] = [
+            {
+                "map": planar_map.to_dict(),
+                "automorphisms": [
+                    {
+                        "name": automorphism.name,
+                        "piece_map": list(automorphism.piece_map),
+                        "vertex_map": list(automorphism.vertex_map),
+                    }
+                    for automorphism in planar_map.automorphisms
+                ],
+            }
+            for planar_map in planar_maps
+        ]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

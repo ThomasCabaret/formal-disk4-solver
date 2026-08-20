@@ -4,10 +4,11 @@ import hashlib
 import json
 import math
 import random
-from collections import Counter, defaultdict
+import re
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import AbstractSet, Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 import numpy as np
 
@@ -21,7 +22,12 @@ from .mapping import MappingEvaluation, MappingProposal
 from .mapping_model import MappingLearningModel
 from .model import GraphLearningModel
 from .rollout_audit import build_generation_coverage, weak_trajectory_id
-from .space import DualGraphCandidate, GraphSpace, graph_feature_payload
+from .space import (
+    DualGraphCandidate,
+    GraphSpace,
+    format_tile_count_spec,
+    graph_feature_payload,
+)
 from .specialization_model import (
     SpecializationLearningModel,
     SpecializationPoolObservation,
@@ -53,6 +59,15 @@ RESTART_FILES = (
     "effective_config.json",
 )
 
+# The model checkpoints retain the knowledge learned over the complete run.
+# Replay records are only the recent examples used to continue training.  The
+# JSON representation of one mapping/weak-order record expands substantially
+# when restored as Python objects, so retaining tens of thousands of them can
+# consume several gigabytes and make resume spend tens of minutes in GC.
+MAX_MAPPING_REPLAY_IN_MEMORY = 8192
+MAX_WEAK_ORDER_REPLAY_IN_MEMORY = 8192
+MAX_SPECIALIZATION_REPLAY_IN_MEMORY = 4096
+
 
 def _checkpoint_fingerprint(config: Mapping[str, object]) -> str:
     """Hash only checkpoint-shape/semantics settings.
@@ -67,6 +82,7 @@ def _checkpoint_fingerprint(config: Mapping[str, object]) -> str:
     space = compatible.get("space")
     if isinstance(space, dict):
         space.pop("exclude_rings", None)
+        space.pop("tile_counts", None)
     return hashlib.sha256(
         json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -88,18 +104,89 @@ def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
         stream.flush()
 
 
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     if not path.exists():
-        return []
-    records = []
+        return
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
             if not line.strip():
                 continue
             value = json.loads(line)
             if isinstance(value, dict):
-                records.append(value)
-    return records
+                yield value
+
+
+_MAPPING_ID_PATTERN = re.compile(rb'"mapping_id"\s*:\s*"([^"]+)"')
+_ACTION_MASK_PATTERN = re.compile(rb'"mask"\s*:\s*(-?\d+)')
+
+
+def _mapping_id_from_journal_line(line: bytes) -> str | None:
+    match = _MAPPING_ID_PATTERN.search(line)
+    return match.group(1).decode("ascii") if match is not None else None
+
+
+def _weak_trajectory_id_from_journal_line(line: bytes) -> str | None:
+    mapping_id = _mapping_id_from_journal_line(line)
+    if mapping_id is None:
+        return None
+    masks = ",".join(
+        match.group(1).decode("ascii") for match in _ACTION_MASK_PATTERN.finditer(line)
+    )
+    payload = f"{mapping_id}|{masks}".encode("ascii")
+    return "wr-" + hashlib.sha256(payload).hexdigest()[:24]
+
+
+def _tail_jsonl(
+    path: Path,
+    limit: int,
+    *,
+    identity: Callable[[bytes], str | None] | None = None,
+) -> tuple[list[dict[str, Any]], int, set[str]]:
+    """Return the last ``limit`` records while counting the complete journal.
+
+    Old records are read only as raw bytes.  This keeps resume linear in disk
+    I/O but bounds JSON decoding and Python-object construction to the replay
+    window that can actually influence subsequent training.
+    """
+
+    if not path.exists():
+        return [], 0, set()
+    raw_tail: deque[bytes] = deque(maxlen=max(1, int(limit)))
+    identities: set[str] = set()
+    total = 0
+    with path.open("rb") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            raw_tail.append(line)
+            if identity is not None:
+                identifier = identity(line)
+                if identifier is not None:
+                    identities.add(identifier)
+            total += 1
+    records: list[dict[str, Any]] = []
+    for line in raw_tail:
+        value = json.loads(line)
+        if isinstance(value, dict):
+            records.append(value)
+    return records, total, identities
+
+
+ReplayItem = TypeVar("ReplayItem")
+
+
+def _extend_bounded_replay(
+    replay: list[ReplayItem],
+    additions: Sequence[ReplayItem],
+    *,
+    limit: int,
+) -> None:
+    """Append records while retaining exactly the model's replay window."""
+
+    replay.extend(additions)
+    excess = len(replay) - max(1, int(limit))
+    if excess > 0:
+        del replay[:excess]
 
 
 def _diversity_cell(candidate: DualGraphCandidate, stage: int) -> str:
@@ -152,8 +239,18 @@ class DiversityArchive:
         rng: random.Random,
         *,
         size_weight: Callable[[int], float] | None = None,
+        allowed_tile_counts: AbstractSet[int] | None = None,
     ) -> GraphEvaluation | None:
-        nonempty = [values for values in self.cells.values() if values]
+        nonempty = []
+        for values in self.cells.values():
+            eligible = [
+                item
+                for item in values
+                if allowed_tile_counts is None
+                or item.candidate.tile_count in allowed_tile_counts
+            ]
+            if eligible:
+                nonempty.append(eligible)
         if not nonempty:
             return None
         weight_for = size_weight or (lambda _tile_count: 1.0)
@@ -206,6 +303,7 @@ class GraphLabRunner:
         )
         self.space = GraphSpace.from_config(dict(config.get("space", {})))
         self.exclude_rings = self.space.exclude_rings
+        self.stein_symmetric = self.space.stein_symmetric
         self.sampling = dict(config.get("sampling", {}))
         self.learning = dict(config.get("learning", {}))
         self.mapping_sampling = dict(config.get("mapping_sampling", {}))
@@ -241,6 +339,10 @@ class GraphLabRunner:
         path: Path | str,
         *,
         exclude_rings: bool | None = None,
+        tile_counts: str | Sequence[int] | None = None,
+        stein_symmetric: bool | None = None,
+        symmetry_orders: str | Sequence[int] | None = None,
+        output_directory: Path | str | None = None,
     ) -> "GraphLabRunner":
         source = Path(path)
         if not source.is_absolute():
@@ -252,6 +354,22 @@ class GraphLabRunner:
             space = dict(config.get("space", {}))
             space["exclude_rings"] = bool(exclude_rings)
             config["space"] = space
+        if tile_counts is not None:
+            space = dict(config.get("space", {}))
+            space["tile_counts"] = tile_counts
+            config["space"] = space
+        if stein_symmetric is not None:
+            space = dict(config.get("space", {}))
+            space["stein_symmetric"] = bool(stein_symmetric)
+            config["space"] = space
+        if symmetry_orders is not None:
+            space = dict(config.get("space", {}))
+            space["symmetry_orders"] = symmetry_orders
+            config["space"] = space
+        if output_directory is not None:
+            output = dict(config.get("output", {}))
+            output["directory"] = str(output_directory)
+            config["output"] = output
         return cls(root, config)
 
     def restart_outputs(self) -> None:
@@ -266,25 +384,50 @@ class GraphLabRunner:
     def _load_observations(self) -> list[GraphEvaluation]:
         return [
             GraphEvaluation.from_dict(value)
-            for value in _load_jsonl(self.output / "observations.jsonl")
+            for value in _iter_jsonl(self.output / "observations.jsonl")
         ]
 
-    def _load_mapping_observations(self) -> list[MappingEvaluation]:
-        return [
-            MappingEvaluation.from_dict(value)
-            for value in _load_jsonl(self.output / "mapping_observations.jsonl")
-        ]
+    def _load_mapping_observations(
+        self,
+    ) -> tuple[list[MappingEvaluation], set[str], int]:
+        configured = max(
+            1, int(self.mapping_learning.get("replay_examples", 50000))
+        )
+        limit = min(configured, MAX_MAPPING_REPLAY_IN_MEMORY)
+        values, total, seen_ids = _tail_jsonl(
+            self.output / "mapping_observations.jsonl",
+            limit,
+            identity=_mapping_id_from_journal_line,
+        )
+        replay = [MappingEvaluation.from_dict(value) for value in values]
+        return replay, seen_ids, total
 
-    def _load_weak_order_rollouts(self) -> list[WeakOrderRolloutObservation]:
-        return [
-            WeakOrderRolloutObservation.from_dict(value)
-            for value in _load_jsonl(self.output / "weak_order_rollouts.jsonl")
-        ]
+    def _load_weak_order_rollouts(
+        self,
+    ) -> tuple[list[WeakOrderRolloutObservation], set[str], int]:
+        configured = max(
+            1, int(self.weak_order_learning.get("replay_rollouts", 50000))
+        )
+        limit = min(configured, MAX_WEAK_ORDER_REPLAY_IN_MEMORY)
+        values, total, seen_ids = _tail_jsonl(
+            self.output / "weak_order_rollouts.jsonl",
+            limit,
+            identity=_weak_trajectory_id_from_journal_line,
+        )
+        replay = [WeakOrderRolloutObservation.from_dict(value) for value in values]
+        return replay, seen_ids, total
 
-    def _load_specialization_pools(self) -> list[SpecializationPoolObservation]:
+    def _load_specialization_pools(
+        self,
+    ) -> tuple[list[SpecializationPoolObservation], int]:
+        configured = max(
+            1, int(self.specialization_learning.get("replay_pools", 20000))
+        )
+        limit = min(configured, MAX_SPECIALIZATION_REPLAY_IN_MEMORY)
         proposals: dict[str, MappingProposal] = {}
-        pools = []
-        for value in _load_jsonl(self.output / "specialization_pools.jsonl"):
+        pools: deque[SpecializationPoolObservation] = deque(maxlen=limit)
+        total = 0
+        for value in _iter_jsonl(self.output / "specialization_pools.jsonl"):
             raw_proposal = value.get("proposal")
             proposal = (
                 MappingProposal.from_dict(raw_proposal)
@@ -299,7 +442,8 @@ class GraphLabRunner:
             pools.append(
                 SpecializationPoolObservation.from_dict(value, proposal=proposal)
             )
-        return pools
+            total += 1
+        return list(pools), total
 
     def _select_mappings(
         self,
@@ -954,10 +1098,15 @@ class GraphLabRunner:
                 archive.choose_parent(
                     rng,
                     size_weight=self.space.size_sampling_weight,
+                    allowed_tile_counts=self.space.allowed_tile_counts,
                 )
                 if rng.random() < mutation_fraction
                 else None
             )
+            if parent is not None and not self.space.allows_candidate(
+                parent.candidate
+            ):
+                parent = None
             candidate = (
                 self.space.mutate(parent.candidate, rng)
                 if parent is not None
@@ -1235,6 +1384,16 @@ class GraphLabRunner:
                 str(size): probability
                 for size, probability in self.space.size_sampling_distribution()
             },
+            "tile_count_domain": list(self.space.tile_counts),
+            "requested_tile_count_domain": list(
+                self.space.requested_tile_counts
+            ),
+            "stein_symmetric": self.stein_symmetric,
+            "symmetry_order_domain": (
+                list(self.space.symmetry_orders)
+                if self.space.symmetry_orders is not None
+                else None
+            ),
             "tile_count_histogram": dict(sorted(sizes.items())),
             "symmetry_order_histogram": dict(sorted(symmetries.items())),
             "origin_histogram": dict(origins),
@@ -1329,24 +1488,23 @@ class GraphLabRunner:
         self.output.mkdir(parents=True, exist_ok=True)
         _atomic_json(self.output / "effective_config.json", self.config)
         observations = self._load_observations()
-        mapping_observations = self._load_mapping_observations()
-        weak_order_rollouts = self._load_weak_order_rollouts()
-        specialization_pools = self._load_specialization_pools()
+        (
+            mapping_observations,
+            seen_mapping_ids,
+            mapping_observation_count,
+        ) = self._load_mapping_observations()
+        (
+            weak_order_rollouts,
+            seen_trajectory_ids,
+            weak_order_rollout_count,
+        ) = self._load_weak_order_rollouts()
+        (
+            specialization_pools,
+            specialization_pool_count,
+        ) = self._load_specialization_pools()
         seen_graph_ids = {
             observation.candidate.graph_id for observation in observations
         }
-        seen_mapping_ids = {
-            observation.proposal.mapping_id for observation in mapping_observations
-        }
-        seen_trajectory_ids = {
-            weak_trajectory_id(observation) for observation in weak_order_rollouts
-        }
-        # This index is consulted only once below to avoid re-running pending
-        # explicit control seeds after resume. It is not passed to the proposal
-        # generator and therefore never closes a sampled graph neighbourhood.
-        evaluated_graph_index = IsomorphismIndex()
-        for observation in observations:
-            evaluated_graph_index.add(observation.candidate)
         archive = DiversityArchive(observations)
         model = GraphLearningModel.load_or_create(
             self.output / "model.pt", self.learning
@@ -1427,7 +1585,8 @@ class GraphLabRunner:
         print(
             f"graph-lab generations={start}..{total_generations - 1} "
             f"batch={target_batch} "
-            f"tiles<= {self.space.maximum_tiles} "
+            f"tiles={format_tile_count_spec(self.space.tile_counts)} "
+            f"mode={'stein-symmetric' if self.stein_symmetric else 'general'} "
             f"exclude-rings={'on' if self.exclude_rings else 'off'} "
             f"disk-limit={disk_limit}",
             flush=True,
@@ -1521,9 +1680,45 @@ class GraphLabRunner:
                         new_mapping_observations = []
                         new_weak_order_records = []
                         new_specialization_records = []
-                    mapping_observations.extend(new_mapping_observations)
-                    weak_order_rollouts.extend(new_weak_order_records)
-                    specialization_pools.extend(new_specialization_records)
+                    mapping_observation_count += len(new_mapping_observations)
+                    weak_order_rollout_count += len(new_weak_order_records)
+                    specialization_pool_count += len(new_specialization_records)
+                    _extend_bounded_replay(
+                        mapping_observations,
+                        new_mapping_observations,
+                        limit=min(
+                            MAX_MAPPING_REPLAY_IN_MEMORY,
+                            int(
+                                self.mapping_learning.get(
+                                    "replay_examples", 50000
+                                )
+                            ),
+                        ),
+                    )
+                    _extend_bounded_replay(
+                        weak_order_rollouts,
+                        new_weak_order_records,
+                        limit=min(
+                            MAX_WEAK_ORDER_REPLAY_IN_MEMORY,
+                            int(
+                                self.weak_order_learning.get(
+                                    "replay_rollouts", 50000
+                                )
+                            ),
+                        ),
+                    )
+                    _extend_bounded_replay(
+                        specialization_pools,
+                        new_specialization_records,
+                        limit=min(
+                            MAX_SPECIALIZATION_REPLAY_IN_MEMORY,
+                            int(
+                                self.specialization_learning.get(
+                                    "replay_pools", 20000
+                                )
+                            ),
+                        ),
+                    )
                     observation = evaluation.to_dict()
                     observation["generation"] = generation
                     observation["selection"] = dict(selection)
@@ -1683,11 +1878,18 @@ class GraphLabRunner:
                         "schema_version": "graph-lab-state-v1",
                         "fingerprint": self.fingerprint,
                         "exclude_rings": self.exclude_rings,
+                        "tile_counts": list(self.space.tile_counts),
+                        "stein_symmetric": self.stein_symmetric,
+                        "symmetry_orders": (
+                            list(self.space.symmetry_orders)
+                            if self.space.symmetry_orders is not None
+                            else None
+                        ),
                         "next_generation": generation + 1,
                         "observations": len(observations),
-                        "mapping_observations": len(mapping_observations),
-                        "weak_order_rollouts": len(weak_order_rollouts),
-                        "specialization_pools": len(specialization_pools),
+                        "mapping_observations": mapping_observation_count,
+                        "weak_order_rollouts": weak_order_rollout_count,
+                        "specialization_pools": specialization_pool_count,
                     },
                 )
                 report = self._report(

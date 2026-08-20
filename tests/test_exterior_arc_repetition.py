@@ -60,7 +60,7 @@ class ExteriorArcRepetitionTests(unittest.TestCase):
             enabled=True,
         )
         self.assertFalse(constraint.applicable)
-        self.assertEqual(constraint.reason, "requires_exactly_four_pieces")
+        self.assertEqual(constraint.reason, "requires_stein_center_hypothesis")
 
 
 if __name__ == "__main__":

@@ -20,14 +20,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--config", default="config/graph_lab/up-to-13.json"
     )
     parser.add_argument("--root", default=".")
+    parser.add_argument(
+        "--output-directory",
+        help="override the Graph Lab output directory (kept inside the project)",
+    )
     parser.add_argument("--generations", type=int)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument(
+        "--tile-counts",
+        metavar="DOMAIN",
+        help=(
+            "override the tile-count domain, for example 3-13,18-19; "
+            "omitted sizes are never proposed"
+        ),
+    )
     parser.add_argument(
         "--exclude-rings",
         action="store_true",
         help=(
             "exclude outside-star plus simple tile-cycle graphs before graph ranking"
         ),
+    )
+    parser.add_argument(
+        "--stein-symmetric",
+        action="store_true",
+        help=(
+            "restrict proposals to audited Stein graphs with an imposed "
+            "nontrivial rotational symmetry"
+        ),
+    )
+    parser.add_argument(
+        "--symmetry-orders",
+        metavar="DOMAIN",
+        help="optional Stein rotation-order domain, for example 2-4,6,8",
     )
     parser.add_argument(
         "--restart",
@@ -43,6 +68,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(args.root).resolve(),
         args.config,
         exclude_rings=True if args.exclude_rings else None,
+        tile_counts=args.tile_counts,
+        stein_symmetric=True if args.stein_symmetric else None,
+        symmetry_orders=args.symmetry_orders,
+        output_directory=args.output_directory,
     )
     result = runner.run(
         restart=bool(args.restart),

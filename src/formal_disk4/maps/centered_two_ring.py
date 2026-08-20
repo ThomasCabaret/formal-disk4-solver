@@ -194,7 +194,11 @@ def _inflate_center_vertex(base: PlanarMap, name: str) -> PlanarMap:
         vertices=vertices,
         interfaces=tuple(interfaces),
         automorphisms=tuple(automorphisms),
-        reference_piece=base.reference_piece,
+        # In a Stein map the reference copy is the unique tile containing the
+        # disk center.  Besides being the natural contour gauge, this makes the
+        # audited outer-arc repetition filter identify the central copy without
+        # relying on a family-specific name.
+        reference_piece="C",
         hypotheses=ProblemHypotheses(
             piecewise_c2_boundary=base.hypotheses.piecewise_c2_boundary,
             center_strictly_inside_one_tile=True,

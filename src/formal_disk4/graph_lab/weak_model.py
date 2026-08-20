@@ -1304,10 +1304,11 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
     def propose_masks(
         self, state: WeakOrderStateView, masks: Sequence[int]
     ) -> Sequence[int]:
-        values = tuple(int(mask) for mask in masks)
         limit = max(1, int(self.config.get("action_pool_size", 64)))
-        if len(values) <= limit:
-            self._pool_sizes[state] = (len(values), len(values))
+        legal_count = len(masks)
+        if legal_count <= limit:
+            values = tuple(int(mask) for mask in masks)
+            self._pool_sizes[state] = (legal_count, len(values))
             return values
         # The control policy must genuinely be uniform over legal actions.
         # Hard-wiring the full mask and singleton masks into every bounded pool
@@ -1315,8 +1316,8 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
         # made the learned/control comparison misleading. The learned policy
         # now ranks a uniformly sampled candidate pool; every legal action has
         # the same positive probability of entering it.
-        pooled = tuple(self.rng.sample(values, limit))
-        self._pool_sizes[state] = (len(values), len(pooled))
+        pooled = tuple(int(mask) for mask in self.rng.sample(masks, limit))
+        self._pool_sizes[state] = (legal_count, len(pooled))
         return pooled
 
     @staticmethod

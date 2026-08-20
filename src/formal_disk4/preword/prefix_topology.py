@@ -31,10 +31,12 @@ class PrefixRadiusArcTopologyFilter:
     """Conservative same-radius topology checks on weak-order prefixes.
 
     A weak-order prefix fixes a linear part of the cyclic prototype contour;
-    later DFS blocks are inserted only across the still-open frontier between
-    the last current block and block zero.  This filter compiles only piece
-    paths that do not cross that frontier.  Therefore every path, equality and
-    hard boundary used here is unchanged by all descendants of the prefix.
+    ordinary DFS blocks are inserted only across the still-open frontier
+    between the last current block and block zero.  A symmetry-repeated prefix
+    can explicitly supply several open frontiers, one per incomplete rotated
+    copy.  This filter compiles only piece paths that cross none of them.
+    Therefore every path, equality and hard boundary used here is unchanged by
+    all descendants of the prefix.
 
     Unresolved paths are omitted.  Consequently this can lose pruning
     opportunities but cannot reject a descendant that the complete topology
@@ -88,6 +90,7 @@ class PrefixRadiusArcTopologyFilter:
         contour: Word,
         *,
         complete: bool = False,
+        open_frontiers: Sequence[int] | None = None,
     ) -> Word | None:
         view = interface.views[view_index]
         start_id = self.occurrence_index[view.start_occurrence]
@@ -97,12 +100,31 @@ class PrefixRadiusArcTopologyFilter:
         if start < 0 or end < 0 or start == end:
             return None
         direction = self.assignment.orientation_signs[self.piece_index[view.piece]]
-        # Future blocks are inserted only across the open last->zero frontier.
-        # A path that crosses it is not stable yet and is conservatively omitted.
-        crosses_open_frontier = (
-            (direction == 1 and start >= end)
-            or (direction == -1 and start <= end)
-        )
+        # The ordinary DFS has one open last->zero frontier.  A cyclic-shift
+        # prefix is the repetition of one incomplete fundamental domain, so it
+        # has one open frontier per copy.  A path crossing any such frontier
+        # can still acquire future atoms and must be omitted conservatively.
+        if open_frontiers is None:
+            frontier_set = {len(contour) - 1}
+        else:
+            frontier_set = {int(value) for value in open_frontiers}
+            if any(value < 0 or value >= len(contour) for value in frontier_set):
+                raise ValueError("open frontier lies outside the prefix contour")
+        crosses_open_frontier = False
+        if not complete and frontier_set:
+            current = start
+            while current != end:
+                if direction == 1:
+                    if current in frontier_set:
+                        crosses_open_frontier = True
+                        break
+                    current = (current + 1) % len(contour)
+                else:
+                    previous = (current - 1) % len(contour)
+                    if previous in frontier_set:
+                        crosses_open_frontier = True
+                        break
+                    current = previous
         if crosses_open_frontier and not complete:
             return None
         word = cyclic_factor(contour, start, end, direction)
@@ -132,6 +154,7 @@ class PrefixRadiusArcTopologyFilter:
         block_count: int,
         *,
         complete: bool = False,
+        open_frontiers: Sequence[int] | None = None,
     ) -> PrefixTopologyResult:
         if block_count <= 1:
             return PrefixTopologyResult(False, True, "insufficient prefix", 0, 0)
@@ -142,10 +165,20 @@ class PrefixRadiusArcTopologyFilter:
         interface_key = []
         for interface in self.internal_interfaces:
             left = self._stable_positive_word(
-                interface, 0, positions, contour, complete=complete
+                interface,
+                0,
+                positions,
+                contour,
+                complete=complete,
+                open_frontiers=open_frontiers,
             )
             right = self._stable_positive_word(
-                interface, 1, positions, contour, complete=complete
+                interface,
+                1,
+                positions,
+                contour,
+                complete=complete,
+                open_frontiers=open_frontiers,
             )
             if left is None or right is None:
                 continue
@@ -176,7 +209,12 @@ class PrefixRadiusArcTopologyFilter:
         outer_key = []
         for interface in self.outer_interfaces:
             word = self._stable_positive_word(
-                interface, 0, positions, contour, complete=complete
+                interface,
+                0,
+                positions,
+                contour,
+                complete=complete,
+                open_frontiers=open_frontiers,
             )
             if word is None:
                 continue

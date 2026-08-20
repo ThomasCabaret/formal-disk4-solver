@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations, product
@@ -28,6 +29,84 @@ if TYPE_CHECKING:
 EventSink = Callable[[str, int], None]
 StopPredicate = Callable[[], bool]
 CheckpointSink = Callable[[Mapping[str, object]], None]
+
+
+class _MaskDomain(SequenceABC[int]):
+    """Exact lazy domain of unions of disjoint piece-orbit masks.
+
+    Graph Lab samples a small uniform policy pool from this sequence.  Keeping
+    the domain implicit avoids allocating every one of the exponentially many
+    subsets on large graphs, while ``len`` and indexed access preserve the
+    exact uniform distribution used by ``random.sample``.
+    """
+
+    def __init__(
+        self,
+        atoms: Sequence[int],
+        *,
+        required_mask: int | None = None,
+    ) -> None:
+        self.atoms = tuple(int(atom) for atom in atoms)
+        self.required_index = next(
+            (
+                index
+                for index, atom in enumerate(self.atoms)
+                if required_mask is not None and atom & int(required_mask)
+            ),
+            None,
+        )
+        if required_mask is not None and self.required_index is None:
+            self.optional_indices: tuple[int, ...] = ()
+            self._length = 0
+        elif self.required_index is None:
+            self.optional_indices = tuple(range(len(self.atoms)))
+            self._length = (1 << len(self.atoms)) - 1
+        else:
+            self.optional_indices = tuple(
+                index
+                for index in range(len(self.atoms))
+                if index != self.required_index
+            )
+            self._length = 1 << len(self.optional_indices)
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __getitem__(self, index: int | slice) -> int | tuple[int, ...]:
+        if isinstance(index, slice):
+            return tuple(self[offset] for offset in range(*index.indices(len(self))))
+        position = int(index)
+        if position < 0:
+            position += len(self)
+        if not 0 <= position < len(self):
+            raise IndexError(position)
+        if self.required_index is None:
+            selection = position + 1
+            selected_indices = range(len(self.atoms))
+            mask = 0
+        else:
+            selection = position
+            selected_indices = self.optional_indices
+            mask = self.atoms[self.required_index]
+        for bit, atom_index in enumerate(selected_indices):
+            if selection & (1 << bit):
+                mask |= self.atoms[atom_index]
+        return mask
+
+    def __contains__(self, value: object) -> bool:
+        if not isinstance(value, int) or value <= 0:
+            return False
+        remaining = int(value)
+        for atom in self.atoms:
+            overlap = remaining & atom
+            if overlap and overlap != atom:
+                return False
+            remaining &= ~atom
+        if remaining:
+            return False
+        if self.required_index is not None:
+            return bool(value & self.atoms[self.required_index])
+        return self._length > 0
 
 
 @dataclass(frozen=True)
@@ -145,12 +224,22 @@ class WeakOrderEnumerator:
         self.reference_index = self.piece_index[planar_map.reference_piece]
         self.occurrences = planar_map.occurrences()
         self.occurrence_index = {occurrence: index for index, occurrence in enumerate(self.occurrences)}
+        imposed_transform = (
+            required_equivariance_transform
+            if required_equivariance_transform is not None
+            else required_cyclic_shift_transform
+        )
         self.exterior_arc_repetition = build_exterior_arc_repetition_constraint(
             planar_map,
             assignment.piece_names,
             assignment.sequences,
             self.occurrence_index,
             enabled=enable_exterior_arc_repetition_filter,
+            imposed_piece_map=(
+                imposed_transform.piece_map
+                if imposed_transform is not None
+                else None
+            ),
         )
         self.interface_occurrences = self._build_interface_occurrences()
         self.vertex_occurrences = self._build_vertex_occurrences()
@@ -516,6 +605,32 @@ class WeakOrderEnumerator:
             )
         return tuple(masks)
 
+    def _candidate_mask_domain(
+        self,
+        available_mask: int,
+        *,
+        require_reference: bool = False,
+        respect_equivariance: bool = True,
+    ) -> Sequence[int]:
+        """Return the same mask set as ``_candidate_masks`` without expanding it."""
+
+        if self.required_equivariance_transform is None or not respect_equivariance:
+            atoms = tuple(
+                1 << piece_index
+                for piece_index in range(len(self.piece_names))
+                if available_mask & (1 << piece_index)
+            )
+        else:
+            atoms = tuple(
+                orbit_mask
+                for orbit_mask in self._equivariance_orbit_masks
+                if orbit_mask & available_mask == orbit_mask
+            )
+        return _MaskDomain(
+            atoms,
+            required_mask=(1 << self.reference_index) if require_reference else None,
+        )
+
     def _branch_random_key(
         self, path: Sequence[int], mask: int
     ) -> int:
@@ -569,20 +684,20 @@ class WeakOrderEnumerator:
         state: WeakOrderStateView,
         masks: Sequence[int],
     ) -> Tuple[int, ...]:
-        values = tuple(int(mask) for mask in masks)
         # An empty legal set is an ordinary dead leaf of the exhaustive
         # enumerator.  It is not a policy decision: there is nothing to rank
         # and the deterministic search would simply yield no child here.
-        if not values or self.branch_policy is None:
-            return values
-        available = set(values)
+        if not masks:
+            return ()
+        if self.branch_policy is None:
+            return tuple(int(mask) for mask in masks)
         proposed = tuple(
-            int(mask) for mask in self.branch_policy.propose_masks(state, values)
+            int(mask) for mask in self.branch_policy.propose_masks(state, masks)
         )
         if not proposed:
             raise ValueError("A weak-order policy proposed an empty action pool")
         if len(set(proposed)) != len(proposed) or any(
-            mask not in available for mask in proposed
+            mask not in masks for mask in proposed
         ):
             raise ValueError("A weak-order policy proposed an illegal or duplicate mask")
         return proposed
@@ -689,16 +804,39 @@ class WeakOrderEnumerator:
             if len(orbit) == 1:
                 if contour_length % order:
                     return ()
-                orbit_options.append((((source, contour_length // order),),))
+                raw_options = (((source, contour_length // order),),)
             else:
-                orbit_options.append(
-                    tuple(
-                        tuple(zip(orbit, prefixes))
-                        for prefixes in self._weak_compositions(
-                            contour_length, order
-                        )
+                raw_options = tuple(
+                    tuple(zip(orbit, prefixes))
+                    for prefixes in self._weak_compositions(
+                        contour_length, order
                     )
                 )
+            # Compatibility factorizes over tile orbits.  Reject an impossible
+            # orbit now instead of materializing the Cartesian product of all
+            # split compositions and discovering the same contradiction much
+            # later.  This is especially important for 18/19-tile maps.
+            valid_options = []
+            for orbit_choice in raw_options:
+                local_split = dict(orbit_choice)
+                valid = True
+                for orbit_source in orbit:
+                    target = piece_map[orbit_source]
+                    sequence = self.assignment.sequences[orbit_source]
+                    mapped = tuple(
+                        transform.map_occurrence_id(occurrence_id)
+                        for occurrence_id in sequence
+                    )
+                    if mapped != rotate(
+                        self.assignment.sequences[target], local_split[target]
+                    ):
+                        valid = False
+                        break
+                if valid:
+                    valid_options.append(orbit_choice)
+            if not valid_options:
+                return ()
+            orbit_options.append(tuple(valid_options))
 
         output = set()
         for selected in product(*orbit_options):
@@ -796,6 +934,115 @@ class WeakOrderEnumerator:
             )
         return tuple(output)
 
+    def _cyclic_repetition_allows_partial_blocks(
+        self, fundamental_blocks: Tuple[Tuple[int, ...], ...]
+    ) -> bool:
+        """Keep only cyclic branches that can still satisfy outer-arc matching.
+
+        The rotational Stein theorem supplies an exact existential constraint:
+        some pair of outer traces from distinct tile orbits must represent the
+        same prototype interval.  Waiting until a complete weak order to test
+        that event makes a bounded stochastic rollout guess two endpoint
+        coincidences blindly.  Expanding the current fundamental-domain prefix
+        under the imposed rotation lets the same sound prefix predicate remove
+        impossible actions *before* the learned policy ranks them.
+
+        This changes only the order in which the existing necessary condition
+        is applied.  A pair whose endpoints are still both unseen remains
+        feasible, so no descendant accepted by the former leaf test is lost.
+        """
+
+        if not self.exterior_arc_repetition.applicable:
+            return True
+        full_blocks = self._cyclic_full_blocks(fundamental_blocks)
+        positions = [-1] * len(self.occurrences)
+        for block_index, block in enumerate(full_blocks):
+            for occurrence_id in block:
+                previous = positions[occurrence_id]
+                if previous >= 0 and previous != block_index:
+                    raise RuntimeError(
+                        "Cyclic-shift prefix assigned an occurrence twice"
+                    )
+                positions[occurrence_id] = block_index
+        self.event_sink("exterior_arc_repetition_checks", 1)
+        if self.exterior_arc_repetition.prefix_is_feasible(positions):
+            return True
+        self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
+        return False
+
+    def _cyclic_topology_allows_partial_blocks(
+        self,
+        fundamental_blocks: Tuple[Tuple[int, ...], ...],
+        *,
+        complete: bool,
+    ) -> bool:
+        """Apply sound topology propagation inside each closed prefix region.
+
+        Expanding an incomplete cyclic fundamental domain creates one frontier
+        per rotated copy where later fundamental blocks will be inserted.  The
+        prefix topology filter may use only paths that avoid every such
+        frontier.  This makes its usual exact contradictions available before
+        policy ranking without pretending that the repeated prefix is already
+        a complete contour.
+        """
+
+        if self.prefix_topology_filter is None:
+            return True
+        full_blocks = self._cyclic_full_blocks(fundamental_blocks)
+        positions = [-1] * len(self.occurrences)
+        for block_index, block in enumerate(full_blocks):
+            for occurrence_id in block:
+                positions[occurrence_id] = block_index
+        fundamental_count = len(fundamental_blocks)
+        open_frontiers = (
+            ()
+            if complete
+            else tuple(
+                (copy_index + 1) * fundamental_count - 1
+                for copy_index in range(self._cyclic_shift_order)
+            )
+        )
+        try:
+            result = self.prefix_topology_filter.analyze(
+                positions,
+                len(full_blocks),
+                open_frontiers=open_frontiers,
+            )
+        except Exception:
+            # Prefix pruning is only an optimization.  Any implementation
+            # failure keeps the branch conservatively.
+            self.event_sink("prefix_topology_errors", 1)
+            return True
+        if result.applicable:
+            self.event_sink(
+                "prefix_topology_cache_hits"
+                if result.cache_hit
+                else "prefix_topology_checks",
+                1,
+            )
+            self._record_topology_micro_outcome(
+                "prefix_topology", result.feasible, result.reason
+            )
+        if result.feasible:
+            return True
+        self.event_sink("prefix_topology_pruned_nodes", 1)
+        reason_key = (
+            result.reason.lower()
+            .replace("same-radius ", "")
+            .replace("mapped ", "mapped_")
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+        )
+        self.event_sink(f"prefix_topology_rejection_{reason_key}", 1)
+        if result.topology is not None:
+            witness_key = result.topology.rejection_counter_suffix()
+            if witness_key:
+                self.event_sink(
+                    f"prefix_topology_rejection_witness_{witness_key}", 1
+                )
+        return False
+
     def _evaluate_cyclic_leaf(
         self,
         blocks: Tuple[Tuple[int, ...], ...],
@@ -833,8 +1080,8 @@ class WeakOrderEnumerator:
             return
 
         # FILTER JUSTIFICATION (theorem): see
-        # ExteriorArcRepetitionConstraint and Theorem 1.1 in
-        # docs/six_structural_results.tex.
+        # ExteriorArcRepetitionConstraint and Lemma 1 / Theorem 2 in
+        # docs/rotational_stein_structural_note.tex.
         if self.exterior_arc_repetition.applicable:
             self.event_sink("exterior_arc_repetition_checks", 1)
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
@@ -1065,11 +1312,6 @@ class WeakOrderEnumerator:
         if self.branch_policy is None:
             candidate_masks: Iterable[int] = range(1, available_mask + 1)
         else:
-            raw_masks = tuple(
-                mask
-                for mask in range(1, available_mask + 1)
-                if not (mask & ~available_mask)
-            )
             decision_state = self._policy_state(
                 path=path,
                 counters=counters,
@@ -1081,7 +1323,10 @@ class WeakOrderEnumerator:
                 cyclic_shift_half=True,
             )
             candidate_masks = self._policy_propose_masks(
-                decision_state, raw_masks
+                decision_state,
+                self._candidate_mask_domain(
+                    available_mask, respect_equivariance=False
+                ),
             )
         candidates = []
         for mask in candidate_masks:
@@ -1106,6 +1351,16 @@ class WeakOrderEnumerator:
             if appended is None:
                 continue
             next_blocks, next_counters = appended
+            if not self._cyclic_repetition_allows_partial_blocks(next_blocks):
+                continue
+            if not self._cyclic_topology_allows_partial_blocks(
+                next_blocks,
+                complete=all(
+                    counter == expected
+                    for counter, expected in zip(next_counters, target)
+                ),
+            ):
+                continue
             candidates.append((mask.bit_count(), -mask, mask, next_blocks, next_counters))
         candidates.sort(reverse=True)
         if self.branch_random_seed is not None:
@@ -1143,10 +1398,12 @@ class WeakOrderEnumerator:
             self._mark_subtree_complete(path, 0)
 
     def _enumerate_cyclic_shift(self) -> Iterator[Placement]:
+        self.event_sink("cyclic_shift_assignment_checks", 1)
         if not self._cyclic_shift_splits:
             self.event_sink("cyclic_shift_pruned_assignments", 1)
             self._mark_subtree_complete((), 0)
             return
+        self.event_sink("cyclic_shift_compatible_assignments", 1)
         split_entries = list(enumerate(self._cyclic_shift_splits))
         if self.branch_policy is not None:
             zero_counters = tuple(0 for _ in self.target_counters)
@@ -1200,18 +1457,6 @@ class WeakOrderEnumerator:
                 for piece_index, sequence in enumerate(prefixes)
                 if sequence
             )
-            first_masks = tuple(
-                sorted(
-                    (
-                        mask
-                        for mask in range(1, available_mask + 1)
-                        if not (mask & ~available_mask)
-                        and mask & (1 << self.reference_index)
-                    ),
-                    key=lambda item: (-item.bit_count(), item),
-                )
-            )
-            first_masks = self._ordered_masks(first_masks, root_path)
             counters = tuple(0 for _ in prefixes)
             if self.branch_policy is not None:
                 decision_state = self._policy_state(
@@ -1225,7 +1470,12 @@ class WeakOrderEnumerator:
                     cyclic_shift_half=True,
                 )
                 first_masks = self._policy_propose_masks(
-                    decision_state, first_masks
+                    decision_state,
+                    self._candidate_mask_domain(
+                        available_mask,
+                        require_reference=True,
+                        respect_equivariance=False,
+                    ),
                 )
                 policy_candidates = []
                 for mask in first_masks:
@@ -1248,6 +1498,16 @@ class WeakOrderEnumerator:
                     if appended is None:
                         continue
                     blocks, next_counters = appended
+                    if not self._cyclic_repetition_allows_partial_blocks(blocks):
+                        continue
+                    if not self._cyclic_topology_allows_partial_blocks(
+                        blocks,
+                        complete=all(
+                            counter == expected
+                            for counter, expected in zip(next_counters, split)
+                        ),
+                    ):
+                        continue
                     policy_candidates.append((mask, blocks, next_counters))
                 actions = tuple(
                     WeakOrderActionView(
@@ -1280,6 +1540,18 @@ class WeakOrderEnumerator:
                 if not self.stop_predicate():
                     self._mark_subtree_complete(root_path, 0)
                 continue
+            first_masks = tuple(
+                sorted(
+                    (
+                        mask
+                        for mask in range(1, available_mask + 1)
+                        if not (mask & ~available_mask)
+                        and mask & (1 << self.reference_index)
+                    ),
+                    key=lambda item: (-item.bit_count(), item),
+                )
+            )
+            first_masks = self._ordered_masks(first_masks, root_path)
             for mask in first_masks:
                 if self.stop_predicate():
                     return
@@ -1304,6 +1576,16 @@ class WeakOrderEnumerator:
                 if appended is None:
                     continue
                 blocks, next_counters = appended
+                if not self._cyclic_repetition_allows_partial_blocks(blocks):
+                    continue
+                if not self._cyclic_topology_allows_partial_blocks(
+                    blocks,
+                    complete=all(
+                        counter == expected
+                        for counter, expected in zip(next_counters, split)
+                    ),
+                ):
+                    continue
                 yield from self._search_cyclic_shift_half(
                     prefixes,
                     split,
@@ -1328,14 +1610,16 @@ class WeakOrderEnumerator:
         counters = tuple(0 for _ in self.piece_names)
         positions = tuple(-1 for _ in self.occurrences)
         available_mask = (1 << len(self.piece_names)) - 1
-        first_masks = tuple(
-            sorted(
-                self._candidate_masks(available_mask, require_reference=True),
-                key=lambda item: (-item.bit_count(), item),
-            )
-        )
-        first_masks = self._ordered_masks(first_masks, ())
         if self.branch_policy is None:
+            first_masks = tuple(
+                sorted(
+                    self._candidate_masks(
+                        available_mask, require_reference=True
+                    ),
+                    key=lambda item: (-item.bit_count(), item),
+                )
+            )
+            first_masks = self._ordered_masks(first_masks, ())
             for mask in first_masks:
                 if self.stop_predicate():
                     return
@@ -1373,7 +1657,12 @@ class WeakOrderEnumerator:
             resolved_angle_equations=0,
             available_mask=available_mask,
         )
-        first_masks = self._policy_propose_masks(decision_state, first_masks)
+        first_masks = self._policy_propose_masks(
+            decision_state,
+            self._candidate_mask_domain(
+                available_mask, require_reference=True
+            ),
+        )
         candidates = []
         for mask in first_masks:
             if self.mapping_subdomain is not None:
@@ -1515,9 +1804,10 @@ class WeakOrderEnumerator:
         if self.exterior_arc_repetition.applicable:
             self.event_sink("exterior_arc_repetition_checks", 1)
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
-            # FILTER JUSTIFICATION (theorem): docs/six_structural_results.tex,
-            # Theorem 1.1. Once every possible repeated exterior-arc pair has separated an
-            # endpoint, no descendant can restore equality in a past block.
+            # FILTER JUSTIFICATION (theorem): Lemma 1 and Theorem 2 of
+            # docs/rotational_stein_structural_note.tex. Once every possible
+            # repeated outer-arc pair has separated an endpoint, no descendant
+            # can restore equality in a past block.
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
             self._mark_subtree_complete(
                 path, self._subtree_leaf_mass(counters)
@@ -1729,10 +2019,9 @@ class WeakOrderEnumerator:
             block_count=block_count,
             positions=positions,
         )
-        raw_candidate_masks = self._candidate_masks(available_mask)
         decision_state = None
         if self.branch_policy is None:
-            candidate_masks = raw_candidate_masks
+            candidate_masks = self._candidate_masks(available_mask)
         else:
             decision_state = self._policy_state(
                 path=path,
@@ -1745,7 +2034,7 @@ class WeakOrderEnumerator:
             )
             candidate_masks = self._policy_propose_masks(
                 decision_state,
-                raw_candidate_masks,
+                self._candidate_mask_domain(available_mask),
             )
         candidates = []
         for mask in candidate_masks:

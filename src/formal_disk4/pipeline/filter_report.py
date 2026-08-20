@@ -96,6 +96,14 @@ FILTER_SPECS: Tuple[FilterSpec, ...] = (
         ("symmetry_pruned_assignments",),
     ),
     FilterSpec(
+        "assignment.cyclic_shift_compatible",
+        "assignment",
+        "Contour mapping admits the imposed rotational cyclic shift",
+        ("cyclic_shift_assignment_checks",),
+        ("cyclic_shift_pruned_assignments",),
+        passed_counters=("cyclic_shift_compatible_assignments",),
+    ),
+    FilterSpec(
         "weak.exterior_arc_repetition",
         "weak_order",
         "Repeated exterior circular arcs can still coincide",

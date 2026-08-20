@@ -138,6 +138,7 @@ class RecentStructureGallery:
             ),
             "symmetry_cycles": _permutation_cycles(candidate.imposed_permutation),
             "source_symmetry": candidate.source_symmetry,
+            "stein_center_tile": candidate.stein_center_tile,
             "origin": candidate.origin,
             "mutation": candidate.mutation,
             "selection_mode": str(

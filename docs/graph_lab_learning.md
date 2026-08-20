@@ -117,7 +117,7 @@ easier generation or a change in the graph distribution.
 
 The weak-order level also keeps uniform control rollouts. Every decision stores
 its state, chosen action, pool size, selection probability, entropy, and the
-terminal 26-filter target. Its state encoder includes the ordered coincidence
+terminal 27-filter target. Its state encoder includes the ordered coincidence
 blocks already fixed by the prefix. This is not provenance: those blocks are
 part of the current mathematical state and are not recoverable from aggregate
 counters alone. They are omitted from each repeated on-disk state to avoid
@@ -142,6 +142,35 @@ the numerical geometry solver in a background queue:
 $env:PYTHONPATH="$PWD\src"
 py.exe -m formal_disk4.graph_lab.app --config config\graph_lab\up-to-13.json --geometry-config config\graph_lab\geometry.json --generations 1000 --batch-size 8
 ```
+
+The default tile-count domain is 3 through 13. Use `--tile-counts` with a
+comma-separated union of integers and inclusive ranges to explore a
+discontinuous domain. For example, this keeps the usual domain and adds only
+18 and 19 tiles:
+
+```powershell
+py.exe -m formal_disk4.graph_lab.app --config config\graph_lab\up-to-13.json --geometry-config config\graph_lab\geometry.json --tile-counts "3-13,18-19" --generations 10000 --batch-size 8
+```
+
+Sizes 14 through 17 are then absent from both direct prior proposals and
+mutations. The size prior uses the actual numerical gap, so its configured
+growth factor still gives larger requested sizes the extra sampling mass they
+need. The option is checkpoint-compatible: stopping an existing 3--13 run and
+resuming it with this option retains all model checkpoints and replay examples.
+The shared variable-size encoders do not acquire a new tensor shape; existing
+3--13 knowledge therefore transfers to the newly admitted sizes. Use
+`--restart` only when a deliberately independent training experiment is
+wanted.
+
+Resume reads JSONL journals as streams and retains only the replay windows the
+large descendant models actually train on (50,000 mapping and weak-order
+examples by default and 20,000 specialization pools). Cumulative checkpoint
+counters and historical coverage identifiers still include the complete
+journals. At the weak-order
+policy level, a large legal subset domain remains implicit: the policy samples
+its uniform pool of 64 actions by indexed access instead of first allocating
+all `2^n` masks. This optimization is confined to bounded Lab policies; the
+production solver with no policy keeps its exhaustive deterministic ordering.
 
 Add `--exclude-rings` to remove every outside-star plus simple tile-cycle
 structure before graph ranking. The filter applies equally to random priors,
@@ -188,7 +217,10 @@ support exist, all candidates are deliberately treated as exploration.
 
 Each level also displays the three direct policy objectives, including observed
 rate, mean prediction, held-out AUC, and pairwise ranking accuracy. The
-26-filter table remains available as the fine-grained diagnostic signal.
+27-filter table remains available as the fine-grained diagnostic signal. It
+includes `assignment.cyclic_shift_compatible`, so an imposed rotation that
+cannot act on a contour mapping is visible as its own gate rather than as an
+unexplained gap before the first weak-order filter.
 
 At graph level the nested-area funnel is a true product of sequential
 conditional transitions. At mapping and weak-order levels, each rectangle uses
@@ -295,3 +327,66 @@ All files live under the ignored `output/` tree and remain subject to the
 configured 8 GiB recursive output limit. Metrics evaluate a bounded recent
 sample instead of re-running neural inference over the complete history after
 every generation; the full durable examples remain available for replay.
+
+## Rotational Stein subdomain
+
+`--stein-symmetric` restricts the structural proposal distribution to the
+audited consequences of
+`docs/rotational_stein_structural_note.tex`.  A candidate has one distinguished
+central tile fixed by a rotation of order `m >= 2`; every other tile belongs to
+a full `m`-orbit, at least two such orbits exist and at least two distinct
+orbits meet the outer boundary.  Consequently only sizes `n = 1 + k*m` with
+`k >= 2` remain in the effective tile-count domain.  The unproved stronger
+claim `k >= 3` is not used.
+
+For the proved boundary case `k = 2`, the generator also enforces the graph
+content of Theorem 4: every non-central tile is outer and the contact graph
+admits an orientation-reversing involution that exchanges the two moving
+orbits and conjugates the imposed rotation to its inverse.  Sector confinement
+and the centered geometric reflection are not guessed from the graph; the
+mapping/geometry layers retain responsibility for those data.
+
+The sampler chooses a requested admissible tile count and then a compatible
+rotation order.  Its default order mass decreases with `m`, while every
+compatible configured order retains positive probability.  It samples and
+mutates complete edge orbits, so the prior contains no catalog graph or known
+solution.  The graph-only domain cannot encode the theorem's centered matching
+between two outer tile orbits; that necessary condition is enforced later by
+the outer-arc mapping/weak-order filter.  During cyclic weak-order sampling the
+filter is applied incrementally to every proposed prefix, before policy
+ranking.  This is the same exact necessary condition used at a completed leaf:
+it prevents a bounded rollout from having to guess the required endpoint
+coincidences blindly, without excluding any leaf that the complete test would
+accept.  The exact radius-arc topology test is likewise evaluated on cyclic
+prefixes.  An incomplete fundamental domain has one open insertion frontier
+per rotated copy; only propagated paths avoiding every frontier are used.
+Consequently hard-endpoint and opposite-sign contradictions are removed before
+policy ranking while every potentially repairable path remains deferred.
+
+The cyclic subgroup, rather than an arbitrary named generator, is the imposed
+structure.  Before mapping sampling, the dynamic map therefore normalizes among
+the equivalent generators and selects the one that advances the central contour
+by one positive fundamental domain.  In particular, choosing `R` or `R^-1`
+cannot make an otherwise identical mapping domain spuriously empty.
+
+Use a separate output directory so a Stein experiment cannot mix with a
+general Graph Lab checkpoint:
+
+```powershell
+$env:PYTHONPATH="$PWD\src"
+py.exe -m formal_disk4.graph_lab.app `
+  --config config\graph_lab\up-to-13.json `
+  --geometry-config config\graph_lab\geometry.json `
+  --output-directory output\graph_lab\stein-symmetric `
+  --stein-symmetric `
+  --tile-counts "3-19" `
+  --symmetry-orders "2-8" `
+  --restart `
+  --generations 10000 `
+  --batch-size 8
+```
+
+For this example the effective sizes are reported at startup; incompatible
+requested sizes are absent rather than sampled and rejected downstream.  Omit
+`--symmetry-orders` to retain every order compatible with the tile-count
+domain.  Resume by running the same command without `--restart`.
