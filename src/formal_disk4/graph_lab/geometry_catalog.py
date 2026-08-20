@@ -389,6 +389,30 @@ class GeometryCandidateCatalog:
                     break
             return output
 
+    def selected(
+        self, profile_ids: set[str], *, limit: int | None = None
+    ) -> list[CatalogCandidate]:
+        """Return indexed candidates from an explicit profile-id selection."""
+
+        if not profile_ids:
+            return []
+        maximum = None if limit is None else max(1, int(limit))
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT formal_profile_id, source_offset, source_length "
+                "FROM geometry_candidate_catalog ORDER BY first_line ASC"
+            )
+            output = []
+            for profile_id, offset, length in rows:
+                if str(profile_id) not in profile_ids:
+                    continue
+                output.append(
+                    CatalogCandidate(str(profile_id), int(offset), int(length))
+                )
+                if maximum is not None and len(output) >= maximum:
+                    break
+            return output
+
     def read_raw(self, candidate: CatalogCandidate) -> bytes:
         with self.source.open("rb") as stream:
             stream.seek(candidate.source_offset)

@@ -16,7 +16,10 @@ from .dashboard_page import UNIFIED_DASHBOARD_HTML
 from .evaluator import GRAPH_STAGES
 from .geometry_catalog import GeometryCandidateCatalog
 from .rollout_audit import build_audit_report
-from .solution_gallery import GeometrySolutionIndex
+from .solution_gallery import (
+    CompositeGeometrySolutionIndex,
+    GeometrySolutionIndex,
+)
 from .structure_gallery import RecentStructureGallery
 
 
@@ -530,8 +533,27 @@ def build_unified_dashboard_data(
     statuses = read_geometry_status_records(
         geometry_output / "geometry_status.sqlite3"
     )
+    recovery_output = output / "geometry-recovery"
+    recovery_statuses = read_geometry_status_records(
+        recovery_output / "geometry_status.sqlite3"
+    )
+    # Recovery only targets inconclusive failures. Its later result is more
+    # informative, while a solution from either worker is always authoritative.
+    for profile_id, recovery_status in recovery_statuses.items():
+        primary_status = statuses.get(profile_id)
+        if (
+            primary_status is None
+            or recovery_status.status == "solution_found"
+            or primary_status.status != "solution_found"
+        ):
+            statuses[profile_id] = recovery_status
     worker = _read_json(geometry_output / "geometry_worker_state.json")
-    processing = worker.get("current_profile_id")
+    recovery_worker = _read_json(
+        recovery_output / "geometry_recovery_state.json"
+    )
+    processing = recovery_worker.get("current_profile_id") or worker.get(
+        "current_profile_id"
+    )
     gallery = catalog.page(
         page=page,
         page_size=page_size,
@@ -546,6 +568,7 @@ def build_unified_dashboard_data(
         "levels": levels,
         "coverage": coverage,
         "worker": worker,
+        "recovery_worker": recovery_worker,
         "gallery": gallery,
         "recent_structures": (
             structures.recent(structure_limit)
@@ -647,7 +670,7 @@ refresh();timer=setInterval(refresh,5000);
 def make_handler(
     output: Path,
     catalog: GeometryCandidateCatalog,
-    solutions: GeometrySolutionIndex,
+    solutions: GeometrySolutionIndex | CompositeGeometrySolutionIndex,
     structures: RecentStructureGallery,
     window_generations: int,
     max_points: int,
@@ -783,16 +806,26 @@ class GraphLabDashboardServer:
         port: int = 8766,
         window_generations: int = 50,
         max_points: int = 400,
+        catalog_path: Path | None = None,
     ) -> None:
         self.output = output.resolve()
         self.geometry_output = self.output / "geometry"
         self.geometry_output.mkdir(parents=True, exist_ok=True)
         self.catalog = GeometryCandidateCatalog(
-            self.geometry_output / "geometry_candidate_catalog.sqlite3",
+            (
+                self.geometry_output / "geometry_candidate_catalog.sqlite3"
+                if catalog_path is None
+                else catalog_path.resolve()
+            ),
             self.output / "geometry_candidates.jsonl",
         )
-        self.solutions = GeometrySolutionIndex(
-            self.geometry_output / "geometric_solutions.jsonl"
+        self.solutions = CompositeGeometrySolutionIndex(
+            (
+                self.geometry_output / "geometric_solutions.jsonl",
+                self.output
+                / "geometry-recovery"
+                / "geometric_solutions.jsonl",
+            )
         )
         self.structures = RecentStructureGallery(
             self.output / "observations.jsonl"
@@ -875,6 +908,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-points", type=int, default=400)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument(
+        "--catalog-path",
+        type=Path,
+        help=(
+            "optional independent candidate index; useful when another live "
+            "dashboard already owns the default catalog"
+        ),
+    )
     parser.add_argument("--no-browser", action="store_true")
     return parser
 
@@ -887,6 +928,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         port=args.port,
         window_generations=args.window_generations,
         max_points=args.max_points,
+        catalog_path=args.catalog_path,
     )
     print(f"Graph Lab dashboard: {dashboard.url}")
     print(f"Reading: {args.output.resolve()}")

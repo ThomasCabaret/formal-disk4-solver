@@ -5,6 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from formal_disk4.geometry.status import (
+    NO_SOLUTION_FOUND,
+    SOLUTION_FOUND,
+    GeometryStatusStore,
+)
 from formal_disk4.graph_lab.dashboard import (
     build_dashboard_data,
     build_unified_dashboard_data,
@@ -13,6 +18,7 @@ from formal_disk4.graph_lab.dashboard import (
 from formal_disk4.graph_lab.geometry_catalog import GeometryCandidateCatalog
 from formal_disk4.graph_lab.space import DualGraphCandidate
 from formal_disk4.graph_lab.structure_gallery import RecentStructureGallery
+from formal_disk4.graph_lab.solution_gallery import CompositeGeometrySolutionIndex
 from formal_disk4.graph_lab.dashboard_page import UNIFIED_DASHBOARD_HTML
 
 
@@ -35,6 +41,25 @@ def _mode(eligible: int, passed: int, predicted: float) -> dict[str, object]:
 
 
 class GraphLabDashboardTests(unittest.TestCase):
+    def test_composite_solution_index_reads_primary_and_recovery_files(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            primary = root / "primary.jsonl"
+            recovery = root / "recovery.jsonl"
+            primary.write_text(
+                json.dumps({"formal_profile_id": "fp-primary"}) + "\n",
+                encoding="utf-8",
+            )
+            recovery.write_text(
+                json.dumps({"formal_profile_id": "fp-recovered"}) + "\n",
+                encoding="utf-8",
+            )
+            index = CompositeGeometrySolutionIndex((primary, recovery))
+
+            self.assertEqual(index.refresh(), 2)
+            self.assertIsNotNone(index.get("fp-primary"))
+            self.assertIsNotNone(index.get("fp-recovered"))
+
     def test_client_disconnect_during_response_is_ignored(self) -> None:
         handler_type = make_handler(
             Path("."),
@@ -294,6 +319,26 @@ class GraphLabDashboardTests(unittest.TestCase):
                 encoding="utf-8",
             )
             geometry = output / "geometry"
+            with GeometryStatusStore(
+                geometry / "geometry_status.sqlite3"
+            ) as status_store:
+                status_store.record(
+                    "fp-demo",
+                    NO_SOLUTION_FOUND,
+                    reason="primary search exhausted",
+                    attempts=3,
+                    best_cost=0.2,
+                )
+            with GeometryStatusStore(
+                output / "geometry-recovery" / "geometry_status.sqlite3"
+            ) as status_store:
+                status_store.record(
+                    "fp-demo",
+                    SOLUTION_FOUND,
+                    reason="strong recovery found a solution",
+                    attempts=9,
+                    best_cost=0.0,
+                )
             catalog = GeometryCandidateCatalog(
                 geometry / "geometry_candidate_catalog.sqlite3", source
             )
@@ -315,6 +360,10 @@ class GraphLabDashboardTests(unittest.TestCase):
             data["gallery"]["items"][0]["importance"], "pizza"
         )
         self.assertEqual(data["gallery"]["occurrences_total"], 1)
+        self.assertEqual(
+            data["gallery"]["items"][0]["status"], SOLUTION_FOUND
+        )
+        self.assertEqual(data["recovery_worker"], {})
 
     def test_mapping_metrics_use_the_microfilter_order(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

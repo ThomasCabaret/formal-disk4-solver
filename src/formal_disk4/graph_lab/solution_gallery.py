@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from formal_disk4.visualization.svg import geometric_solution_svg
 
@@ -66,3 +66,37 @@ class GeometrySolutionIndex:
             rendered = geometric_solution_svg(record)
             self.svg_cache[profile_id] = rendered
             return rendered
+
+
+class CompositeGeometrySolutionIndex:
+    """Read solutions produced by independent geometry workers.
+
+    Each child keeps its own incremental cursor, so the normal geometry queue
+    and a stronger recovery pass never need to append to the same JSONL file.
+    Later paths have precedence if the same formal profile is solved twice.
+    """
+
+    def __init__(self, paths: Sequence[Path]) -> None:
+        self.indices = tuple(GeometrySolutionIndex(path) for path in paths)
+
+    def refresh(self) -> int:
+        profile_ids: set[str] = set()
+        for index in self.indices:
+            index.refresh()
+            with index.lock:
+                profile_ids.update(index.records)
+        return len(profile_ids)
+
+    def get(self, profile_id: str) -> Mapping[str, Any] | None:
+        for index in reversed(self.indices):
+            record = index.get(profile_id)
+            if record is not None:
+                return record
+        return None
+
+    def svg(self, profile_id: str) -> str | None:
+        for index in reversed(self.indices):
+            rendered = index.svg(profile_id)
+            if rendered is not None:
+                return rendered
+        return None
