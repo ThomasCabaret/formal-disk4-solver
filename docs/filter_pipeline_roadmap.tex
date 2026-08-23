@@ -1,0 +1,615 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,margin=27mm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{listings}
+\usepackage{fancyvrb}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!45!black,
+  citecolor=green!35!black,
+  urlcolor=blue!45!black,
+  pdftitle={Exact Early Filters and Search-Pipeline Roadmap for the Monohedral Disk Solver}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\setlist{topsep=0.35em,itemsep=0.25em,parsep=0pt}
+\renewcommand{\arraystretch}{1.12}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\BR}{B_R}
+\newcommand{\SR}{S_R}
+\newcommand{\OUT}{\texttt{OUTSIDE}}
+\newcommand{\interior}{\operatorname{int}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\per}{\operatorname{per}}
+\newcommand{\supp}{\operatorname{supp}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Kreg}{\mathcal K_{\mathrm{reg}}}
+
+\title{\textbf{Exact Early Filters and Search-Pipeline Roadmap\\for the Monohedral Disk Solver}}
+\author{}
+\date{16 August 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+\begin{abstract}
+This note reorganizes the current filtering strategy around a small number of exact invariants that can be tested substantially earlier than contour-word resolution.  The main new result is a graph-level perimeter regularizability criterion: before any contour offsets are chosen, the positive-length contact structure must admit strictly positive interface weights giving every tile the same weighted degree.  After collapsing parallel contacts and replacing positive-length exterior contact by a loop, this is exactly positive graph regularizability, equivalently total support of the symmetric adjacency pattern.  This yields both a complete polynomial graph-only test and very cheap Hall-type subtests.
+
+For Stein configurations with an imposed geometric rotation, a second new result gives a strong orbit obstruction: every nondegenerate exterior arc has angular length strictly less than one rotational period.  Hence at least two complete peripheral tile orbits are required, so an order-$q$ rotational Stein configuration has at least $1+2q$ tiles.  A third theorem generalizes the existing cyclic-hub obstruction: once the length system proves that any connected central interface has length equal to an integral number of rotational contour periods, the configuration is impossible by periodic signed-curvature cancellation.
+
+The second half of the note maps these results onto the existing implementation.  It proposes a staged pipeline beginning with graph-only regularizability and symmetry filters, then prefix-level positive-length feasibility, exterior-arc classes, the existing radius-$R$ topology propagation, a productionized nested linear curriculum, specialized periodic word-equation handlers, and only then the generic Nielsen--Levi and geometric solvers.  Heuristic scores are kept strictly separate from exact rejection.
+\end{abstract}
+
+\tableofcontents
+
+\section{Scope and conventions}
+
+This document assumes familiarity with the current solver and therefore does not restate the full pipeline.  The relevant existing components are referred to by their current names, in particular the length oracles (\texttt{LengthFeasibilityOracle} and
+\texttt{StrictLengthFeasibilityOracle}), the hybrid linear oracle
+(\texttt{HybridMarginOracle}), the prefix and complete radius-arc topology
+filters, and \texttt{PrewordLinearInvariantFilter} / \texttt{PrewordPruningPipeline}.
+
+The geometric setting is a finite monohedral tiling
+\[
+  \BR=D_1\cup\cdots\cup D_n
+\]
+of the closed Euclidean disk by congruent Jordan regions with pairwise disjoint interiors.  Whenever perimeter or regular signed curvature is used, rectifiability or the current piecewise-$C^2$ hypothesis is stated explicitly.  A \emph{positive-length interface} means one of the interface components represented by the planar map, not a mere point contact.
+
+A \emph{Stein configuration} means that the center $O$ of \(\BR\) lies in the interior of one tile.  This tile is called the \emph{center tile}.  Since its interior contains a neighborhood of $O$, no other tile contains $O$.
+
+The note distinguishes three statuses:
+\begin{itemize}
+\item \textbf{Established}: already proved in the current documentation or in the cited literature.
+\item \textbf{New theorem}: proved below from the stated hypotheses.
+\item \textbf{Engineering proposal}: a sound use or reordering of existing necessary conditions, but not a new mathematical theorem.
+\end{itemize}
+
+\section{Existing exact structure worth preserving}
+
+\subsection{Exterior arcs}
+
+Kurusa, L\'angi and V\'igh prove that for every tile
+\[
+  S_i=D_i\cap\partial\BR
+\]
+is a closed connected circular arc, allowing degeneracy, and that after transporting exterior arcs to a common prototile, two such arcs have disjoint relative interiors unless they coincide \cite{KLV2020}.  The current file \texttt{six\_structural\_results.tex} packages this as the outer-arc structure and transported exterior-arc repetition results.
+
+The current \texttt{RadiusArcTopologyFilter} already uses the associated exact local facts: a radius-$R$ subarc transported across an interface reverses convex/concave sign; a smooth radius-$R$ arc cannot cross a hard endpoint; and a single atomic open interval cannot simultaneously carry both signs.  These checks are correctly placed before generic word solving, and unresolved images are conservatively accepted.
+
+\subsection{Stein center tile forces radius-$R$ concavity}
+
+The current documentation proves the following.
+
+\begin{theorem}[Existing: strict radius-$R$ concavity]
+If $O\in\interior D_c$ in a nontrivial monohedral tiling of $\BR$, then the prototile boundary contains a nondegenerate radius-$R$ circular arc that is concave relative to the prototile.
+\end{theorem}
+
+This is already represented by \texttt{requires\_radius\_r\_concavity} and by the \texttt{radius\_concavity} stage in \texttt{PrewordLinearInvariantFilter}.  It should remain a necessary-condition constraint, not a graph-only rejection.
+
+\subsection{Current cyclic-hub obstruction}
+
+The current \texttt{cyclic\_hub\_obstruction.tex} proves, under the piecewise-$C^2$ hypothesis, that a rotationally fixed center tile cannot have its complete boundary partitioned into one orbit of $q$ connected interfaces with one orbit of $q$ congruent neighbors.  The proof is by periodic regular signed curvature and cancellation across the shared interface.  Arbitrary outer rings do not repair the contradiction.
+
+This theorem is correct but its hypotheses are narrower than necessary.  \Cref{sec:period-interface} gives a direct strengthening that can be triggered from the length row space.
+
+\subsection{The present preword linear curriculum}
+
+The current \texttt{PrewordLinearInvariantFilter} already contains the nested stages
+\begin{center}
+\texttt{positive\_lengths},
+\texttt{radius\_local},
+\texttt{smooth\_turn\_local},
+\texttt{radius\_global},
+\texttt{smooth\_turn\_global},
+\texttt{radius\_concavity},
+\texttt{isoperimetric},
+\texttt{point\_turns}.
+\end{center}
+Every production rejection is ultimately certified exactly through rational arithmetic.  This is the right contract.  The main implementation issue is not mathematical soundness but how early the weaker prefixes of these systems are exposed to the search tree.
+
+\section{New graph-only result: perimeter regularizability}
+\label{sec:perimeter}
+
+This is the most immediate new filter because it needs no contour offsets, no weak order, no word equation, and no geometric coordinates.
+
+\subsection{The perimeter system}
+
+Assume that tile boundaries are rectifiable and that the planar map lists all positive-length interface components.  Give every physical interface component $e$ a variable $x_e>0$ equal to its arclength.  For an internal interface, the same $x_e$ belongs to both incident tile boundaries.  For an exterior interface, $x_e$ belongs only to its tile.
+
+Because all tiles are congruent, they have a common perimeter $P>0$.  Therefore every tile $v$ satisfies
+\begin{equation}
+  \sum_{e\ni v} x_e=P.                           \tag{3.1}
+\end{equation}
+After division by $P$, this is a strictly positive linear feasibility problem depending only on the positive-length incidence structure.
+
+\subsection{Loop-augmented contact graph}
+
+Collapse parallel positive-length contacts between the same two tiles to one support edge.  If a tile has at least one positive-length exterior interface, add one loop at that tile.  Denote the resulting undirected graph with loops by $H$.
+
+The weight of a collapsed internal edge is the sum of the physical lengths of all parallel interfaces.  The weight of a loop is the total length of all positive exterior interfaces of that tile.  Conversely, every positive aggregate weight can be split into arbitrarily many positive summands, so this collapse loses no information for mere perimeter feasibility.
+
+\begin{theorem}[Perimeter regularizability criterion]
+\label{thm:perimeter-regularizability}
+For a fixed positive-length contact map with rectifiable tile boundaries, the perimeter equations \emph{admit strictly positive lengths for every represented physical interface} if and only if the loop-augmented support graph $H$ admits strictly positive edge/loop weights for which every vertex has the same weighted degree.
+\end{theorem}
+
+\begin{proof}
+Suppose first that the physical interface lengths exist.  For every pair of tiles, sum the lengths of all parallel internal interfaces and use the sum as the weight of their support edge in $H$.  For every tile incident with the exterior, sum the lengths of all its exterior interfaces and use the sum as the loop weight.  All aggregate weights are strictly positive.  Equation (3.1) says exactly that the weighted degree of every vertex is $P$.
+
+Conversely, suppose $H$ has strictly positive regularizing weights with common weighted degree $P$.  If a support edge represents $r\ge1$ physical interfaces, split its positive weight into $r$ arbitrary positive summands.  Do the same for a loop representing several exterior interfaces.  The sum incident with every tile remains $P$, so the resulting physical interface lengths satisfy (3.1) and are all strictly positive.
+\end{proof}
+
+Thus the relevant graph-theoretic notion is exactly \emph{positive regularizability}.  For a symmetric adjacency pattern, positive regularizability is equivalent to \emph{total support}: every nonzero adjacency entry lies in a supported permutation matrix \cite{BozzoFranceschet2016}.  In undirected language this becomes the following.
+
+\begin{corollary}[Complete graph-only characterization]
+\label{cor:cycle-forest}
+The perimeter necessary condition holds if and only if every support edge and every support loop of $H$ belongs to an undirected spanning cycle forest: a spanning subgraph whose connected components are single edges, cycles, or loops.
+\end{corollary}
+
+This is an exact characterization of the \emph{perimeter relaxation}; it is not a sufficient condition for a tiling.
+
+\subsection{A very small matching algorithm}
+
+Let $A$ be the symmetric $0$--$1$ adjacency matrix of $H$, including diagonal entries for loops.  Form a bipartite graph $B(H)$ with a left and a right copy of the tile vertices and an edge $i_Lj_R$ whenever $A_{ij}=1$.
+
+Total support of $A$ is equivalent to the statement that every edge of $B(H)$ belongs to at least one perfect matching.  Hence, for the solver's sizes, the following deliberately simple algorithm is already sufficient:
+\begin{enumerate}
+\item Check that $B(H)$ has a perfect matching.  If not, reject.
+\item For each bipartite support edge $i_Lj_R$, force it and check whether the remaining bipartite graph has a perfect matching.  If any support edge fails, reject.
+\end{enumerate}
+With fewer than twenty tiles this is negligible even with a generic matching implementation.  If desired, all allowed edges can instead be classified from one perfect matching by the usual alternating-cycle decomposition.
+
+The important point is architectural: this entire test belongs immediately after the planar map is known.  It should not wait for \texttt{LengthFeasibilityOracle}, because the latter only appears after a contour placement has already generated atomic length rows.
+
+\subsection{Cheap Hall-type certificates}
+
+The complete total-support test is already inexpensive, but several $O(n+m)$ or small-subset tests can precede it.
+
+Call a tile \emph{perimetrically interior} if it has no positive-length exterior interface, i.e. its vertex has no loop in $H$.
+
+\begin{proposition}[Independent-set perimeter obstruction]
+\label{prop:hall}
+Let $S$ be an independent set of perimetrically interior tiles, and let $N(S)$ be its set of tile neighbors.  Then every monohedral realization satisfies
+\[
+  |N(S)|\ge |S|.
+\]
+If equality holds, every tile in $N(S)$ has no positive-length interface except interfaces to tiles in $S$.
+\end{proposition}
+
+\begin{proof}
+All boundary length of a tile in $S$ lies on interfaces from $S$ to $N(S)$, because $S$ is independent and has no exterior interfaces.  Summing the perimeter equations over $S$ gives total cross-interface weight $|S|P$.
+
+The same cross interfaces contribute to the perimeter sums of the vertices in $N(S)$.  Their total available perimeter is $|N(S)|P$, and all interface weights are nonnegative, hence $|S|P\le |N(S)|P$.
+
+If equality holds, the cross interfaces already consume the complete perimeter sum of $N(S)$.  Since every represented interface has strictly positive length, no vertex in $N(S)$ can have any additional incident support edge or loop.
+\end{proof}
+
+\begin{corollary}[Bipartite-region deficit]
+Let $U$ be a set of perimetrically interior tiles whose induced contact graph is bipartite with parts $A$ and $B$.  Then $A$ has at least $|A|-|B|$ distinct neighbors outside $U$ whenever $|A|>|B|$, and symmetrically for $B$.
+\end{corollary}
+
+\begin{proof}
+The set $A$ is independent.  Its neighborhood is the disjoint union of $B$ and its neighbors outside $U$.  Apply \Cref{prop:hall}.
+\end{proof}
+
+These are useful not because the matching test is expensive, but because they produce tiny human-readable rejection witnesses and can be evaluated while a graph is still being constructed.
+
+\section{New strengthening of exterior-arc repetition}
+\label{sec:outer-repetition}
+
+The current structural note proves that among all transported exterior arcs, allowing empty and singleton arcs, some pair coincides.  For search purposes the nondegenerate version is more useful.
+
+\begin{theorem}[Nondegenerate exterior-arc repetition]
+\label{thm:nondeg-repeat}
+Let $D_1,\ldots,D_n$ be a nontrivial monohedral tiling of $\BR$ by Jordan regions.  Transport every set $S_i=D_i\cap\partial\BR$ to a common prototile by arbitrary fixed tile congruences.  Then at least two \emph{nondegenerate} transported exterior arcs coincide.
+\end{theorem}
+
+\begin{proof}
+By Kurusa--L\'angi--V\'igh, every $S_i$ is a closed connected circular arc and two transported arcs either have disjoint relative interiors or coincide \cite{KLV2020}.
+
+There must be at least two nondegenerate physical exterior arcs.  Indeed, if exactly one $S_i$ were nondegenerate, the union of the finitely many $S_i$ would force that single arc to be the whole circle.  A Jordan region contained in $\BR$ and containing the complete boundary circle must equal $\BR$, contradicting $n>1$.
+
+Assume that no two nondegenerate transported arcs coincide.  Their relative interiors are then pairwise disjoint.  The physical exterior arcs cover $\partial\BR$ and overlap only on zero-length sets, so the sum of their arclengths is $2\pi R$.  Transport preserves arclength.  Every transported exterior arc lies on $\partial\conv D_1$ and has radius $R$, so these arcs contribute total turning $2\pi$ to the boundary of the convex hull.
+
+The total turning of a convex Jordan curve is $2\pi$.  Hence every remaining part of $\partial\conv D_1$ has zero turning and is a straight segment tangent to the adjacent radius-$R$ arcs.  The standard parallel-body argument used in Lemma 2.9 of \cite{KLV2020} gives
+\[
+  \conv D_1=P+\BR
+\]
+for a convex polygon $P$, possibly a point.  Since $D_1\subseteq\BR$, its circumradius is at most $R$.  But the circumradius of $P+\BR$ equals $R$ only when $P$ is a point.  Thus $\conv D_1=\BR$.
+
+Every point of $\partial\BR$ is then an extreme point of $\conv D_1$ and therefore belongs to $D_1$.  A Jordan region contained in $\BR$ and containing $\partial\BR$ is the whole disk, again contradicting $n>1$.  Hence two nondegenerate transported arcs coincide.
+\end{proof}
+
+\paragraph{Algorithmic consequence.}
+Before enumerating a general weak order, the positive-length exterior arcs may be treated as a family of prototype intervals satisfying two exact combinatorial rules:
+\begin{enumerate}
+\item two classes either coincide exactly or have disjoint relative interiors;
+\item at least one coincidence class has multiplicity at least two.
+\end{enumerate}
+This suggests enumerating exterior-arc coincidence classes and their cyclic order before inserting the remaining contour occurrences.
+
+\section{New Stein rotation theorem: one peripheral orbit is never enough}
+\label{sec:stein-rotation}
+
+This section gives a graph-family rejection that is substantially stronger than the previous arithmetic orbit test.
+
+\begin{lemma}[Only the center tile can have a nontrivial rotational stabilizer]
+\label{lem:stabilizer}
+Let a nontrivial rotation $r$ about $O$ preserve a monohedral tiling of $\BR$.  If a Jordan tile $D$ is setwise fixed by a nontrivial power of $r$, then $O\in\interior D$.
+\end{lemma}
+
+\begin{proof}
+Let $s$ be a nontrivial power of $r$ fixing $D$.  The restriction $s|_D$ is a continuous self-map of a topological closed disk, so Brouwer's fixed-point theorem gives a fixed point in $D$.  The ambient nontrivial rotation $s$ has the unique fixed point $O$, hence $O\in D$.
+
+Suppose $O\in\partial D$.  The restriction of $s$ to the Jordan curve $\partial D$ is an orientation-preserving finite-order homeomorphism of a topological circle with a fixed point.  Such a homeomorphism is the identity: after cutting the circle at the fixed point, it becomes an increasing finite-order homeomorphism of an interval, and any non-fixed point would move monotonically under iteration and could not return after finitely many steps.  Thus every point of $\partial D$ would be fixed by the ambient rotation, impossible.  Therefore $O\in\interior D$.
+\end{proof}
+
+In a Stein configuration the center tile is therefore fixed, and every other tile belongs to a full orbit of size $q$ under an order-$q$ rotation.
+
+\begin{lemma}[The fixed center tile has no exterior arc]
+\label{lem:center-no-outer}
+In a nontrivial order-$q$ rotational Stein configuration, the center tile has empty intersection with $\partial\BR$.
+\end{lemma}
+
+\begin{proof}
+Its exterior intersection is a connected arc by \cite{KLV2020} and is invariant under the nontrivial rotation.  A singleton on $\partial\BR$ cannot be invariant because the rotation has no fixed point on the outer circle.  A proper nondegenerate connected arc cannot be invariant either.  If the intersection were the whole circle, the center tile would equal $\BR$.  Hence the intersection is empty.
+\end{proof}
+
+\begin{theorem}[Rotational exterior-arc bound]
+\label{thm:rot-outer-bound}
+Consider a nontrivial Stein tiling of $\BR$ invariant under a geometric rotation of order $q\ge2$.  If $S$ is any nondegenerate physical exterior arc of any tile, and $\theta$ is its central angle on $\partial\BR$, then
+\[
+  \theta<\frac{2\pi}{q}.
+\]
+Consequently the positive-length exterior tiles cannot form a single orbit of size $q$.
+\end{theorem}
+
+\begin{proof}
+Let $D_0$ be the fixed center tile and let $D$ be a tile carrying the exterior arc $S$.  Choose an isometry $g:D\to D_0$ and put $J=g(S)$.  As in Remark 2.7 of \cite{KLV2020}, $J$ is a radius-$R$ circular arc contained in $\partial\conv D_0$.
+
+For $j=0,\ldots,q-1$, the arc $r^j(J)$ is again a radius-$R$ arc on $\partial\conv D_0$ with the same angle $\theta$.  Their relative interiors are pairwise disjoint.  Indeed, if $J$ and $r^d(J)$ had a nondegenerate overlap for some $0<d<q$, their supporting radius-$R$ circles would coincide.  The center of that supporting circle would then be fixed by the nontrivial rotation $r^d$, so it would be $O$.  Hence $J$ would lie on $\partial\BR$, giving a nondegenerate exterior arc of $D_0$, contradicting \Cref{lem:center-no-outer}.
+
+The $q$ arcs therefore contribute total convex-boundary turning $q\theta\le2\pi$.  Suppose equality held.  Then these radius-$R$ arcs already exhaust the total turning of $\partial\conv D_0$.  Exactly as in the proof of Lemma 2.9 of \cite{KLV2020}, the remaining convex-hull boundary consists of tangent line segments and
+\[
+  \conv D_0=P+\BR
+\]
+for a convex polygon $P$.  Since $D_0\subseteq\BR$, the same circumradius argument forces $P$ to be a point and $D_0=\BR$, impossible in a nontrivial tiling.  Hence $q\theta<2\pi$.
+
+Finally, one tile orbit of size $q$ contributes $q$ congruent exterior arcs, all having the same angle by rotational symmetry.  Their total angular measure is strictly less than $2\pi$, so one orbit cannot cover the outer circle.
+\end{proof}
+
+\begin{corollary}[Two-orbit and tile-count obstruction]
+\label{cor:two-orbits}
+In an order-$q$ rotational Stein configuration:
+\begin{enumerate}
+\item every noncentral tile orbit has size $q$;
+\item at least two noncentral tile orbits contain positive-length exterior arcs;
+\item the total number $n$ of tiles satisfies
+\[
+  n=1+kq\quad\text{with }k\ge2,
+\]
+so in particular $n\ge1+2q$.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+The orbit statement follows from \Cref{lem:stabilizer}.  The outer circle has positive length and is covered by the finitely many exterior intersections, so at least one nondegenerate exterior orbit exists.  By \Cref{thm:rot-outer-bound}, one such orbit cannot cover the whole circle, hence at least two are needed.  Counting the fixed center tile and full noncentral orbits gives the formula.
+\end{proof}
+
+\begin{corollary}[Immediate consequences in the present search range]
+For a Stein search:
+\begin{enumerate}
+\item no configuration with at most three tiles exists, by Corollary 1.3 of \cite{KLV2020};
+\item with $18$ tiles, no nontrivial rotational symmetry is possible;
+\item with $19$ tiles, the only possible rotational orders are $2,3,6,9$.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+The first item is published in \cite{KLV2020}.  For the others, \Cref{cor:two-orbits} implies that $q$ divides $n-1$ and $q\le(n-1)/2$.  For $n=18$, $q$ would divide $17$, so the only nontrivial possibility is $q=17$, which violates $q\le8.5$.  For $n=19$, $q$ divides $18$ and $q\le9$, giving $2,3,6,9$.
+\end{proof}
+
+\paragraph{Important scope.}
+This theorem requires an actual geometric rotation of the tiling, not merely an abstract automorphism of the contact graph.  It is therefore applicable after the solver has selected a geometric symmetry action on the planar map.
+
+\section{New generalization of the cyclic-hub obstruction}
+\label{sec:period-interface}
+
+The existing cyclic-hub theorem gets its contradiction because one hub interface has length exactly one rotational period of the central contour.  The complete one-orbit covering hypothesis is merely one way to force that length equality.
+
+\begin{theorem}[Period-length central-interface obstruction]
+\label{thm:period-interface}
+Assume piecewise-$C^2$ tile boundaries.  Let a monohedral disk tiling be invariant under a rotation of order $q\ge2$, and let a tile $D_0$ be fixed by that rotation.  Write $P=\per(D_0)$.  Suppose a connected positive-length interface $C\subset\partial D_0$ with another tile has length
+\[
+  \operatorname{len}(C)=\frac{mP}{q}
+\]
+for some integer $m\ge1$.  Then the tiling is impossible.
+\end{theorem}
+
+\begin{proof}
+Set $L=P/q$.  Rotational invariance makes the regular signed-curvature density of the positively oriented boundary of $D_0$ $L$-periodic in arclength.  Let $K$ be the regular signed curvature on any boundary interval of length $L$.  Every interval of length $mL$ then has regular signed curvature $mK$.
+
+The interface $C$, viewed as part of the positively oriented boundary of $D_0$, therefore contributes $mK$.  Viewed from the neighboring tile, the same physical regular arc is traversed in the opposite direction and contributes $-mK$.
+
+Transport the neighboring tile to the common prototile $D_0$ by a congruence.  Signed regular curvature in positive boundary orientation is preserved under this transport; for an orientation-reversing isometry, reversal of the plane orientation and reversal of boundary orientation compensate.  The image of $C$ is a connected boundary interval of $D_0$ of the same length $mL$ and regular signed curvature $-mK$.
+
+Periodicity of $D_0$ says that this image interval must instead have regular signed curvature $mK$.  Thus $mK=-mK$, and since $m>0$, $K=0$.  The full regular signed curvature of every tile is therefore $qK=0$.
+
+On the other hand, summing regular signed curvature over all tile boundaries cancels every smooth internal interface and leaves the positively oriented outer circle, whose regular signed curvature is $2\pi$.  This contradiction proves the theorem.
+\end{proof}
+
+\begin{corollary}[Current cyclic hub as a special case]
+If the fixed tile boundary is partitioned into one orbit of $q$ congruent connected interfaces, each interface has length $P/q$ and \Cref{thm:period-interface} applies with $m=1$.
+\end{corollary}
+
+\paragraph{Algorithmic certificate.}
+Normalize the atomic contour lengths so that their sum is one.  For every connected central interface whose contour path is already fixed, let $\ell_C$ be its length row.  For every integer $m=1,\ldots,q$, test whether the current exact length row space implies
+\[
+  q\ell_C=m.
+\]
+If it does, reject immediately.  The current code already contains exact row-space reduction machinery, so this is a very small addition.  The same test can be run on a weak-order prefix as soon as the interface path and the necessary length equations are stable.
+
+\section{Where these theorems enter the current program}
+\label{sec:pipeline}
+
+The main recommendation is to move from a small number of relatively monolithic stages to a monotone ladder of increasingly expensive necessary conditions.  Each stage should consume only information already fixed by the search prefix.
+
+\subsection{Stage A: planar map and imposed symmetry only}
+
+This stage should contain no contour offsets.
+
+\paragraph{A1. Existing combinatorial validity.}
+Keep planarity, the current degree constraints, map consistency, and the existing symmetry-action validity checks.
+
+\paragraph{A2. New \texttt{PerimeterRegularizabilityFilter}.}
+Build the loop-augmented support graph $H$ from the tile--tile positive-length contacts and the tiles with positive-length \OUT\ contact.  Apply, in increasing cost order:
+\begin{enumerate}
+\item obvious independent-set/Hall certificates, preferably while the graph itself is being generated;
+\item one supported perfect-matching test for nonnegative perimeter feasibility;
+\item the complete total-support test, equivalently ``every support edge is allowed by some perfect matching''.
+\end{enumerate}
+A rejection here removes the complete subtree of all offset, parity and word choices for that map.
+
+\paragraph{A3. New \texttt{SteinRotationOrbitFilter}.}
+When the selected symmetry is a genuine order-$q$ geometric rotation and the search branch is Stein:
+\begin{enumerate}
+\item require exactly one fixed tile orbit, namely the center tile;
+\item require every other tile orbit to have size $q$;
+\item require at least two positive-length exterior tile orbits;
+\item equivalently require $n\ge1+2q$;
+\item reject the whole $n\le3$ Stein domain by \cite{KLV2020}.
+\end{enumerate}
+For the present special sizes, this removes every rotational branch at $n=18$ and all orders except $2,3,6,9$ at $n=19$ before any contour search.
+
+\paragraph{A4. Existing cyclic-hub map theorem.}
+If the map plus selected geometric symmetry already certifies the exact H1--H3 hypotheses in \texttt{cyclic\_hub\_obstruction.tex}, reject at map level.  Do not wait for the generic preword system to rediscover the contradiction.
+
+\subsection{Stage B: symmetry-reduced contour skeleton}
+
+\paragraph{B1. Enumerate exterior-arc coincidence classes before a general weak order.}
+Use \Cref{thm:nondeg-repeat} and the KLV disjoint-or-coincident rule.  The outer arcs are not generic contour occurrences: they are radius-$R$ intervals that must form disjoint prototype classes, with at least one repeated nondegenerate class.
+
+A natural outer-first skeleton is:
+\begin{enumerate}
+\item partition positive-length exterior interfaces into proposed coincidence classes compatible with copy parity and the imposed symmetry;
+\item choose the cyclic order of the distinct classes on the prototype;
+\item only then insert internal-interface endpoints and unresolved point occurrences.
+\end{enumerate}
+This should reduce the weak-order branching factor substantially, especially in symmetric cases.
+
+\paragraph{B2. Quotient the contour by the stabilizer of a fixed tile.}
+If a tile is genuinely fixed by a rotation of order $q$, its contour is $q$-periodic.  Do not enumerate $q$ copies of equivalent occurrence data independently.  Enumerate one fundamental sector and lift it equivariantly.  Reflection-fixed branches should similarly be expressed by a fundamental half-contour plus its mirror, with special handling of the two axis-fixed boundary points.
+
+This is not a rejection theorem; it is a search-space quotient and can yield an exponential reduction in the number of weak orders.
+
+\subsection{Stage C: every stable weak-order prefix}
+
+The current \texttt{PrefixRadiusArcTopologyFilter} only obtains a useful compiled propagation system when it has stable outer arcs and stable internal interfaces.  There is an earlier exact condition that does not require an exterior seed.
+
+\paragraph{C1. New \texttt{PrefixLengthFeasibilityFilter}.}
+As soon as an interface path is stable under all descendants of the prefix, emit its homogeneous length row.  Maintain the current strict-positive system incrementally.
+
+Recommended subcascade:
+\begin{enumerate}
+\item same-sign row contradiction, already present in \texttt{LengthFeasibilityOracle};
+\item exact incremental row reduction and cache key canonicalization;
+\item only if necessary, the tiny strict-positive LP, using the existing floating screen and exact rational certificate policy.
+\end{enumerate}
+This test should run even when no exterior arc is stable yet.
+
+\paragraph{C2. Period-length obstruction.}
+For a rotation-fixed center tile, whenever a connected central interface becomes stable, run the row-space implication test from \Cref{thm:period-interface}.  This is cheaper than radius propagation and stronger than the old cyclic-hub pattern match because the length equality may be forced indirectly by other interface equations.
+
+\paragraph{C3. Existing prefix radius-$R$ topology.}
+Only after the cheap length tests survive, run \texttt{PrefixRadiusArcTopologyFilter}.  Its conservative behavior is correct: omitted unstable paths can only lose pruning, never invalidate a survivor.
+
+\subsection{Stage D: complete placement, before Nielsen--Levi}
+
+\paragraph{D1. Make the linear curriculum a production cascade.}
+The current code already knows the nested sequence of metric systems but exposes \texttt{metric\_curriculum()} primarily for diagnostics.  In production, solve the nested systems in order and stop at the first exact failure.
+
+The order should initially remain close to the current curriculum:
+\begin{center}
+positive lengths $\to$ radius local $\to$ smooth-turn local $\to$ radius global
+$\to$ smooth-turn global $\to$ radius concavity $\to$ isoperimetric,
+\end{center}
+with point turns as the separate angle system.
+
+Whether this is faster than one final LP is an empirical question: several small LPs are beneficial only if early stages reject often enough.  The solver already records calls, cache hits and elapsed time in the relevant oracles, so the decision can be made from data rather than intuition.
+
+\paragraph{D2. Reuse row spaces and affine reductions.}
+Nested systems repeatedly add constraints to almost the same matrix.  Cache the reduced equality space and carry it forward instead of rebuilding exact elimination for every curriculum stage.  This is an engineering optimization, not a change in mathematical semantics.
+
+\subsection{Stage E: before or inside generic word solving}
+
+\paragraph{E1. Preserve the complete Nielsen--Levi branching theorem.}
+The current structural note correctly records that equality branches and exact-letter boundary cases are necessary for completeness.  Any optimization must preserve the reconstruction bijections and mirror-equivariant canonicalization.
+
+\paragraph{E2. Add specialized handlers for recognizable periodic SCCs.}
+The current note also gives the counterexample $XY=YX$: two concurrent returning Nielsen branches generate a nontrivial finite-state path language, so compressing every return into independent or nested unary powers is not complete.
+
+The recommended response is not to force a more complicated ad hoc loop compiler.  Recognize standard periodic subproblems and switch representation.  The commutation equation, one-variable residual systems, forced powers from rotational symmetry, and mirror-fixed words are the first candidates.  Recompression is a mature exact alternative representation for word equations and can be used selectively rather than replacing the whole solver \cite{Jez2013}.
+
+\subsection{Stage F: decorated profile and geometric solver}
+
+No new hard rejection in this note replaces the existing final geometric stage.  The purpose of the preceding filters is to ensure that far fewer candidates reach it.
+
+\section{Filter scheduling and telemetry}
+
+The pipeline should be ordered by measured conditional value, not by conceptual elegance.
+
+Suppose two exact filters $A$ and $B$ have costs $c_A,c_B$ and, on the population reaching them, rejection probabilities $p_A,p_B$.  Running $A$ then $B$ has expected cost
+\[
+  c_A+(1-p_A)c_B,
+\]
+whereas $B$ then $A$ costs
+\[
+  c_B+(1-p_B)c_A.
+\]
+Thus $A$ should precede $B$ precisely when
+\[
+  \frac{c_A}{p_A}\le \frac{c_B}{p_B},
+\]
+when both rejection probabilities are positive.  In a changing search population these quantities should be estimated conditionally at each stage.
+
+The practical recommendation is to log the following quantities for every filter,
+separately by tile count, symmetry type, and center/noncenter branch:
+\begin{itemize}
+\item calls and cache hits;
+\item wall-clock and exact-certificate time;
+\item number of certified rejections;
+\item number of descendants avoided when a prefix is cut;
+\item first-failure stage in the linear curriculum;
+\item unresolved/truncated counts for conservative topology filters.
+\end{itemize}
+The objective is not simply rejection rate but \emph{time saved downstream per unit filter time}.
+
+\section{Heuristics should remain separate from certificates}
+
+Several useful quantities should influence ordering without becoming formal rejection criteria:
+\begin{itemize}
+\item the strict positive-length margin;
+\item the perimeter-regularization margin if the LP version is retained;
+\item the number of unresolved radius-$R$ images;
+\item the stage reached in the nested linear curriculum;
+\item the approximate monohedrality score from the inverse geometric optimizer discussed separately.
+\end{itemize}
+
+A candidate that is feasible only with a very small interface length may be less attractive computationally, but it is not impossible.  The exact/heuristic boundary should remain explicit in the API and telemetry.
+
+\section{Research directions not yet ready for production rejection}
+
+\subsection{A Dido-type area-versus-boundary relaxation}
+
+The perimeter regularizability system uses only equality of total tile perimeter.  A boundary tile has more structure: one connected outer circular arc, known tile area $\pi R^2/n$, and an interior remainder of its boundary joining the outer arc endpoints.
+
+A promising next step is to derive a certified one-dimensional lower bound
+\[
+  L_{\mathrm{internal}}\ge F_n(L_{\mathrm{outer}})
+\]
+from the planar isoperimetric/Dido problem.  Such a bound could be inserted into the graph-level perimeter flow system, especially strongly under symmetry when many outer arcs are forced to have the same length.
+
+This note does \emph{not} claim the required function $F_n$ as a proved production theorem.  The precise extremal problem must first be formulated with the same admissible class as the solver and converted into rigorous directed numerical bounds.
+
+\subsection{Farkas-dual graph certificates for perimeter flow}
+
+\Cref{thm:perimeter-regularizability} already gives a complete total-support characterization, so no LP is mathematically necessary at graph level.  Nevertheless, the dual of the strict perimeter LP may produce particularly small obstruction witnesses adapted to the map representation.  Independent-set Hall certificates are the first examples.  It is worth cataloguing which dual extreme rays correspond to simple separators, bipartite deficits, or support edges excluded from all spanning cycle forests.
+
+\subsection{Multiple-orbit periodic curvature charges}
+
+\Cref{thm:period-interface} handles one connected interface whose length is an integral number of contour periods.  A broader abelianized theorem may exist for several interface orbits whose total signed charge closes over one or more periods even when no individual interface has period length.  This is the natural next generalization of the current cyclic-hub word certificate.
+
+\section{What should not be prioritized}
+
+The earlier graph-only attempts based on inradius, diameter, circumradius or convex-hull size should not be treated as the main exact-filter program for arbitrary Jordan tiles.  Without an independent regularity or thickness hypothesis, arbitrarily thin corridors and complicated concavity leave these quantities too unconstrained.  They may still be useful as ranking features after a concrete geometric realization or under explicit fatness hypotheses, but they are qualitatively weaker than conserved quantities such as perimeter, curvature, orbit structure and cyclic order.
+
+Similarly, a high contact degree by itself is not an exact obstruction for arbitrary topological disks.  Any theorem aimed at a high-degree center must exploit additional structure: a closed contact pattern, imposed symmetry, contour periodicity, exterior-circle data, or a regularity hypothesis.
+
+\section{Recommended implementation order}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.07\textwidth} >{\raggedright\arraybackslash}p{0.24\textwidth} >{\raggedright\arraybackslash}p{0.45\textwidth} >{\raggedright\arraybackslash}p{0.14\textwidth}}
+\toprule
+Priority & Change & Reason & Status \\
+\midrule
+\endfirsthead
+\toprule
+Priority & Change & Reason & Status \\
+\midrule
+\endhead
+P0 & Perimeter regularizability at map level & Complete graph-only necessary condition; total support/perfect matching; no contour enumeration required. & New theorem \\
+P0 & Stein rotation-orbit filter & Deletes complete symmetry strata; at 18 tiles all nontrivial rotations disappear, at 19 only orders 2,3,6,9 remain. & New theorem \\
+P0 & Prefix positive-length filter independent of outer seeds & Moves existing length necessity into the DFS as soon as stable rows exist. & Engineering \\
+P0 & Period-length center-interface test & Tiny exact row-space implication; strict generalization of the cyclic-hub obstruction. & New theorem \\
+P1 & Exterior-arc coincidence-class enumeration & Uses nondegenerate repetition and disjoint-or-coincident structure before general weak orders. & New strengthening + engineering \\
+P1 & Symmetry quotient of fixed-tile contour & Avoids enumerating repeated sectors independently. & Engineering \\
+P1 & Productionize nested linear curriculum & Stop on the cheapest exact infeasible prefix; benchmark with existing telemetry. & Engineering \\
+P2 & Incremental row-space / affine-state reuse & Reduces repeated exact elimination across nested systems and prefixes. & Engineering \\
+P2 & Specialized periodic word-SCC handlers & Avoids enormous Nielsen path languages for recognizable equations such as commutation. & Engineering / literature \\
+R & Dido area--boundary inequality integrated into perimeter flow & Would add genuine disk geometry before words, but needs a certified derivation. & Open \\
+R & Multi-orbit additive curvature certificates & Potential generalization of cyclic-hub obstruction beyond single period-length interfaces. & Open \\
+\bottomrule
+\end{longtable}
+
+\section{Research status}
+
+At this point the search has produced three additions that are strong enough to justify implementation rather than further speculative exploration.
+
+First, the perimeter condition is no longer merely ``run another LP.''  It has a clean graph-theoretic identity: the loop-augmented contact support must be positively regularizable, equivalently every support edge must lie in a spanning cycle forest.  This is exact, graph-only, polynomial, and available before offsets.  Hall-type independent-set failures are cheap visible subcertificates.
+
+Second, rotational Stein branches admit a substantial whole-family rejection.  The new exterior-arc bound forces at least two full peripheral orbits and therefore $n\ge1+2q$.  This is strong enough to delete entire symmetry strata in the solver's current size ranges.
+
+Third, the cyclic-hub curvature argument extends directly to any connected center interface whose length system forces an integral number of rotational contour periods.  Because the existing implementation already maintains exact length row spaces, the algorithmic cost of this theorem is very small.
+
+The most immediate engineering opportunity is orthogonal to these theorems: expose positive-length feasibility and the nested linear curriculum much earlier in the weak-order DFS, and quotient occurrence enumeration by actual geometric symmetries rather than merely using symmetry as a graph label.
+
+The next mathematical work should concentrate on two directions.  The first is the Dido-type area/outer-arc lower bound, because it would add genuinely metric information to the graph-level perimeter system while remaining low-dimensional.  The second is a general additive-charge theorem for multiple periodic interface orbits.  By contrast, unrestricted graph-only diameter/inradius arguments should be deprioritized unless the solver deliberately introduces a shape-regularity hypothesis.
+
+\begin{thebibliography}{9}
+
+\bibitem{KLV2020}
+A. Kurusa, Z. L\'angi, and V. V\'igh,
+\emph{Tiling a circular disc with congruent pieces},
+Mediterranean Journal of Mathematics 17 (2020), Article 158.
+Preprint: arXiv:1910.03836.
+
+\bibitem{BozzoFranceschet2016}
+E. Bozzo and M. Franceschet,
+\emph{Arbitrarily regularizable graphs},
+arXiv:1608.06427 (2016).
+See in particular the review of positive regularizability, total support, and spanning cycle forests.
+
+\bibitem{Jez2013}
+A. Je\.{z},
+\emph{Recompression: a simple and powerful technique for word equations},
+30th International Symposium on Theoretical Aspects of Computer Science (STACS 2013),
+LIPIcs 20, 233--244.
+Preprint: arXiv:1203.3705.
+
+\end{thebibliography}
+
+\end{document}
