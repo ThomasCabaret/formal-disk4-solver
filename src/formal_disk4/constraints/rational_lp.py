@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+import time
 from typing import Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
 class LinearProgramResult:
-    status: str  # optimal, infeasible, unbounded
+    status: str  # optimal, infeasible, unbounded, resource_limit
     optimum: Optional[Fraction]
     solution: Tuple[Fraction, ...]
+
+
+class _RationalSimplexResourceLimit(RuntimeError):
+    """Internal control flow for an optional exact-solver work budget."""
 
 
 class RationalSimplex:
@@ -24,6 +29,11 @@ class RationalSimplex:
         A: Sequence[Sequence[int | Fraction]],
         b: Sequence[int | Fraction],
         c: Sequence[int | Fraction],
+        *,
+        max_tableau_cells: int | None = None,
+        max_pivots: int | None = None,
+        max_coefficient_bits: int | None = None,
+        max_seconds: float | None = None,
     ) -> None:
         if len(A) != len(b):
             raise ValueError("A and b row counts differ")
@@ -31,6 +41,37 @@ class RationalSimplex:
         self.n = len(c)
         if any(len(row) != self.n for row in A):
             raise ValueError("A row width differs from c")
+
+        self.max_tableau_cells = (
+            None
+            if max_tableau_cells is None
+            else max(1, int(max_tableau_cells))
+        )
+        self.max_pivots = (
+            None if max_pivots is None else max(0, int(max_pivots))
+        )
+        self.max_coefficient_bits = (
+            None
+            if max_coefficient_bits is None
+            else max(1, int(max_coefficient_bits))
+        )
+        self.deadline = (
+            None
+            if max_seconds is None
+            else time.perf_counter() + max(0.0, float(max_seconds))
+        )
+        self.pivot_count = 0
+        self._preflight_resource_limit = (
+            self.max_tableau_cells is not None
+            and (self.m + 2) * (self.n + 2) > self.max_tableau_cells
+        )
+        if self._preflight_resource_limit:
+            # Do not materialize the dense Fraction tableau merely to report
+            # that its configured bound has already been exceeded.
+            self.B = []
+            self.N = []
+            self.D = []
+            return
 
         self.B = [self.n + index for index in range(self.m)]
         self.N = [index for index in range(self.n)] + [-1]
@@ -47,9 +88,34 @@ class RationalSimplex:
             self.D[self.m][column_index] = -Fraction(c[column_index])
         self.D[self.m + 1][self.n] = Fraction(1)
 
+    def _check_deadline(self) -> None:
+        if self.deadline is not None and time.perf_counter() >= self.deadline:
+            raise _RationalSimplexResourceLimit
+
+    def _check_coefficient_size(self) -> None:
+        if self.max_coefficient_bits is None:
+            return
+        limit = self.max_coefficient_bits
+        for row in self.D:
+            for value in row:
+                if (
+                    abs(value.numerator).bit_length() > limit
+                    or value.denominator.bit_length() > limit
+                ):
+                    raise _RationalSimplexResourceLimit
+
     def _pivot(self, row: int, column: int) -> None:
+        self._check_deadline()
+        if self.max_pivots is not None and self.pivot_count >= self.max_pivots:
+            raise _RationalSimplexResourceLimit
+        # Checking before the pivot prevents already-large rational numbers
+        # from being multiplied across the complete dense tableau.  Checking
+        # again afterwards catches coefficient growth before the next pivot.
+        self._check_coefficient_size()
         inverse = Fraction(1, 1) / self.D[row][column]
         for row_index in range(self.m + 2):
+            if row_index % 8 == 0:
+                self._check_deadline()
             if row_index == row:
                 continue
             for column_index in range(self.n + 2):
@@ -68,6 +134,9 @@ class RationalSimplex:
                 self.D[row_index][column] *= -inverse
         self.D[row][column] = inverse
         self.B[row], self.N[column] = self.N[column], self.B[row]
+        self.pivot_count += 1
+        self._check_deadline()
+        self._check_coefficient_size()
 
     def _simplex(self, phase: int) -> bool:
         objective_row = self.m + 1 if phase == 1 else self.m
@@ -101,6 +170,17 @@ class RationalSimplex:
             self._pivot(leaving, entering)
 
     def solve(self) -> LinearProgramResult:
+        if self._preflight_resource_limit:
+            return LinearProgramResult("resource_limit", None, ())
+        try:
+            return self._solve_unbounded_budget()
+        except _RationalSimplexResourceLimit:
+            return LinearProgramResult("resource_limit", None, ())
+
+    def _solve_unbounded_budget(self) -> LinearProgramResult:
+        """Run simplex; optional resource checks raise to :meth:`solve`."""
+
+        self._check_deadline()
         if self.m == 0:
             if any(self.D[self.m][column] < 0 for column in range(self.n)):
                 return LinearProgramResult("unbounded", None, ())

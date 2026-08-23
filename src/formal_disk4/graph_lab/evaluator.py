@@ -294,12 +294,41 @@ class GraphFormalEvaluator:
                 ),
             ),
         )
+        joint_fraction = min(
+            0.95,
+            max(0.0, float(weak_config.get("joint_length_fraction", 0.0))),
+        )
+        joint_rollout_count = min(
+            max(0, rollout_total - 1),
+            int(round(rollout_total * joint_fraction)),
+        )
+        if (
+            proposal.candidate.stein_center_tile is not None
+            and proposal.candidate.imposed_permutation is not None
+        ):
+            # The Stein theorem supplies the outer-arc disjunction used by the
+            # joint oracle.  Prefer that direct construction while retaining
+            # one ordinary stochastic rollout as an independent full-support
+            # safety/control route.
+            joint_rollout_count = max(
+                joint_rollout_count, max(0, rollout_total - 1)
+            )
+        joint_rollouts = set(
+            range(rollout_total - joint_rollout_count, rollout_total)
+        )
         try:
             for rollout in range(rollout_total):
                 rollout_started = time.perf_counter()
                 rollout_seed = int(random_seed) + rollout * 104729
+                use_joint_length = rollout in joint_rollouts
                 selection_mode = (
-                    "exploration" if rollout < exploration_rollouts else "learned"
+                    "joint_length"
+                    if use_joint_length
+                    else (
+                        "exploration"
+                        if rollout < exploration_rollouts
+                        else "learned"
+                    )
                 )
                 if weak_model is not None:
                     from .weak_model import WeakOrderRankedPolicy
@@ -331,6 +360,74 @@ class GraphFormalEvaluator:
                     directory = Path(raw)
                     dynamic, config = self._configured_dynamic(
                         proposal.candidate, directory, mapping_rollout=True
+                    )
+                    joint_config = config["enumeration"].setdefault(
+                        "joint_weak_length", {}
+                    )
+                    joint_config.update(
+                        {
+                            "enabled": bool(
+                                use_joint_length
+                                and dynamic.imposed_equivariance_mode
+                                == "cyclic_shift"
+                            ),
+                            "random_seed": rollout_seed + 15_485_863,
+                            "witness_attempts": max(
+                                0,
+                                int(
+                                    weak_config.get(
+                                        "joint_length_witness_attempts", 6
+                                    )
+                                ),
+                            ),
+                            "minimum_margin_fraction": min(
+                                1.0,
+                                max(
+                                    0.0,
+                                    float(
+                                        weak_config.get(
+                                            "joint_length_minimum_margin_fraction",
+                                            0.10,
+                                        )
+                                    ),
+                                ),
+                            ),
+                            "exact_max_tableau_cells": max(
+                                1,
+                                int(
+                                    weak_config.get(
+                                        "joint_length_exact_max_tableau_cells",
+                                        50_000,
+                                    )
+                                ),
+                            ),
+                            "exact_max_pivots": max(
+                                0,
+                                int(
+                                    weak_config.get(
+                                        "joint_length_exact_max_pivots", 512
+                                    )
+                                ),
+                            ),
+                            "exact_max_coefficient_bits": max(
+                                1,
+                                int(
+                                    weak_config.get(
+                                        "joint_length_exact_max_coefficient_bits",
+                                        2_048,
+                                    )
+                                ),
+                            ),
+                            "exact_time_limit_seconds": max(
+                                0.0,
+                                float(
+                                    weak_config.get(
+                                        "joint_length_exact_time_limit_seconds",
+                                        0.10,
+                                    )
+                                ),
+                            ),
+                        }
                     )
                     with (directory / "solver.log").open(
                         "w", encoding="utf-8"
@@ -384,7 +481,15 @@ class GraphFormalEvaluator:
                         actual_mode = (
                             next(iter(actual_modes))
                             if len(actual_modes) == 1
-                            else ("mixed" if actual_modes else "uncontrolled")
+                            else (
+                                "mixed"
+                                if actual_modes
+                                else (
+                                    "joint_length"
+                                    if use_joint_length
+                                    else "uncontrolled"
+                                )
+                            )
                         )
                         rollout_sink(
                             WeakOrderRolloutObservation(

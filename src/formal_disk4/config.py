@@ -22,6 +22,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "automorphism": "rotation_1",
             "enforce_weak_orders": True,
         },
+        "joint_weak_length": {
+            "enabled": False,
+            "random_seed": 0,
+            "witness_attempts": 6,
+            "minimum_margin_fraction": 0.10,
+            "exact_max_tableau_cells": 50000,
+            "exact_max_pivots": 512,
+            "exact_max_coefficient_bits": 2048,
+            "exact_time_limit_seconds": 0.10,
+        },
         "mapping_subdomain": {
             "enabled": False,
         },

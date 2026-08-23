@@ -1343,6 +1343,46 @@ class SolverRunner:
                         mapping_subdomain=context.mapping_subdomain,
                         branch_random_seed=self._weak_order_random_seed,
                         branch_policy=self._weak_order_branch_policy,
+                        joint_weak_length_enabled=bool(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("enabled", False)
+                        ),
+                        joint_weak_length_seed=int(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("random_seed", 0)
+                        ),
+                        joint_weak_length_witness_attempts=int(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("witness_attempts", 6)
+                        ),
+                        joint_weak_length_minimum_margin_fraction=float(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("minimum_margin_fraction", 0.10)
+                        ),
+                        joint_weak_length_exact_max_tableau_cells=int(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("exact_max_tableau_cells", 50_000)
+                        ),
+                        joint_weak_length_exact_max_pivots=int(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("exact_max_pivots", 512)
+                        ),
+                        joint_weak_length_exact_max_coefficient_bits=int(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("exact_max_coefficient_bits", 2_048)
+                        ),
+                        joint_weak_length_exact_time_limit_seconds=float(
+                            self.config["enumeration"]
+                            .get("joint_weak_length", {})
+                            .get("exact_time_limit_seconds", 0.10)
+                        ),
                     )
                     self._current_weak_orders = weak_orders
                     self._current_placement = None

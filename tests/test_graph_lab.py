@@ -760,6 +760,41 @@ class GraphLabTests(unittest.TestCase):
             tuple(random.Random(123).sample(masks, 64)),
         )
 
+    def test_joint_action_pool_keeps_uniform_full_support(self) -> None:
+        class PoolOnlyModel:
+            active_heads = np.zeros(len(LEARNING_FILTER_IDS), dtype=bool)
+
+            @staticmethod
+            def prepare_mapping(_proposal):
+                return None
+
+        state = WeakOrderStateView(
+            assignment_id=0,
+            path=(),
+            counters=(0, 0, 0),
+            targets=(2, 2, 2),
+            block_count=0,
+            resolved_length_equations=0,
+            resolved_angle_equations=0,
+            available_mask=7,
+            reference_index=0,
+        )
+        masks = (1, 2, 3, 4, 5, 6, 7)
+        observed: set[int] = set()
+        for seed in range(200):
+            policy = WeakOrderRankedPolicy(
+                object(),
+                PoolOnlyModel(),
+                {"action_pool_size": 64, "joint_action_pool_size": 1},
+                random_seed=seed,
+                selection_mode="joint_length",
+            )
+            proposal = tuple(policy.propose_masks(state, masks))
+            self.assertEqual(len(proposal), 1)
+            observed.update(proposal)
+
+        self.assertEqual(observed, set(masks))
+
     def test_graph_candidates_can_be_revisited_for_new_descendant_rollouts(self) -> None:
         output_root = ROOT / "output"
         output_root.mkdir(exist_ok=True)
@@ -859,6 +894,18 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(policy.select_actions(state, actions), (3,))
         self.assertEqual(policy.decisions[0].selection_mode, "learned")
         self.assertGreater(policy.decisions[0].selection_probability, 0.99)
+
+        joint_policy = WeakOrderRankedPolicy(
+            object(),
+            FakeModel(),
+            {"epsilon": 0.0, "temperature": 0.1},
+            random_seed=4,
+            selection_mode="joint_length",
+        )
+        self.assertIn(joint_policy.select_actions(state, actions)[0], (1, 3))
+        self.assertEqual(
+            joint_policy.decisions[0].selection_mode, "joint_length"
+        )
 
     def test_mapping_learning_generation_persists_microfilter_observations(self) -> None:
         output_root = ROOT / "output"

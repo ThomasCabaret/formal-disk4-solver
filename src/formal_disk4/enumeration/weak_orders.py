@@ -13,6 +13,10 @@ from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
 from .assignments import AssignmentTransform, ContourAssignment, rotate
+from .joint_weak_length import (
+    CyclicJointWeakLengthOracle,
+    JointPrefixExtension,
+)
 from .mapping_subdomain import MappingSubdomain
 from .exterior_arc_repetition import build_exterior_arc_repetition_constraint
 from .symmetry import MappingSymmetryQuotient
@@ -174,6 +178,14 @@ class WeakOrderEnumerator:
         mapping_subdomain: MappingSubdomain | None = None,
         branch_random_seed: int | None = None,
         branch_policy: WeakOrderBranchPolicy | None = None,
+        joint_weak_length_enabled: bool = False,
+        joint_weak_length_seed: int = 0,
+        joint_weak_length_witness_attempts: int = 6,
+        joint_weak_length_minimum_margin_fraction: float = 0.10,
+        joint_weak_length_exact_max_tableau_cells: int = 50_000,
+        joint_weak_length_exact_max_pivots: int = 512,
+        joint_weak_length_exact_max_coefficient_bits: int = 2_048,
+        joint_weak_length_exact_time_limit_seconds: float = 0.10,
     ) -> None:
         self.planar_map = planar_map
         self.assignment = assignment
@@ -203,6 +215,27 @@ class WeakOrderEnumerator:
             None if branch_random_seed is None else int(branch_random_seed)
         )
         self.branch_policy = branch_policy
+        self.joint_weak_length_enabled = bool(joint_weak_length_enabled)
+        self.joint_weak_length_seed = int(joint_weak_length_seed)
+        self.joint_weak_length_witness_attempts = max(
+            0, int(joint_weak_length_witness_attempts)
+        )
+        self.joint_weak_length_minimum_margin_fraction = min(
+            1.0,
+            max(0.0, float(joint_weak_length_minimum_margin_fraction)),
+        )
+        self.joint_weak_length_exact_max_tableau_cells = max(
+            1, int(joint_weak_length_exact_max_tableau_cells)
+        )
+        self.joint_weak_length_exact_max_pivots = max(
+            0, int(joint_weak_length_exact_max_pivots)
+        )
+        self.joint_weak_length_exact_max_coefficient_bits = max(
+            1, int(joint_weak_length_exact_max_coefficient_bits)
+        )
+        self.joint_weak_length_exact_time_limit_seconds = max(
+            0.0, float(joint_weak_length_exact_time_limit_seconds)
+        )
         if self.branch_policy is not None and self.branch_random_seed is not None:
             raise ValueError(
                 "branch_policy and branch_random_seed are mutually exclusive"
@@ -297,6 +330,8 @@ class WeakOrderEnumerator:
         self._current_counters: Tuple[int, ...] = tuple(0 for _ in self.target_counters)
         self._current_block_count = 0
         self._current_resolved_occurrences = 0
+        self._joint_weak_length_oracle: CyclicJointWeakLengthOracle | None = None
+        self._joint_weak_length_oracle_initialized = False
 
     @property
     def processed_leaf_mass(self) -> int:
@@ -1271,8 +1306,134 @@ class WeakOrderEnumerator:
             self.event_sink(f"{prefix}_hard_outer_endpoint_passes", 1)
             self.event_sink(f"{prefix}_opposite_circular_sign_rejections", 1)
 
+    def _joint_cyclic_oracle(self) -> CyclicJointWeakLengthOracle | None:
+        """Build the experimental LP oracle lazily for cyclic Lab rollouts."""
+
+        if not self.joint_weak_length_enabled:
+            return None
+        if not self._joint_weak_length_oracle_initialized:
+            self._joint_weak_length_oracle_initialized = True
+            transform = self.required_cyclic_shift_transform
+            if transform is not None:
+                try:
+                    self._joint_weak_length_oracle = CyclicJointWeakLengthOracle(
+                        self.assignment,
+                        transform,
+                        self._cyclic_shift_splits,
+                        self._positive_arc_endpoints,
+                        len(self.interface_occurrences),
+                        self.reference_index,
+                        outer_arc_equalities=tuple(
+                            (
+                                (
+                                    self.exterior_arc_repetition.arcs[left].start_occurrence,
+                                    self.exterior_arc_repetition.arcs[right].start_occurrence,
+                                ),
+                                (
+                                    self.exterior_arc_repetition.arcs[left].end_occurrence,
+                                    self.exterior_arc_repetition.arcs[right].end_occurrence,
+                                ),
+                            )
+                            for left, right in (
+                                self.exterior_arc_repetition.candidate_pairs
+                                if self.exterior_arc_repetition.applicable
+                                else ()
+                            )
+                        ),
+                        random_seed=self.joint_weak_length_seed,
+                        tolerance=self.length_oracle.tolerance,
+                        witness_attempts=(
+                            self.joint_weak_length_witness_attempts
+                        ),
+                        minimum_margin_fraction=(
+                            self.joint_weak_length_minimum_margin_fraction
+                        ),
+                        exact_max_tableau_cells=(
+                            self.joint_weak_length_exact_max_tableau_cells
+                        ),
+                        exact_max_pivots=(
+                            self.joint_weak_length_exact_max_pivots
+                        ),
+                        exact_max_coefficient_bits=(
+                            self.joint_weak_length_exact_max_coefficient_bits
+                        ),
+                        exact_time_limit_seconds=(
+                            self.joint_weak_length_exact_time_limit_seconds
+                        ),
+                        event_sink=self.event_sink,
+                    )
+                except Exception:
+                    self.event_sink("joint_weak_length_prefix_errors", 1)
+        return self._joint_weak_length_oracle
+
+    def _joint_cyclic_prefix_extension(
+        self,
+        split_index: int,
+        fundamental_blocks: Tuple[Tuple[int, ...], ...],
+        *,
+        include_witnesses: bool,
+    ) -> JointPrefixExtension | None:
+        """Ask only the length LP about one cyclic weak-order prefix.
+
+        Topology remains outside this oracle.  Numerical or implementation
+        errors are conservative: the caller keeps its uniformly sampled legal
+        route, and complete leaves are checked by the exact production oracle.
+        """
+
+        oracle = self._joint_cyclic_oracle()
+        if oracle is None:
+            return None
+        self.event_sink("joint_weak_length_prefix_checks", 1)
+        return oracle.prefix_extension(
+            split_index,
+            fundamental_blocks,
+            include_witnesses=include_witnesses,
+        )
+
+    def _joint_cyclic_prefix_has_length_extension(
+        self,
+        split_index: int,
+        fundamental_blocks: Tuple[Tuple[int, ...], ...],
+    ) -> bool:
+        if not self.joint_weak_length_enabled:
+            return True
+        try:
+            extension = self._joint_cyclic_prefix_extension(
+                split_index,
+                fundamental_blocks,
+                include_witnesses=False,
+            )
+        except Exception:
+            self.event_sink("joint_weak_length_prefix_errors", 1)
+            return True
+        if self._joint_cyclic_oracle() is None:
+            return True
+        if extension is not None:
+            return True
+        self.event_sink("joint_weak_length_prefix_pruned_nodes", 1)
+        return False
+
+    def _joint_cyclic_witness_masks(
+        self,
+        split_index: int,
+        fundamental_blocks: Tuple[Tuple[int, ...], ...],
+    ) -> Tuple[int, ...]:
+        if not self.joint_weak_length_enabled:
+            return ()
+        try:
+            extension = self._joint_cyclic_prefix_extension(
+                split_index,
+                fundamental_blocks,
+                include_witnesses=True,
+            )
+        except Exception:
+            self.event_sink("joint_weak_length_prefix_errors", 1)
+            return ()
+        return () if extension is None else extension.next_masks
+
     def _search_cyclic_shift_half(
         self,
+        split_index: int,
         prefixes: Tuple[Tuple[int, ...], ...],
         target: Tuple[int, ...],
         half_blocks: Tuple[Tuple[int, ...], ...],
@@ -1309,6 +1470,7 @@ class WeakOrderEnumerator:
             if counter < len(sequence):
                 available_mask |= 1 << piece_index
         decision_state = None
+        witness_masks: set[int] = set()
         if self.branch_policy is None:
             candidate_masks: Iterable[int] = range(1, available_mask + 1)
         else:
@@ -1322,11 +1484,21 @@ class WeakOrderEnumerator:
                 available_mask=available_mask,
                 cyclic_shift_half=True,
             )
-            candidate_masks = self._policy_propose_masks(
+            uniform_masks = self._policy_propose_masks(
                 decision_state,
                 self._candidate_mask_domain(
                     available_mask, respect_equivariance=False
                 ),
+            )
+            witness_masks = set(
+                self._joint_cyclic_witness_masks(split_index, half_blocks)
+            )
+            candidate_masks = tuple(
+                dict.fromkeys((*witness_masks, *uniform_masks))
+            )
+            self.event_sink(
+                "joint_weak_length_witness_masks_injected",
+                len(witness_masks),
             )
         candidates = []
         for mask in candidate_masks:
@@ -1361,6 +1533,15 @@ class WeakOrderEnumerator:
                 ),
             ):
                 continue
+            if mask in witness_masks:
+                self.event_sink("joint_weak_length_witness_children", 1)
+            # Witnesses are proposals, not bypasses: rebuild and solve the
+            # child prefix after the independent topology check.  This keeps
+            # numerical tie extraction out of the correctness contract.
+            if not self._joint_cyclic_prefix_has_length_extension(
+                split_index, next_blocks
+            ):
+                continue
             candidates.append((mask.bit_count(), -mask, mask, next_blocks, next_counters))
         candidates.sort(reverse=True)
         if self.branch_random_seed is not None:
@@ -1388,6 +1569,7 @@ class WeakOrderEnumerator:
             if not self._resume_child_allowed(path, mask):
                 continue
             yield from self._search_cyclic_shift_half(
+                split_index,
                 prefixes,
                 target,
                 next_blocks,
@@ -1405,6 +1587,19 @@ class WeakOrderEnumerator:
             return
         self.event_sink("cyclic_shift_compatible_assignments", 1)
         split_entries = list(enumerate(self._cyclic_shift_splits))
+        if self.joint_weak_length_enabled:
+            self.event_sink("joint_weak_length_guided_rollouts", 1)
+            split_entries = [
+                (split_index, split)
+                for split_index, split in split_entries
+                if self._joint_cyclic_prefix_has_length_extension(
+                    split_index, ()
+                )
+            ]
+            if not split_entries:
+                self.event_sink("joint_weak_length_no_feasible_split", 1)
+                self._mark_subtree_complete((), 0)
+                return
         if self.branch_policy is not None:
             zero_counters = tuple(0 for _ in self.target_counters)
             split_state = self._policy_state(
@@ -1469,13 +1664,23 @@ class WeakOrderEnumerator:
                     available_mask=available_mask,
                     cyclic_shift_half=True,
                 )
-                first_masks = self._policy_propose_masks(
+                uniform_first_masks = self._policy_propose_masks(
                     decision_state,
                     self._candidate_mask_domain(
                         available_mask,
                         require_reference=True,
                         respect_equivariance=False,
                     ),
+                )
+                witness_masks = set(
+                    self._joint_cyclic_witness_masks(split_index, ())
+                )
+                first_masks = tuple(
+                    dict.fromkeys((*witness_masks, *uniform_first_masks))
+                )
+                self.event_sink(
+                    "joint_weak_length_witness_masks_injected",
+                    len(witness_masks),
                 )
                 policy_candidates = []
                 for mask in first_masks:
@@ -1508,6 +1713,12 @@ class WeakOrderEnumerator:
                         ),
                     ):
                         continue
+                    if mask in witness_masks:
+                        self.event_sink("joint_weak_length_witness_children", 1)
+                    if not self._joint_cyclic_prefix_has_length_extension(
+                        split_index, blocks
+                    ):
+                        continue
                     policy_candidates.append((mask, blocks, next_counters))
                 actions = tuple(
                     WeakOrderActionView(
@@ -1531,6 +1742,7 @@ class WeakOrderEnumerator:
                     if self.stop_predicate():
                         return
                     yield from self._search_cyclic_shift_half(
+                        split_index,
                         prefixes,
                         split,
                         blocks,
@@ -1586,7 +1798,12 @@ class WeakOrderEnumerator:
                     ),
                 ):
                     continue
+                if not self._joint_cyclic_prefix_has_length_extension(
+                    split_index, blocks
+                ):
+                    continue
                 yield from self._search_cyclic_shift_half(
+                    split_index,
                     prefixes,
                     split,
                     blocks,

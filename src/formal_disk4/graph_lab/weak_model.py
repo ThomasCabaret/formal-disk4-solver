@@ -1304,7 +1304,12 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
     def propose_masks(
         self, state: WeakOrderStateView, masks: Sequence[int]
     ) -> Sequence[int]:
-        limit = max(1, int(self.config.get("action_pool_size", 64)))
+        pool_key = (
+            "joint_action_pool_size"
+            if self.selection_mode == "joint_length"
+            else "action_pool_size"
+        )
+        limit = max(1, int(self.config.get(pool_key, 64)))
         legal_count = len(masks)
         if legal_count <= limit:
             values = tuple(int(mask) for mask in masks)
@@ -1367,7 +1372,15 @@ class WeakOrderRankedPolicy(WeakOrderBranchPolicy):
             selection_score = scores[chosen_index]
         else:
             probabilities = np.full(len(actions), 1.0 / len(actions))
-            mode = "exploration"
+            # Joint length rollouts are deliberately uniform at the ordering
+            # policy layer: their guidance comes from the topology predicate
+            # and the positive-length extension LP.  Keep the distinct label
+            # so their funnel is not mixed into the ordinary random control.
+            mode = (
+                "joint_length"
+                if self.selection_mode == "joint_length"
+                else "exploration"
+            )
             chosen_index = self.rng.randrange(len(actions))
             # The control rollout is genuinely uniform.  Only score its chosen
             # action for diagnostics; scoring the whole pool cannot affect the

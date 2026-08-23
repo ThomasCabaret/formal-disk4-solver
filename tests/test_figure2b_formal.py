@@ -18,6 +18,7 @@ from formal_disk4.maps.registry import build_map
 from formal_disk4.preword import (
     PrewordLinearInvariantFilter,
     PrewordPruningPipeline,
+    PrefixRadiusArcTopologyFilter,
     RadiusArcTopologyFilter,
 )
 from formal_disk4.profiles.build import build_formal_profile
@@ -186,6 +187,44 @@ def _preword_pipeline(config) -> PrewordPruningPipeline:
 
 
 class Figure2BFormalPipelineTests(unittest.TestCase):
+    def test_known_weak_order_remains_reachable_by_the_enumerator(self) -> None:
+        """Every early enumerator filter must retain the known witness."""
+
+        planar_map, _plain_assignments, expected = _figure2b_placement()
+        equivariant_assignments = AssignmentEnumerator(
+            planar_map,
+            allow_reflections=True,
+            symmetry_mode="off",
+            required_equivariance="rotation_1",
+        )
+        prefix_topology = PrefixRadiusArcTopologyFilter(
+            planar_map,
+            expected.assignment,
+            max_intervals=4096,
+        )
+        enumerator = WeakOrderEnumerator(
+            planar_map,
+            expected.assignment,
+            equivariant_assignments.occurrence_names,
+            LengthFeasibilityOracle(),
+            AngleFeasibilityOracle(),
+            symmetry_mode="off",
+            enable_length_filter=True,
+            enable_angle_filter=True,
+            enable_exterior_arc_repetition_filter=True,
+            track_exact_leaf_mass=False,
+            required_equivariance_transform=(
+                equivariant_assignments.required_transform(expected.assignment)
+            ),
+            equivariance_piece_orbits=(
+                equivariant_assignments.equivariance_piece_orbits
+            ),
+            prefix_topology_filter=prefix_topology,
+        )
+
+        observed = {placement.blocks for placement in enumerator.enumerate()}
+        self.assertIn(expected.blocks, observed)
+
     def test_exact_user_mapping_survives_every_formal_stage(self) -> None:
         root = Path(__file__).resolve().parents[1]
         config = load_config(root / "config/cycle_campaign/search.json")
