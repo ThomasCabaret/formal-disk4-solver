@@ -132,6 +132,7 @@ class GraphLabSpaceTests(unittest.TestCase):
             space._has_two_orbit_stein_reflection(candidate, moving_orbits)
         )
         dynamic = build_dynamic_planar_map(candidate)
+        self.assertTrue(dynamic.imposed_reflections)
         assignments = AssignmentEnumerator(dynamic.planar_map, symmetry_mode="off")
         assignment = assignments.assignment_at(0)
         transform = assignments.transform_for_automorphism(
@@ -156,6 +157,84 @@ class GraphLabSpaceTests(unittest.TestCase):
                 transform.piece_map[left_piece],
                 right_piece,
             )
+
+    def test_two_orbit_stein_mapping_domain_imposes_a_reflection_directly(
+        self,
+    ) -> None:
+        candidate = GraphSpace(
+            tile_counts=(5,), stein_symmetric=True
+        ).sample_prior(random.Random(20260820))
+        dynamic = build_dynamic_planar_map(candidate)
+        self.assertEqual(len(dynamic.imposed_reflections), 1)
+        assignments = AssignmentEnumerator(
+            dynamic.planar_map,
+            allow_reflections=True,
+            symmetry_mode="incremental",
+        )
+        rotation = dynamic.imposed_automorphism
+        reflection = dynamic.imposed_reflections[0]
+        assert rotation is not None
+        rotation_count = assignments.cyclic_shift_compatible_assignment_count(
+            rotation
+        )
+        dihedral_count = assignments.cyclic_dihedral_compatible_assignment_count(
+            rotation, reflection
+        )
+        self.assertGreater(dihedral_count, 0)
+        self.assertLessEqual(dihedral_count, rotation_count)
+
+        reflection_transform = assignments.transform_for_automorphism(reflection)
+        self.assertTrue(reflection_transform.reverse_cycle)
+        for assignment_index in range(dihedral_count):
+            assignment = assignments.cyclic_dihedral_compatible_assignment_at(
+                rotation, reflection, assignment_index
+            )
+            transformed = assignments.transform_sequences(
+                assignment.sequences, reflection_transform
+            )
+            self.assertTrue(
+                all(
+                    assignments._cyclic_sequence_key(left)
+                    == assignments._cyclic_sequence_key(right)
+                    for left, right in zip(assignment.sequences, transformed)
+                )
+            )
+
+    def test_two_orbit_stein_rollout_uses_the_joint_arc_system(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        candidate = GraphSpace(
+            tile_counts=(5,), stein_symmetric=True
+        ).sample_prior(random.Random(20260820))
+        evaluator = GraphFormalEvaluator(
+            root,
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_nodes": 300,
+                        "max_placements": 2,
+                        "max_profiles": 1,
+                        "time_limit_seconds": 2,
+                        "stop_on_first_profile": True,
+                    }
+                },
+            },
+        )
+        proposal = evaluator.mapping_pool(candidate, random.Random(41), 1)[0]
+        evaluation = evaluator.evaluate_mapping(
+            proposal,
+            rollouts=2,
+            random_seed=43,
+            weak_sampling={
+                "joint_length_fraction": 0.5,
+                "joint_length_witness_attempts": 1,
+            },
+        )
+
+        self.assertIsNone(evaluation.error)
+        self.assertGreater(
+            evaluation.counters.get("joint_outer_arc_pair_checks", 0), 0
+        )
 
     def test_stein_mapping_pool_samples_only_cyclic_shift_compatible_mappings(
         self,

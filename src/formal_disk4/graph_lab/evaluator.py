@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from formal_disk4.config import load_config
-from formal_disk4.enumeration.assignments import AssignmentEnumerator
+from formal_disk4.enumeration.assignments import AssignmentEnumerator, ContourAssignment
 from formal_disk4.pipeline.api import (
     AssignmentSelection,
     FormalSolverAPI,
@@ -165,8 +165,12 @@ class GraphFormalEvaluator:
         cyclic_shift_config = config["enumeration"].setdefault(
             "cyclic_shift_equivariance", {}
         )
+        dihedral_config = config["enumeration"].setdefault(
+            "dihedral_equivariance", {}
+        )
         pointwise_config["enabled"] = False
         cyclic_shift_config["enabled"] = False
+        dihedral_config["enabled"] = False
         if dynamic.imposed_automorphism is None:
             pass
         elif dynamic.imposed_equivariance_mode == "pointwise":
@@ -186,6 +190,17 @@ class GraphFormalEvaluator:
             )
         else:
             raise ValueError("Unknown imposed Graph Lab equivariance mode")
+        if dynamic.imposed_reflections:
+            if dynamic.imposed_equivariance_mode != "cyclic_shift":
+                raise ValueError(
+                    "A theorem-forced Stein reflection needs cyclic rotation equivariance"
+                )
+            dihedral_config.update(
+                {
+                    "enabled": True,
+                    "automorphisms": list(dynamic.imposed_reflections),
+                }
+            )
         return dynamic, config
 
     @staticmethod
@@ -230,32 +245,64 @@ class GraphFormalEvaluator:
                 if dynamic.imposed_equivariance_mode == "cyclic_shift"
                 else None
             )
-            total = (
-                enumerator.cyclic_shift_compatible_assignment_count(
-                    cyclic_automorphism
+            reflection_names = tuple(dynamic.imposed_reflections)
+            if cyclic_automorphism is not None and reflection_names:
+                strata = tuple(
+                    (
+                        reflection_name,
+                        enumerator.cyclic_dihedral_compatible_assignment_count(
+                            cyclic_automorphism, reflection_name
+                        ),
+                    )
+                    for reflection_name in reflection_names
                 )
-                if cyclic_automorphism is not None
-                else enumerator.raw_assignment_count()
-            )
+                strata = tuple(item for item in strata if item[1] > 0)
+                total = sum(count for _name, count in strata)
+            else:
+                strata = ()
+                total = (
+                    enumerator.cyclic_shift_compatible_assignment_count(
+                        cyclic_automorphism
+                    )
+                    if cyclic_automorphism is not None
+                    else enumerator.raw_assignment_count()
+                )
             if total <= 0:
                 return ()
             target = min(max(1, int(amount)), total)
-            selected: set[int] = set()
-            while len(selected) < target:
-                selected.add(rng.randrange(total))
+            selected: dict[int, ContourAssignment] = {}
+            attempts = 0
+            maximum_attempts = max(256, target * 64)
+            while len(selected) < target and attempts < maximum_attempts:
+                attempts += 1
+                assignment_index = rng.randrange(total)
+                if strata:
+                    offset = assignment_index
+                    for reflection_name, stratum_count in strata:
+                        if offset < stratum_count:
+                            assignment = (
+                                enumerator.cyclic_dihedral_compatible_assignment_at(
+                                    cyclic_automorphism,
+                                    reflection_name,
+                                    offset,
+                                )
+                            )
+                            break
+                        offset -= stratum_count
+                    else:  # pragma: no cover - guarded by the total above
+                        raise RuntimeError("Invalid dihedral mapping stratum")
+                elif cyclic_automorphism is not None:
+                    assignment = enumerator.cyclic_shift_compatible_assignment_at(
+                        cyclic_automorphism, assignment_index
+                    )
+                else:
+                    assignment = enumerator.assignment_at(assignment_index)
+                selected.setdefault(assignment.assignment_id, assignment)
             return tuple(
                 MappingProposal.from_assignment(
-                    candidate,
-                    (
-                        enumerator.cyclic_shift_compatible_assignment_at(
-                            cyclic_automorphism, assignment_id
-                        )
-                        if cyclic_automorphism is not None
-                        else enumerator.assignment_at(assignment_id)
-                    ),
-                    dynamic.planar_map,
+                    candidate, assignment, dynamic.planar_map
                 )
-                for assignment_id in sorted(selected)
+                for _assignment_id, assignment in sorted(selected.items())
             )
 
     def evaluate_mapping(

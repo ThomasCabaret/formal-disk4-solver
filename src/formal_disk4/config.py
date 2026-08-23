@@ -22,6 +22,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "automorphism": "rotation_1",
             "enforce_weak_orders": True,
         },
+        "dihedral_equivariance": {
+            "enabled": False,
+            "automorphisms": [],
+        },
         "joint_weak_length": {
             "enabled": False,
             "random_seed": 0,

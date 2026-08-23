@@ -172,6 +172,7 @@ class WeakOrderEnumerator:
         track_exact_leaf_mass: bool = True,
         required_equivariance_transform: AssignmentTransform | None = None,
         required_cyclic_shift_transform: AssignmentTransform | None = None,
+        required_reflection_transforms: Sequence[AssignmentTransform] = (),
         equivariance_piece_orbits: Sequence[Sequence[int]] = (),
         mapping_symmetry: MappingSymmetryQuotient | None = None,
         prefix_topology_filter: "PrefixRadiusArcTopologyFilter | None" = None,
@@ -202,6 +203,7 @@ class WeakOrderEnumerator:
         self.track_exact_leaf_mass = track_exact_leaf_mass
         self.required_equivariance_transform = required_equivariance_transform
         self.required_cyclic_shift_transform = required_cyclic_shift_transform
+        self.required_reflection_transforms = tuple(required_reflection_transforms)
         if (
             self.required_equivariance_transform is not None
             and self.required_cyclic_shift_transform is not None
@@ -209,6 +211,16 @@ class WeakOrderEnumerator:
             raise ValueError(
                 "Pointwise and cyclic-shift equivariance cannot be enabled together"
             )
+        if self.required_reflection_transforms:
+            if self.required_cyclic_shift_transform is None:
+                raise ValueError(
+                    "Dihedral equivariance needs an imposed cyclic-shift rotation"
+                )
+            if any(
+                not transform.reverse_cycle
+                for transform in self.required_reflection_transforms
+            ):
+                raise ValueError("Dihedral witnesses must reverse cyclic orientation")
         self.prefix_topology_filter = prefix_topology_filter
         self.mapping_subdomain = mapping_subdomain
         self.branch_random_seed = (
@@ -593,6 +605,31 @@ class WeakOrderEnumerator:
         if transform.reverse_cycle and len(mapped) > 1:
             return (mapped[0],) + tuple(reversed(mapped[1:]))
         return mapped
+
+    def _dihedral_leaf_is_invariant(
+        self, blocks: Tuple[Tuple[int, ...], ...]
+    ) -> bool:
+        """Require one theorem-forced reflection of the cyclic weak order.
+
+        The prototype cut is arbitrary.  After mapping occurrences and
+        reversing orientation, equality is therefore tested modulo a cyclic
+        rotation of all blocks.  This represents every possible reflection
+        axis without choosing a privileged contour vertex.
+        """
+
+        if not self.required_reflection_transforms:
+            return True
+        if not blocks:
+            return True
+        for transform in self.required_reflection_transforms:
+            transformed = self._transform_blocks(blocks, transform)
+            try:
+                offset = transformed.index(blocks[0])
+            except ValueError:
+                continue
+            if blocks == transformed[offset:] + transformed[:offset]:
+                return True
+        return False
 
     def _prefix_is_canonical(self, blocks: Tuple[Tuple[int, ...], ...]) -> bool:
         if self.symmetry_mode != "incremental" or len(self.incremental_stabilizer) <= 1:
@@ -1121,6 +1158,14 @@ class WeakOrderEnumerator:
             self.event_sink("exterior_arc_repetition_checks", 1)
         if not self.exterior_arc_repetition.prefix_is_feasible(positions):
             self.event_sink("exterior_arc_repetition_pruned_nodes", 1)
+            self._mark_subtree_complete(path, 1)
+            return
+        # SEARCH-DOMAIN RESTRICTION (theorem): Theorem 4(d) of the audited
+        # Stein note forces a D_m action when exactly two moving orbits exist.
+        if self.required_reflection_transforms:
+            self.event_sink("dihedral_weak_order_checks", 1)
+        if not self._dihedral_leaf_is_invariant(blocks):
+            self.event_sink("dihedral_weak_order_rejections", 1)
             self._mark_subtree_complete(path, 1)
             return
         # QUOTIENT JUSTIFICATION: retain one representative under certified

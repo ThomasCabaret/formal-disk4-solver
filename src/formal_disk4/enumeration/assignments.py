@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
 from itertools import combinations, product
 from math import lcm
@@ -84,6 +85,49 @@ class ContourAssignment:
         }
 
 
+@dataclass(frozen=True)
+class _DihedralAssignmentFactor:
+    """Lazily index one factor of a dihedral mapping domain.
+
+    For two rotation orbits exchanged by a reflection, compatible source and
+    target choices form Cartesian products grouped by a common signature.
+    Those products can be enormous, so ``choice_at`` decodes an index without
+    ever materializing the combined tuples.
+    """
+
+    orbit: Tuple[int, ...]
+    single_choices: Tuple[Tuple[Tuple[int, ...], ...], ...] = ()
+    paired_groups: Tuple[
+        Tuple[
+            Tuple[Tuple[Tuple[int, ...], ...], ...],
+            Tuple[Tuple[Tuple[int, ...], ...], ...],
+        ],
+        ...,
+    ] = ()
+    cumulative_counts: Tuple[int, ...] = ()
+
+    @property
+    def choice_count(self) -> int:
+        if self.single_choices:
+            return len(self.single_choices)
+        return self.cumulative_counts[-1] if self.cumulative_counts else 0
+
+    def choice_at(self, index: int) -> Tuple[Tuple[int, ...], ...]:
+        position = int(index)
+        if position < 0 or position >= self.choice_count:
+            raise IndexError("Choice index outside the dihedral factor")
+        if self.single_choices:
+            return self.single_choices[position]
+        group_index = bisect_right(self.cumulative_counts, position)
+        previous = (
+            0 if group_index == 0 else self.cumulative_counts[group_index - 1]
+        )
+        source_choices, target_choices = self.paired_groups[group_index]
+        local = position - previous
+        source_index, target_index = divmod(local, len(target_choices))
+        return source_choices[source_index] + target_choices[target_index]
+
+
 class AssignmentEnumerator:
     """Enumerate phase/orientation assignments with a lazy symmetry quotient.
 
@@ -151,6 +195,10 @@ class AssignmentEnumerator:
                 ],
                 ...,
             ],
+        ] = {}
+        self._cyclic_dihedral_assignment_domains: Dict[
+            Tuple[str, str],
+            Tuple[_DihedralAssignmentFactor, ...],
         ] = {}
 
     @property
@@ -671,6 +719,233 @@ class AssignmentEnumerator:
         domain = tuple(factors)
         self._cyclic_shift_assignment_domains[name] = domain
         return domain
+
+    @staticmethod
+    def _cyclic_sequence_key(sequence: Sequence[int]) -> Tuple[int, ...]:
+        """Canonicalize a finite cyclic sequence without reversing it."""
+
+        normalized = tuple(int(value) for value in sequence)
+        if not normalized:
+            return ()
+        return min(rotate(normalized, offset) for offset in range(len(normalized)))
+
+    def _reflected_choice_signature(
+        self,
+        orbit: Sequence[int],
+        choice: Sequence[Sequence[int]],
+        reflection: AssignmentTransform,
+    ) -> Tuple[Tuple[int, Tuple[int, ...]], ...]:
+        """Map one rotational factor through a graph reflection.
+
+        At mapping level only cyclic incidence order is known.  The common
+        reflection-axis phase belongs to the weak cyclic order, so sequences
+        are compared modulo their individual cuts here; the downstream
+        dihedral weak-order test imposes one common prototype reflection.
+        """
+
+        mapped: list[tuple[int, tuple[int, ...]]] = []
+        for source_piece, source_sequence in zip(orbit, choice):
+            target_piece = int(reflection.piece_map[source_piece])
+            target_sequence = tuple(
+                reflection.map_occurrence_id(occurrence_id)
+                for occurrence_id in source_sequence
+            )
+            if reflection.reverse_cycle:
+                target_sequence = anchored_reverse(target_sequence)
+            mapped.append(
+                (target_piece, self._cyclic_sequence_key(target_sequence))
+            )
+        return tuple(sorted(mapped))
+
+    def _choice_signature(
+        self,
+        orbit: Sequence[int],
+        choice: Sequence[Sequence[int]],
+    ) -> Tuple[Tuple[int, Tuple[int, ...]], ...]:
+        return tuple(
+            sorted(
+                (
+                    int(piece_index),
+                    self._cyclic_sequence_key(sequence),
+                )
+                for piece_index, sequence in zip(orbit, choice)
+            )
+        )
+
+    def _build_cyclic_dihedral_assignment_domain(
+        self,
+        rotation_name: str,
+        reflection_name: str,
+    ) -> Tuple[_DihedralAssignmentFactor, ...]:
+        """Factor mappings under rotation and a theorem-forced reflection.
+
+        Rotation factors are first built by the existing exact construction.
+        The reflection then either constrains one factor to itself or couples
+        two rotation orbits.  Thus two independently exponential choices are
+        replaced by one direct product factor.  Cyclic cuts are deliberately
+        left free: their single common reflection phase is imposed on the
+        completed weak order, where that information actually lives.
+        """
+
+        key = (str(rotation_name), str(reflection_name))
+        cached = self._cyclic_dihedral_assignment_domains.get(key)
+        if cached is not None:
+            return cached
+        base = self._build_cyclic_shift_assignment_domain(rotation_name)
+        if not base:
+            self._cyclic_dihedral_assignment_domains[key] = ()
+            return ()
+        reflection = self.transform_for_automorphism(reflection_name)
+        if not reflection.reverse_cycle or self._permutation_order(
+            reflection.piece_map
+        ) != 2:
+            raise ValueError("Dihedral assignment sampling needs a reflection")
+
+        factor_for_piece = {
+            piece_index: factor_index
+            for factor_index, (orbit, _choices) in enumerate(base)
+            for piece_index in orbit
+        }
+        remaining = set(range(len(base)))
+        output = []
+        while remaining:
+            source_index = min(remaining)
+            source_orbit, source_choices = base[source_index]
+            target_indices = {
+                factor_for_piece[int(reflection.piece_map[piece_index])]
+                for piece_index in source_orbit
+            }
+            if len(target_indices) != 1:
+                raise ValueError(
+                    "A dihedral reflection must map one rotation orbit to one orbit"
+                )
+            target_index = target_indices.pop()
+            target_orbit, target_choices = base[target_index]
+            if target_index == source_index:
+                kept = tuple(
+                    choice
+                    for choice in source_choices
+                    if self._reflected_choice_signature(
+                        source_orbit, choice, reflection
+                    )
+                    == self._choice_signature(source_orbit, choice)
+                )
+                if not kept:
+                    self._cyclic_dihedral_assignment_domains[key] = ()
+                    return ()
+                output.append(
+                    _DihedralAssignmentFactor(
+                        orbit=tuple(source_orbit),
+                        single_choices=kept,
+                    )
+                )
+                remaining.remove(source_index)
+                continue
+
+            source_by_signature: Dict[
+                Tuple[Tuple[int, Tuple[int, ...]], ...],
+                List[Tuple[Tuple[int, ...], ...]],
+            ] = {}
+            for source_choice in source_choices:
+                source_by_signature.setdefault(
+                    self._reflected_choice_signature(
+                        source_orbit, source_choice, reflection
+                    ),
+                    [],
+                ).append(source_choice)
+            target_by_signature: Dict[
+                Tuple[Tuple[int, Tuple[int, ...]], ...],
+                List[Tuple[Tuple[int, ...], ...]],
+            ] = {}
+            for target_choice in target_choices:
+                target_by_signature.setdefault(
+                    self._choice_signature(target_orbit, target_choice), []
+                ).append(target_choice)
+            combined_orbit = tuple(source_orbit) + tuple(target_orbit)
+            common_signatures = sorted(
+                set(source_by_signature) & set(target_by_signature)
+            )
+            paired_groups = tuple(
+                (
+                    tuple(source_by_signature[signature]),
+                    tuple(target_by_signature[signature]),
+                )
+                for signature in common_signatures
+            )
+            if not paired_groups:
+                self._cyclic_dihedral_assignment_domains[key] = ()
+                return ()
+            cumulative = []
+            count = 0
+            for source_group, target_group in paired_groups:
+                count += len(source_group) * len(target_group)
+                cumulative.append(count)
+            output.append(
+                _DihedralAssignmentFactor(
+                    orbit=combined_orbit,
+                    paired_groups=paired_groups,
+                    cumulative_counts=tuple(cumulative),
+                )
+            )
+            remaining.remove(source_index)
+            remaining.remove(target_index)
+
+        domain = tuple(output)
+        self._cyclic_dihedral_assignment_domains[key] = domain
+        return domain
+
+    @staticmethod
+    def _factored_domain_count(
+        domain: Sequence[_DihedralAssignmentFactor],
+    ) -> int:
+        if not domain:
+            return 0
+        count = 1
+        for factor in domain:
+            count *= factor.choice_count
+        return count
+
+    def cyclic_dihedral_compatible_assignment_count(
+        self,
+        rotation_name: str,
+        reflection_name: str,
+    ) -> int:
+        return self._factored_domain_count(
+            self._build_cyclic_dihedral_assignment_domain(
+                rotation_name, reflection_name
+            )
+        )
+
+    def cyclic_dihedral_compatible_assignment_at(
+        self,
+        rotation_name: str,
+        reflection_name: str,
+        compatible_assignment_id: int,
+    ) -> ContourAssignment:
+        domain = self._build_cyclic_dihedral_assignment_domain(
+            rotation_name, reflection_name
+        )
+        total = self._factored_domain_count(domain)
+        position = int(compatible_assignment_id)
+        if position < 0 or position >= total:
+            raise IndexError("Assignment index outside the cyclic-dihedral domain")
+        selected: List[Tuple[Tuple[int, ...], ...]] = [()] * len(domain)
+        for factor_index in range(len(domain) - 1, -1, -1):
+            factor = domain[factor_index]
+            choice_index = position % factor.choice_count
+            position //= factor.choice_count
+            selected[factor_index] = factor.choice_at(choice_index)
+        sequences: List[Tuple[int, ...] | None] = [None] * len(self.piece_names)
+        for factor, factor_sequences in zip(domain, selected):
+            for piece_index, sequence in zip(factor.orbit, factor_sequences):
+                sequences[piece_index] = sequence
+        complete = tuple(sequence for sequence in sequences if sequence is not None)
+        if len(complete) != len(self.piece_names):
+            raise RuntimeError("Incomplete cyclic-dihedral assignment")
+        raw_assignment_id = self.assignment_id_for_sequences(complete)
+        if raw_assignment_id is None:
+            raise RuntimeError("Dihedral assignment is absent from the raw domain")
+        return self.assignment_at(raw_assignment_id)
 
     def cyclic_shift_compatible_assignment_count(
         self, automorphism_name: str

@@ -14,7 +14,11 @@ from typing import Any, Dict, Mapping, Sequence, Tuple
 from formal_disk4.config import save_config
 from formal_disk4.constraints.angle_lp import AngleFeasibilityOracle
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
-from formal_disk4.enumeration.assignments import AssignmentEnumerator, ContourAssignment
+from formal_disk4.enumeration.assignments import (
+    AssignmentEnumerator,
+    AssignmentTransform,
+    ContourAssignment,
+)
 from formal_disk4.enumeration.mapping_subdomain import MappingSubdomain
 from formal_disk4.enumeration.weak_orders import (
     WeakOrderEnumerator,
@@ -60,6 +64,7 @@ class MapContext:
     raw_assignment_ids: Tuple[int, ...] = ()
     mapping_subdomain: MappingSubdomain | None = None
     assignment_count_before_api_selection: int = 0
+    reflection_transforms: Tuple[AssignmentTransform, ...] = ()
 
     def assignment_at(self, assignment_id: int) -> ContourAssignment | None:
         return self.assignment_enumerator.canonical_assignment_at(
@@ -742,6 +747,30 @@ class SolverRunner:
                 )
             else:
                 cyclic_shift_transform = None
+            dihedral_config = enumeration_config.get(
+                "dihedral_equivariance", {}
+            )
+            dihedral_enabled = bool(dihedral_config.get("enabled", False))
+            if dihedral_enabled and not cyclic_shift_enabled:
+                raise ValueError(
+                    "dihedral_equivariance requires cyclic_shift_equivariance"
+                )
+            reflection_transforms = (
+                tuple(
+                    assignment_enumerator.transform_for_automorphism(
+                        str(automorphism_name)
+                    )
+                    for automorphism_name in dihedral_config.get(
+                        "automorphisms", ()
+                    )
+                )
+                if dihedral_enabled
+                else ()
+            )
+            if dihedral_enabled and not reflection_transforms:
+                raise ValueError(
+                    "dihedral_equivariance needs at least one reflection automorphism"
+                )
             if symmetry_mode != "off":
                 self.stats.increment(
                     "intrinsic_symmetry_group_elements",
@@ -827,6 +856,7 @@ class SolverRunner:
                         enable_exterior_arc_repetition_filter=False,
                         track_exact_leaf_mass=True,
                         required_cyclic_shift_transform=cyclic_shift_transform,
+                        required_reflection_transforms=reflection_transforms,
                         mapping_subdomain=mapping_subdomain,
                     ).total_leaf_mass
                     for assignment_id in range(assignment_count)
@@ -873,6 +903,7 @@ class SolverRunner:
                     assignment_count_before_api_selection=(
                         assignment_count_before_api_selection
                     ),
+                    reflection_transforms=reflection_transforms,
                 )
             )
             if mapping_subdomain is not None:
@@ -1323,6 +1354,7 @@ class SolverRunner:
                             )
                             else None
                         ),
+                        required_reflection_transforms=context.reflection_transforms,
                         equivariance_piece_orbits=(
                             assignment_enumerator.equivariance_piece_orbits
                             if assignment.required_equivariance is not None

@@ -27,6 +27,27 @@ class _RecordingPolicy:
 
 
 class WeakOrderTests(unittest.TestCase):
+    def test_dihedral_leaf_accepts_any_cut_but_not_a_wrong_reflection(self) -> None:
+        enumerator = object.__new__(WeakOrderEnumerator)
+        good = AssignmentTransform(
+            automorphism_name="reflection_good",
+            piece_map=(0,),
+            occurrence_map=(0, 3, 2, 1),
+            reverse_cycle=True,
+        )
+        bad = AssignmentTransform(
+            automorphism_name="reflection_bad",
+            piece_map=(0,),
+            occurrence_map=(0, 2, 1, 3),
+            reverse_cycle=True,
+        )
+        blocks = ((2,), (3,), (0,), (1,))
+
+        enumerator.required_reflection_transforms = (good,)
+        self.assertTrue(enumerator._dihedral_leaf_is_invariant(blocks))
+        enumerator.required_reflection_transforms = (bad,)
+        self.assertFalse(enumerator._dihedral_leaf_is_invariant(blocks))
+
     def test_cyclic_prefix_topology_receives_every_open_copy_frontier(self) -> None:
         calls = []
         counters = {}

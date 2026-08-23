@@ -451,6 +451,73 @@ def _is_direct_automorphism(
     return bool(preserving and (not reversing or normalized == identity))
 
 
+def _stein_reflection_permutations(
+    candidate: "DualGraphCandidate",
+) -> tuple[tuple[int, ...], ...]:
+    """Return every graph reflection allowed by the two-orbit Stein theorem.
+
+    Theorem 4(d) of ``docs/rotational_stein_structural_note.tex`` forces a
+    reflection ``s`` which fixes the central tile, exchanges the two moving
+    rotation orbits, and satisfies ``s R s = R^-1``.  Returning witnesses,
+    instead of only validating their existence, lets the mapping and weak
+    order domains impose the same dihedral action downstream.
+    """
+
+    rotation = candidate.imposed_permutation
+    center = candidate.stein_center_tile
+    if rotation is None or center is None:
+        return ()
+    orbits = GraphSpace._tile_orbits(rotation)
+    moving = tuple(orbit for orbit in orbits if orbit != (center,))
+    if len(moving) != 2:
+        return ()
+    first, second = (set(orbit) for orbit in moving)
+    inverse = [0] * len(rotation)
+    for source, target in enumerate(rotation):
+        inverse[target] = source
+    direct = set(_direct_automorphisms(candidate.graph()))
+    return tuple(
+        reflection
+        for reflection in _automorphism_permutations(candidate.graph())
+        if reflection not in direct
+        and _permutation_order(reflection) == 2
+        and reflection[center] == center
+        and {reflection[tile] for tile in first} == second
+        and all(
+            reflection[rotation[reflection[tile]]] == inverse[tile]
+            for tile in range(candidate.tile_count)
+        )
+    )
+
+
+def _stein_reflection_coset_representatives(
+    candidate: "DualGraphCandidate",
+) -> tuple[tuple[int, ...], ...]:
+    """Keep one reflection per coset under the imposed rotation.
+
+    A solution invariant under ``R`` and ``s`` is automatically invariant
+    under every ``R^j s``.  Those witnesses therefore define the same imposed
+    dihedral subgroup and must not duplicate the mapping domain.  Distinct
+    cosets are retained because a graph can possess several inequivalent
+    dihedral actions and the theorem does not select one of them.
+    """
+
+    rotation = candidate.imposed_permutation
+    witnesses = set(_stein_reflection_permutations(candidate))
+    if rotation is None or not witnesses:
+        return ()
+    output: list[tuple[int, ...]] = []
+    while witnesses:
+        representative = min(witnesses)
+        output.append(representative)
+        power = tuple(range(candidate.tile_count))
+        for _step in range(candidate.symmetry_order):
+            same_coset = tuple(power[representative[tile]] for tile in range(candidate.tile_count))
+            witnesses.discard(same_coset)
+            power = tuple(rotation[power[tile]] for tile in range(candidate.tile_count))
+    return tuple(output)
+
+
 @dataclass(frozen=True)
 class DualGraphCandidate:
     tile_count: int
@@ -592,6 +659,7 @@ class DynamicPlanarMap:
     planar_map: PlanarMap
     imposed_automorphism: str | None
     imposed_equivariance_mode: str | None
+    imposed_reflections: tuple[str, ...]
     automorphism_orders: tuple[int, ...]
 
 
@@ -664,6 +732,7 @@ def build_dynamic_planar_map(candidate: DualGraphCandidate) -> DynamicPlanarMap:
             source,
             candidate.source_symmetry,
             _equivariance_mode(source, candidate.source_symmetry),
+            (),
             orders,
         )
 
@@ -816,10 +885,16 @@ def build_dynamic_planar_map(candidate: DualGraphCandidate) -> DynamicPlanarMap:
         imposed_name = _positive_stein_generator_name(
             result, candidate, automorphism_names
         )
+    imposed_reflections = tuple(
+        automorphism_names[permutation]
+        for permutation in _stein_reflection_coset_representatives(candidate)
+        if permutation in automorphism_names
+    )
     return DynamicPlanarMap(
         result,
         imposed_name,
         _equivariance_mode(result, imposed_name),
+        imposed_reflections,
         tuple(orders),
     )
 
@@ -1210,30 +1285,9 @@ class GraphSpace:
     ) -> bool:
         """Check the dihedral graph action forced by Theorem 4 of the note."""
 
-        permutation = candidate.imposed_permutation
-        center = candidate.stein_center_tile
-        if permutation is None or center is None or len(moving_orbits) != 2:
+        if len(moving_orbits) != 2:
             return False
-        first, second = (set(orbit) for orbit in moving_orbits)
-        inverse = [0] * len(permutation)
-        for source, target in enumerate(permutation):
-            inverse[target] = source
-        direct = set(_direct_automorphisms(candidate.graph()))
-        for reflection in _automorphism_permutations(candidate.graph()):
-            if reflection in direct or _permutation_order(reflection) != 2:
-                continue
-            if reflection[center] != center:
-                continue
-            if {reflection[tile] for tile in first} != second:
-                continue
-            # s R s = R^{-1}, the defining relation of the D_m action proved
-            # in Theorem 4(d).
-            if all(
-                reflection[permutation[reflection[tile]]] == inverse[tile]
-                for tile in range(candidate.tile_count)
-            ):
-                return True
-        return False
+        return bool(_stein_reflection_permutations(candidate))
 
     def _validate_stein_symmetric_candidate(
         self, candidate: DualGraphCandidate
