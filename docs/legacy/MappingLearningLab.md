@@ -1,4 +1,8 @@
-# Mapping learning lab
+# Mapping learning lab (legacy experiment)
+
+> Historical design note. The current baseline uses the shared formal kernel
+> and a prior-only graph policy; this older learner is not maintained as a
+> second production search implementation.
 
 The Mapping Lab is an experimental campaign runner for one fixed catalog case.
 It stays outside the production search pipeline: it generates complete mappings,

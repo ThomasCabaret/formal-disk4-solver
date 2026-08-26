@@ -1,4 +1,7 @@
-# Variable-graph learning lab
+# Variable-graph learning lab (legacy experiment)
+
+> Historical design note. Learning is no longer the stable default Graph Lab
+> policy; use `--policy learned` only for explicit experiments.
 
 This lab explores the structure itself instead of training one model per catalog
 map. It is isolated from the production acceptance rules: generated structures

@@ -1,4 +1,7 @@
-# Mapping Lab
+# Mapping Lab (legacy experiment)
+
+> Historical design note. The fixed-graph Mapping Lab is retained as an
+> experimental reference and is not the maintained search baseline.
 
 The Mapping Lab is an experimental package around the production formal
 filters. It does not change what the production solver accepts or rejects.
