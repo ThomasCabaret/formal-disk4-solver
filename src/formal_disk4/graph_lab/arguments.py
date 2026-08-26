@@ -40,6 +40,14 @@ def add_search_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--no-imposed-symmetry",
+        action="store_true",
+        help=(
+            "allow symmetric graph topologies but never impose one of their "
+            "automorphisms on the tiling search"
+        ),
+    )
+    parser.add_argument(
         "--symmetry-orders",
         metavar="DOMAIN",
         help="optional Stein rotation-order domain, for example 2-4,6,8",

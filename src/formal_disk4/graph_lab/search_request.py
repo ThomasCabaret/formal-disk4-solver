@@ -74,6 +74,7 @@ class SearchDomain:
 @dataclass(frozen=True)
 class StructuralConstraints:
     stein_symmetric: bool = False
+    allow_imposed_symmetry: bool = True
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,8 @@ class GraphLabSearchRequest:
     policy: PolicyMode = PolicyMode.PRIOR
 
     def __post_init__(self) -> None:
+        if self.structure.stein_symmetric and not self.structure.allow_imposed_symmetry:
+            raise ValueError("stein_symmetric requires an imposed symmetry")
         if self.domain.symmetry_orders and not self.structure.stein_symmetric:
             raise ValueError("symmetry_orders requires stein_symmetric mode")
         if self.region.mode is not RegionMode.FULL and not self.structure.stein_symmetric:
@@ -166,7 +169,10 @@ class GraphLabSearchRequest:
                 exclude_rings=bool(space.get("exclude_rings", False)),
             ),
             structure=StructuralConstraints(
-                stein_symmetric=bool(space.get("stein_symmetric", False))
+                stein_symmetric=bool(space.get("stein_symmetric", False)),
+                allow_imposed_symmetry=(
+                    float(space.get("imposed_symmetry_bias", 0.75)) > 0.0
+                ),
             ),
             region=RegionSelection(mode=region_mode, tile_counts=partial_counts),
             boundary=BoundaryConditions(
@@ -195,6 +201,7 @@ class GraphLabSearchRequest:
         exclude_rings: bool | None = None,
         tile_counts: str | Sequence[int] | None = None,
         stein_symmetric: bool | None = None,
+        allow_imposed_symmetry: bool | None = None,
         symmetry_orders: str | Sequence[int] | None = None,
         outer_crown_only: bool | None = None,
         free_outer_boundary: bool | None = None,
@@ -217,6 +224,10 @@ class GraphLabSearchRequest:
             domain = replace(domain, tile_counts=parse_tile_count_spec(tile_counts))
         if stein_symmetric is not None:
             structure = replace(structure, stein_symmetric=bool(stein_symmetric))
+        if allow_imposed_symmetry is not None:
+            structure = replace(
+                structure, allow_imposed_symmetry=bool(allow_imposed_symmetry)
+            )
         if symmetry_orders is not None:
             domain = replace(
                 domain, symmetry_orders=parse_symmetry_order_spec(symmetry_orders)
@@ -288,6 +299,8 @@ class GraphLabSearchRequest:
             space["tile_counts"] = list(self.domain.tile_counts)
         space["exclude_rings"] = self.domain.exclude_rings
         space["stein_symmetric"] = self.structure.stein_symmetric
+        if not self.structure.allow_imposed_symmetry:
+            space["imposed_symmetry_bias"] = 0.0
         if self.domain.symmetry_orders is None:
             space.pop("symmetry_orders", None)
         else:

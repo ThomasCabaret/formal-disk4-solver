@@ -73,6 +73,18 @@ class GraphLabSearchRequestTests(unittest.TestCase):
         self.assertEqual(restored.boundary.outer, OuterBoundaryMode.FREE)
         self.assertEqual(payload["evaluation"]["search_overrides"], {})
 
+    def test_no_imposed_symmetry_keeps_symmetric_topologies_unconstrained(self) -> None:
+        request = GraphLabSearchRequest.from_config({}).with_overrides(
+            allow_imposed_symmetry=False
+        )
+        payload = request.apply_to_config({})
+
+        self.assertFalse(request.structure.allow_imposed_symmetry)
+        self.assertEqual(payload["space"]["imposed_symmetry_bias"], 0.0)
+        self.assertFalse(
+            GraphLabSearchRequest.from_config(payload).structure.allow_imposed_symmetry
+        )
+
 
 class PriorOnlyGraphPolicyTests(unittest.TestCase):
     @staticmethod

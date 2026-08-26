@@ -94,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exclude_rings=True if args.exclude_rings else None,
         tile_counts=args.tile_counts,
         stein_symmetric=True if args.stein_symmetric else None,
+        allow_imposed_symmetry=False if args.no_imposed_symmetry else None,
         symmetry_orders=args.symmetry_orders,
         outer_crown_only=True if args.outer_crown_only else None,
         free_outer_boundary=True if args.free_outer_boundary else None,
