@@ -8,13 +8,15 @@ from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from formal_disk4.config import load_config
 from formal_disk4.enumeration.assignments import AssignmentEnumerator, ContourAssignment
+from formal_disk4.enumeration.cyclic_arrangements import CyclicArrangementEnumerator
 from formal_disk4.pipeline.api import (
     AssignmentSelection,
     FormalSolverAPI,
+    PlacementSelection,
     SolverAPIRequest,
 )
 from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS, FilterReport
@@ -22,6 +24,17 @@ from formal_disk4.pipeline.runner import SolverRunner
 
 from .mapping import MappingEvaluation, MappingProposal, sum_counters
 from .feedback import formal_profile_ids
+from .free_outer_boundary import (
+    free_outer_boundary_descriptor,
+    free_outer_boundary_model_candidate,
+    relax_outer_boundary,
+)
+from .outer_crown import (
+    OuterCrownError,
+    extract_outer_crown,
+    outer_crown_descriptor,
+    outer_crown_model_candidate,
+)
 from .space import DynamicPlanarMap, DualGraphCandidate, build_dynamic_planar_map
 
 if TYPE_CHECKING:
@@ -50,6 +63,34 @@ def _deep_merge(target: dict[str, Any], source: Mapping[str, Any]) -> None:
             target[key] = deepcopy(value)
 
 
+def _positive_count_domain(
+    value: str | Sequence[int] | None,
+) -> tuple[int, ...] | None:
+    if value is None:
+        return None
+    counts: set[int] = set()
+    if isinstance(value, str):
+        for raw_token in value.split(","):
+            token = raw_token.strip()
+            if not token:
+                raise ValueError("Partial crown tile domain contains an empty item")
+            if "-" in token:
+                parts = token.split("-")
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid partial crown range {token!r}")
+                first, last = (int(part.strip()) for part in parts)
+                if first > last:
+                    raise ValueError(f"Descending partial crown range {token!r}")
+                counts.update(range(first, last + 1))
+            else:
+                counts.add(int(token))
+    else:
+        counts.update(int(item) for item in value)
+    if not counts or min(counts) < 1:
+        raise ValueError("Partial crown tile counts must be positive")
+    return tuple(sorted(counts))
+
+
 @dataclass(frozen=True)
 class GraphEvaluation:
     candidate: DualGraphCandidate
@@ -60,6 +101,7 @@ class GraphEvaluation:
     profiles: tuple[Mapping[str, object], ...]
     tainted: bool
     error: str | None = None
+    evaluated_structure: Mapping[str, object] | None = None
 
     @property
     def stage_name(self) -> str:
@@ -71,7 +113,7 @@ class GraphEvaluation:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "graph-lab-observation-v1",
+            "schema_version": "graph-lab-observation-v2",
             "candidate": self.candidate.to_dict(),
             "stage_index": self.stage_index,
             "stage_name": self.stage_name,
@@ -83,6 +125,11 @@ class GraphEvaluation:
             "geometry_ready": self.geometry_ready,
             "tainted": self.tainted,
             "error": self.error,
+            "evaluated_structure": (
+                dict(self.evaluated_structure)
+                if self.evaluated_structure is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -109,6 +156,11 @@ class GraphEvaluation:
             profiles=tuple(restored_profiles),
             tainted=bool(payload.get("tainted", False)),
             error=str(payload["error"]) if payload.get("error") else None,
+            evaluated_structure=(
+                dict(payload["evaluated_structure"])  # type: ignore[arg-type]
+                if isinstance(payload.get("evaluated_structure"), Mapping)
+                else None
+            ),
         )
 
 
@@ -127,6 +179,104 @@ class GraphFormalEvaluator:
         self.base_config = load_config(base_path)
         self.overrides = dict(config.get("search_overrides", {}))
         self.mapping_overrides = dict(config.get("mapping_search_overrides", {}))
+        arrangement_config = dict(config.get("joint_arrangement_search", {}))
+        self.joint_arrangement_search_enabled = bool(
+            arrangement_config.get("enabled", False)
+        )
+        self.joint_arrangement_max_nodes = max(
+            1, int(arrangement_config.get("max_nodes", 100_000))
+        )
+        self.joint_arrangement_max_placements = max(
+            1, int(arrangement_config.get("max_placements", 32))
+        )
+        self.joint_arrangement_time_limit_seconds = max(
+            0.01, float(arrangement_config.get("time_limit_seconds", 30.0))
+        )
+        self.partial_crown_tile_counts = _positive_count_domain(
+            config.get("partial_crown_tile_counts")  # type: ignore[arg-type]
+        )
+        self.outer_crown_only = bool(
+            config.get("outer_crown_only", False)
+            or self.partial_crown_tile_counts is not None
+        )
+        self.free_outer_boundary = bool(
+            config.get("free_outer_boundary", False)
+        )
+        if self.outer_crown_only and self.free_outer_boundary:
+            raise ValueError(
+                "outer_crown_only and free_outer_boundary are mutually exclusive"
+            )
+        default_prototype_mode = "structural" if self.outer_crown_only else "none"
+        self.prototype_symmetry_mode = str(
+            config.get("prototype_symmetry_mode", default_prototype_mode)
+        )
+        if self.prototype_symmetry_mode not in {"none", "structural"}:
+            raise ValueError(
+                "prototype_symmetry_mode must be 'none' or 'structural'"
+            )
+        if not self.outer_crown_only and self.prototype_symmetry_mode != "none":
+            raise ValueError(
+                "Prototype symmetry control is currently defined only for crown regions"
+            )
+
+    def _partial_crown_size(
+        self, candidate: DualGraphCandidate, dynamic: DynamicPlanarMap
+    ) -> int | None:
+        if self.partial_crown_tile_counts is None:
+            return None
+        available = sum(
+            1 for piece in dynamic.planar_map.pieces if piece.touches_outer_boundary
+        )
+        eligible = tuple(
+            count for count in self.partial_crown_tile_counts if count <= available
+        )
+        if not eligible:
+            raise OuterCrownError(
+                f"No requested partial crown size fits the {available}-tile crown"
+            )
+        return eligible[int(candidate.graph_id[-8:], 16) % len(eligible)]
+
+    def _dynamic(self, candidate: DualGraphCandidate) -> DynamicPlanarMap:
+        dynamic = build_dynamic_planar_map(candidate)
+        if self.free_outer_boundary:
+            return relax_outer_boundary(dynamic)
+        if not self.outer_crown_only:
+            return dynamic
+        if candidate.stein_center_tile is None or candidate.symmetry_order < 2:
+            raise OuterCrownError(
+                "outer_crown_only requires a symmetric Stein source graph"
+            )
+        prototype_rotation_order = (
+            candidate.symmetry_order
+            if self.prototype_symmetry_mode == "structural"
+            else 1
+        )
+        return extract_outer_crown(
+            dynamic,
+            prototype_rotation_order=prototype_rotation_order,
+            retained_tile_count=self._partial_crown_size(candidate, dynamic),
+            selection_key=candidate.graph_id,
+        )
+
+    def _structure_descriptor(
+        self,
+        candidate: DualGraphCandidate,
+        dynamic: DynamicPlanarMap | None = None,
+    ) -> Mapping[str, object] | None:
+        if self.free_outer_boundary:
+            resolved = dynamic if dynamic is not None else self._dynamic(candidate)
+            return free_outer_boundary_descriptor(candidate, resolved)
+        if not self.outer_crown_only:
+            return None
+        try:
+            resolved = dynamic if dynamic is not None else self._dynamic(candidate)
+            return outer_crown_descriptor(candidate, resolved)
+        except OuterCrownError as error:
+            return {
+                "kind": "stein_crown_region_ineligible_v1",
+                "source_tile_count": candidate.tile_count,
+                "error": str(error),
+            }
 
     def _configured_dynamic(
         self,
@@ -135,7 +285,7 @@ class GraphFormalEvaluator:
         *,
         mapping_rollout: bool = False,
     ) -> tuple[DynamicPlanarMap, dict[str, Any]]:
-        dynamic = build_dynamic_planar_map(candidate)
+        dynamic = self._dynamic(candidate)
         config = deepcopy(self.base_config)
         _deep_merge(config, self.overrides)
         if mapping_rollout:
@@ -238,7 +388,10 @@ class GraphFormalEvaluator:
         """
 
         with tempfile.TemporaryDirectory(prefix="formal-disk4-mapping-domain-") as raw:
-            dynamic, config = self._configured_dynamic(candidate, Path(raw))
+            try:
+                dynamic, config = self._configured_dynamic(candidate, Path(raw))
+            except OuterCrownError:
+                return ()
             enumerator = self._assignment_enumerator(dynamic, config)
             cyclic_automorphism = (
                 dynamic.imposed_automorphism
@@ -298,9 +451,21 @@ class GraphFormalEvaluator:
                 else:
                     assignment = enumerator.assignment_at(assignment_index)
                 selected.setdefault(assignment.assignment_id, assignment)
+            if self.outer_crown_only:
+                model_candidate = outer_crown_model_candidate(candidate, dynamic)
+            elif self.free_outer_boundary:
+                model_candidate = free_outer_boundary_model_candidate(
+                    candidate, dynamic
+                )
+            else:
+                model_candidate = candidate
+            projected_structure = self.outer_crown_only or self.free_outer_boundary
             return tuple(
                 MappingProposal.from_assignment(
-                    candidate, assignment, dynamic.planar_map
+                    model_candidate,
+                    assignment,
+                    dynamic.planar_map,
+                    source_candidate=(candidate if projected_structure else None),
                 )
                 for _assignment_id, assignment in sorted(selected.items())
             )
@@ -350,6 +515,9 @@ class GraphFormalEvaluator:
             int(round(rollout_total * joint_fraction)),
         )
         if (
+            not self.outer_crown_only
+            and not self.free_outer_boundary
+            and
             proposal.candidate.stein_center_tile is not None
             and proposal.candidate.imposed_permutation is not None
         ):
@@ -406,7 +574,9 @@ class GraphFormalEvaluator:
                 ) as raw:
                     directory = Path(raw)
                     dynamic, config = self._configured_dynamic(
-                        proposal.candidate, directory, mapping_rollout=True
+                        proposal.evaluation_source,
+                        directory,
+                        mapping_rollout=True,
                     )
                     joint_config = config["enumeration"].setdefault(
                         "joint_weak_length", {}
@@ -613,8 +783,178 @@ class GraphFormalEvaluator:
             profiles=profiles,
             tainted=any(item.tainted for item in mappings),
             error="; ".join(item.error for item in mappings if item.error) or None,
+            evaluated_structure=self._structure_descriptor(candidate),
         )
 
+    def evaluate_joint_arrangements(
+        self, candidate: DualGraphCandidate
+    ) -> GraphEvaluation:
+        """Search mapping and weak order together for one fixed graph.
+
+        This path deliberately bypasses every mapping/weak-order ranker.  It
+        constructs a complete cyclic arrangement by backtracking, then hands
+        the resulting placements to the same pre-word, word, decoration, and
+        profile kernel as ordinary searches.
+        """
+
+        started = time.perf_counter()
+        counters: dict[str, int] = {}
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="formal-disk4-joint-arrangement-"
+            ) as raw:
+                directory = Path(raw)
+                dynamic, config = self._configured_dynamic(
+                    candidate, directory, mapping_rollout=True
+                )
+                assignments = AssignmentEnumerator(
+                    dynamic.planar_map,
+                    allow_reflections=bool(
+                        config["enumeration"]["allow_reflections"]
+                    ),
+                    symmetry_mode="off",
+                )
+                if dynamic.imposed_automorphism is None:
+                    pointwise = None
+                    rotation = None
+                    reflections = ()
+                elif dynamic.imposed_equivariance_mode == "pointwise":
+                    pointwise = assignments.transform_for_automorphism(
+                        dynamic.imposed_automorphism
+                    )
+                    rotation = None
+                    reflections = ()
+                elif dynamic.imposed_equivariance_mode == "cyclic_shift":
+                    pointwise = None
+                    rotation = assignments.transform_for_automorphism(
+                        dynamic.imposed_automorphism
+                    )
+                    reflections = tuple(
+                        assignments.transform_for_automorphism(name)
+                        for name in dynamic.imposed_reflections
+                    )
+                else:
+                    raise ValueError(
+                        "Unknown imposed Graph Lab equivariance mode"
+                    )
+
+                deadline = started + self.joint_arrangement_time_limit_seconds
+
+                def stop() -> bool:
+                    return time.perf_counter() >= deadline
+
+                def count(name: str, amount: int = 1) -> None:
+                    counters[name] = counters.get(name, 0) + int(amount)
+
+                search = CyclicArrangementEnumerator(
+                    dynamic.planar_map,
+                    allow_reflections=bool(
+                        config["enumeration"]["allow_reflections"]
+                    ),
+                    required_pointwise_transform=pointwise,
+                    required_cyclic_shift_transform=rotation,
+                    required_reflection_transforms=reflections,
+                    event_sink=count,
+                    stop_predicate=stop,
+                    max_nodes=self.joint_arrangement_max_nodes,
+                )
+                placements = []
+                for placement in search.enumerate():
+                    placements.append(placement)
+                    if len(placements) >= self.joint_arrangement_max_placements:
+                        break
+
+                counters.setdefault("assignments_processed", 1)
+                counters["joint_arrangement_placements"] = len(placements)
+                if not placements:
+                    reason = (
+                        "joint_arrangement_time_limit"
+                        if stop()
+                        else "joint_arrangement_exhausted_or_node_limit"
+                    )
+                    return GraphEvaluation(
+                        candidate=candidate,
+                        stage_index=self._stage(counters),
+                        elapsed_seconds=time.perf_counter() - started,
+                        stop_reason=reason,
+                        counters=counters,
+                        profiles=(),
+                        tainted=False,
+                        evaluated_structure=self._structure_descriptor(
+                            candidate, dynamic
+                        ),
+                    )
+
+                # The arrangement has already enforced every mapping and weak
+                # symmetry.  Disable the historical enumeration layer for the
+                # hand-off; it must not quotient or expand the supplied leaves.
+                enumeration = config["enumeration"]
+                enumeration["symmetry_mode"] = "off"
+                enumeration["track_exact_domain_size"] = False
+                enumeration.setdefault("cyclic_equivariance", {})[
+                    "enabled"
+                ] = False
+                enumeration.setdefault("cyclic_shift_equivariance", {})[
+                    "enabled"
+                ] = False
+                enumeration.setdefault("dihedral_equivariance", {})[
+                    "enabled"
+                ] = False
+                config["limits"]["max_assignments"] = len(
+                    {item.assignment.assignment_id for item in placements}
+                )
+                config["limits"]["max_placements"] = len(placements)
+                result = FormalSolverAPI.evaluate(
+                    SolverAPIRequest(
+                        config=config,
+                        planar_maps=(dynamic.planar_map,),
+                        placements=(
+                            PlacementSelection(
+                                dynamic.planar_map.name, tuple(placements)
+                            ),
+                        ),
+                        collect_learning_diagnostics=False,
+                        collect_profiles=True,
+                    )
+                )
+                kernel_counters = {
+                    str(name): int(value)
+                    for name, value in dict(
+                        dict(result.summary.get("statistics", {})).get(
+                            "counters", {}
+                        )
+                    ).items()
+                }
+                for name, amount in kernel_counters.items():
+                    counters[name] = counters.get(name, 0) + amount
+                return GraphEvaluation(
+                    candidate=candidate,
+                    stage_index=self._stage(counters),
+                    elapsed_seconds=time.perf_counter() - started,
+                    stop_reason=str(
+                        dict(result.summary.get("statistics", {})).get(
+                            "stop_reason", "joint_arrangement_kernel"
+                        )
+                    ),
+                    counters=counters,
+                    profiles=tuple(result.profiles),
+                    tainted=bool(result.summary.get("tainted", False)),
+                    evaluated_structure=self._structure_descriptor(
+                        candidate, dynamic
+                    ),
+                )
+        except Exception as error:
+            return GraphEvaluation(
+                candidate=candidate,
+                stage_index=self._stage(counters),
+                elapsed_seconds=time.perf_counter() - started,
+                stop_reason="joint_arrangement_error",
+                counters=counters,
+                profiles=(),
+                tainted=True,
+                error=f"{type(error).__name__}: {error}",
+                evaluated_structure=self._structure_descriptor(candidate),
+            )
     @staticmethod
     def _stage(counters: Mapping[str, int]) -> int:
         stage = 0
@@ -670,6 +1010,9 @@ class GraphFormalEvaluator:
                     counters=counters,
                     profiles=tuple(profiles),
                     tainted=bool(summary.get("tainted", False)),
+                    evaluated_structure=self._structure_descriptor(
+                        candidate, dynamic
+                    ),
                 )
         except Exception as error:
             return GraphEvaluation(
@@ -681,4 +1024,13 @@ class GraphFormalEvaluator:
                 profiles=(),
                 tainted=True,
                 error=f"{type(error).__name__}: {error}",
+                evaluated_structure=(
+                    {
+                        "kind": "stein_crown_region_ineligible_v1",
+                        "source_tile_count": candidate.tile_count,
+                        "error": str(error),
+                    }
+                    if self.outer_crown_only
+                    else None
+                ),
             )

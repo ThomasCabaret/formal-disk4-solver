@@ -1,5 +1,10 @@
 # Graph Lab learning pipeline
 
+> Experimental subsystem. The maintained Graph Lab defaults to the structural
+> prior and does not instantiate or train these models. Select this subsystem
+> explicitly with `--policy learned`; it changes traversal order, never formal
+> acceptance.
+
 The Graph Lab now has four learned selection levels:
 
 1. A shared graph GNN ranks complete dual-graph candidates.

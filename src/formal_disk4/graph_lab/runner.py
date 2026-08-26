@@ -8,20 +8,20 @@ import re
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Any, Callable, Iterator, Mapping, Sequence, TypeVar
+from typing import AbstractSet, Any, Callable, Mapping, Sequence, TypeVar
 
 import numpy as np
 
 from formal_disk4.pipeline.filter_report import LEARNING_FILTER_IDS
-from formal_disk4.pipeline.output import atomic_replace
 
 from .evaluator import GRAPH_STAGES, GraphEvaluation, GraphFormalEvaluator
 from .feedback import read_learning_feedback
 from .isomorphism import IsomorphismIndex
 from .mapping import MappingEvaluation, MappingProposal
 from .mapping_model import MappingLearningModel
-from .model import GraphLearningModel
+from .policy import GraphSelectionPolicy, LearnedGraphPolicy, build_graph_policy
 from .rollout_audit import build_generation_coverage, weak_trajectory_id
+from .run_store import GraphLabRunStore
 from .space import (
     DualGraphCandidate,
     GraphSpace,
@@ -32,32 +32,9 @@ from .specialization_model import (
     SpecializationLearningModel,
     SpecializationPoolObservation,
 )
+from .search_request import GraphLabSearchRequest
 from .weak_model import WeakOrderLearningModel, WeakOrderRolloutObservation
 
-
-RESTART_FILES = (
-    "observations.jsonl",
-    "training_metrics.jsonl",
-    "geometry_candidates.jsonl",
-    "geometry_graphs.jsonl",
-    "model.pt",
-    "mapping_observations.jsonl",
-    "mapping_training_metrics.jsonl",
-    "mapping_model.pt",
-    "deep_mapping_candidates.jsonl",
-    "weak_order_rollouts.jsonl",
-    "weak_order_training_metrics.jsonl",
-    "rollout_coverage_metrics.jsonl",
-    "weak_order_model.pt",
-    "deep_weak_order_candidates.jsonl",
-    "specialization_pools.jsonl",
-    "specialization_training_metrics.jsonl",
-    "specialization_model.pt",
-    "state.json",
-    "report.json",
-    "report.md",
-    "effective_config.json",
-)
 
 # The model checkpoints retain the knowledge learned over the complete run.
 # Replay records are only the recent examples used to continue training.  The
@@ -72,48 +49,36 @@ MAX_SPECIALIZATION_REPLAY_IN_MEMORY = 4096
 def _checkpoint_fingerprint(config: Mapping[str, object]) -> str:
     """Hash only checkpoint-shape/semantics settings.
 
-    Ring exclusion changes the future proposal distribution, not model shapes,
-    solver targets, or stored record schemas.  It is intentionally omitted so
-    a run can use rings as pre-training and later transfer those weights to the
-    non-ring domain (or temporarily enable rings again).
+    Proposal, ordering, and learning policies change traversal rather than the
+    stored observation schema.  They are intentionally omitted so a run can
+    switch between the prior, learned ranking, enumeration, and joint
+    backtracking without discarding already durable evaluations.
     """
 
     compatible = json.loads(json.dumps(config))
+    for key in (
+        "policy",
+        "sampling",
+        "learning",
+        "mapping_sampling",
+        "mapping_learning",
+        "weak_order_sampling",
+        "weak_order_learning",
+        "specialization_sampling",
+        "specialization_learning",
+    ):
+        compatible.pop(key, None)
     space = compatible.get("space")
     if isinstance(space, dict):
         space.pop("exclude_rings", None)
         space.pop("tile_counts", None)
+    evaluation = compatible.get("evaluation")
+    if isinstance(evaluation, dict):
+        evaluation.pop("joint_arrangement_search", None)
+        evaluation.pop("mapping_search_overrides", None)
     return hashlib.sha256(
         json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-
-
-def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    atomic_replace(temporary, path)
-
-
-def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(payload, sort_keys=True) + "\n")
-        stream.flush()
-
-
-def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    if not path.exists():
-        return
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if isinstance(value, dict):
-                yield value
 
 
 _MAPPING_ID_PATTERN = re.compile(rb'"mapping_id"\s*:\s*"([^"]+)"')
@@ -286,7 +251,9 @@ class GraphLabResult:
 class GraphLabRunner:
     def __init__(self, root: Path, config: Mapping[str, object]) -> None:
         self.root = root.resolve()
-        self.config = dict(config)
+        self.search_request = GraphLabSearchRequest.from_config(config)
+        self.config = self.search_request.apply_to_config(config)
+        config = self.config
         output = Path(str(dict(config["output"])["directory"]))
         self.output = (output if output.is_absolute() else self.root / output).resolve()
         try:
@@ -301,15 +268,23 @@ class GraphLabRunner:
             if raw_budget is not None and float(raw_budget) > 0
             else None
         )
+        self.store = GraphLabRunStore(
+            self.output, maximum_bytes=self.max_training_bytes
+        )
         self.space = GraphSpace.from_config(dict(config.get("space", {})))
         self.exclude_rings = self.space.exclude_rings
         self.stein_symmetric = self.space.stein_symmetric
         self.sampling = dict(config.get("sampling", {}))
         self.learning = dict(config.get("learning", {}))
+        self.policy_mode = self.search_request.policy.value
+        self.learning_enabled = self.policy_mode == "learned"
         self.mapping_sampling = dict(config.get("mapping_sampling", {}))
         self.mapping_learning = dict(config.get("mapping_learning", {}))
-        self.mapping_learning_enabled = bool(
+        self.mapping_sampling_enabled = bool(
             self.mapping_sampling.get("enabled", False)
+        )
+        self.mapping_learning_enabled = bool(
+            self.learning_enabled and self.mapping_sampling_enabled
         )
         self.weak_order_sampling = dict(config.get("weak_order_sampling", {}))
         self.weak_order_learning = dict(config.get("weak_order_learning", {}))
@@ -330,7 +305,31 @@ class GraphLabRunner:
         self.evaluator = GraphFormalEvaluator(
             self.root, dict(config.get("evaluation", {}))
         )
+        if self.evaluator.joint_arrangement_search_enabled:
+            # Joint backtracking replaces the three downstream learned
+            # ordering layers; keeping their models active would spend time and
+            # memory on decisions that are not consulted by this strategy.
+            self.mapping_learning_enabled = False
+            self.weak_order_learning_enabled = False
+            self.specialization_learning_enabled = False
+        self.outer_crown_only = self.evaluator.outer_crown_only
+        self.free_outer_boundary = self.evaluator.free_outer_boundary
+        self.partial_crown_tile_counts = self.evaluator.partial_crown_tile_counts
+        self.prototype_symmetry_mode = self.evaluator.prototype_symmetry_mode
+        if self.outer_crown_only and not self.stein_symmetric:
+            raise ValueError("outer_crown_only requires stein_symmetric mode")
         self.fingerprint = _checkpoint_fingerprint(self.config)
+
+    def _partial_mode_label(self) -> str:
+        if self.free_outer_boundary:
+            return "complete-map-free-outer-boundary"
+        if not self.outer_crown_only:
+            return "off"
+        if self.partial_crown_tile_counts is None:
+            return "outer-crown"
+        return "crown-region:" + ",".join(
+            str(value) for value in self.partial_crown_tile_counts
+        )
 
     @classmethod
     def from_file(
@@ -342,6 +341,12 @@ class GraphLabRunner:
         tile_counts: str | Sequence[int] | None = None,
         stein_symmetric: bool | None = None,
         symmetry_orders: str | Sequence[int] | None = None,
+        outer_crown_only: bool | None = None,
+        free_outer_boundary: bool | None = None,
+        partial_crown_tile_counts: str | Sequence[int] | None = None,
+        prototype_symmetry_mode: str | None = None,
+        joint_arrangement_search: bool | None = None,
+        policy_mode: str | None = None,
         output_directory: Path | str | None = None,
     ) -> "GraphLabRunner":
         source = Path(path)
@@ -350,22 +355,19 @@ class GraphLabRunner:
         config = json.loads(source.read_text(encoding="utf-8"))
         if not isinstance(config, dict):
             raise ValueError("Graph Lab config must be a JSON object")
-        if exclude_rings is not None:
-            space = dict(config.get("space", {}))
-            space["exclude_rings"] = bool(exclude_rings)
-            config["space"] = space
-        if tile_counts is not None:
-            space = dict(config.get("space", {}))
-            space["tile_counts"] = tile_counts
-            config["space"] = space
-        if stein_symmetric is not None:
-            space = dict(config.get("space", {}))
-            space["stein_symmetric"] = bool(stein_symmetric)
-            config["space"] = space
-        if symmetry_orders is not None:
-            space = dict(config.get("space", {}))
-            space["symmetry_orders"] = symmetry_orders
-            config["space"] = space
+        request = GraphLabSearchRequest.from_config(config).with_overrides(
+            exclude_rings=exclude_rings,
+            tile_counts=tile_counts,
+            stein_symmetric=stein_symmetric,
+            symmetry_orders=symmetry_orders,
+            outer_crown_only=outer_crown_only,
+            free_outer_boundary=free_outer_boundary,
+            partial_crown_tile_counts=partial_crown_tile_counts,
+            prototype_symmetry_mode=prototype_symmetry_mode,
+            joint_arrangement_search=joint_arrangement_search,
+            policy_mode=policy_mode,
+        )
+        config = request.apply_to_config(config)
         if output_directory is not None:
             output = dict(config.get("output", {}))
             output["directory"] = str(output_directory)
@@ -373,18 +375,12 @@ class GraphLabRunner:
         return cls(root, config)
 
     def restart_outputs(self) -> None:
-        self.output.mkdir(parents=True, exist_ok=True)
-        for name in RESTART_FILES:
-            path = self.output / name
-            temporary = path.with_suffix(path.suffix + ".tmp")
-            for stale in (path, temporary):
-                if stale.exists():
-                    stale.unlink()
+        self.store.restart()
 
     def _load_observations(self) -> list[GraphEvaluation]:
         return [
             GraphEvaluation.from_dict(value)
-            for value in _iter_jsonl(self.output / "observations.jsonl")
+            for value in self.store.iter_jsonl("observations.jsonl")
         ]
 
     def _load_mapping_observations(
@@ -427,7 +423,7 @@ class GraphLabRunner:
         proposals: dict[str, MappingProposal] = {}
         pools: deque[SpecializationPoolObservation] = deque(maxlen=limit)
         total = 0
-        for value in _iter_jsonl(self.output / "specialization_pools.jsonl"):
+        for value in self.store.iter_jsonl("specialization_pools.jsonl"):
             raw_proposal = value.get("proposal")
             proposal = (
                 MappingProposal.from_dict(raw_proposal)
@@ -448,11 +444,29 @@ class GraphLabRunner:
     def _select_mappings(
         self,
         pool: Sequence[MappingProposal],
-        model: MappingLearningModel,
+        model: MappingLearningModel | None,
         rng: random.Random,
         amount: int,
     ) -> list[tuple[MappingProposal, Mapping[str, object]]]:
         amount = min(max(1, int(amount)), len(pool))
+        if model is None:
+            return [
+                (
+                    proposal,
+                    {
+                        "selection_mode": "exploration",
+                        "policy_mode": "prior",
+                        "selection_score": None,
+                        "predicted_conditional_probabilities": [],
+                        "predicted_reach_probabilities": [],
+                        "predicted_value_probabilities": [],
+                        "predicted_seconds": None,
+                        "ranking_target": "prior_only",
+                        "curriculum": {"status": "disabled"},
+                    },
+                )
+                for proposal in rng.sample(list(pool), amount)
+            ]
         exploration = min(
             amount,
             max(
@@ -535,9 +549,9 @@ class GraphLabRunner:
     def _evaluate_with_mapping_ranker(
         self,
         candidate: DualGraphCandidate,
-        model: MappingLearningModel,
-        weak_model: WeakOrderLearningModel,
-        specialization_model: SpecializationLearningModel,
+        model: MappingLearningModel | None,
+        weak_model: WeakOrderLearningModel | None,
+        specialization_model: SpecializationLearningModel | None,
         rng: random.Random,
         generation: int,
     ) -> tuple[
@@ -572,12 +586,12 @@ class GraphLabRunner:
         def preserve_rollout(observation: WeakOrderRolloutObservation) -> None:
             payload = observation.to_dict()
             payload["generation"] = generation
-            _append_jsonl(self.output / "weak_order_rollouts.jsonl", payload)
+            self.store.append_jsonl("weak_order_rollouts.jsonl", payload)
             if observation.deepest_filter_index >= int(
                 self.weak_order_sampling.get("preserve_from_filter_index", 21)
             ):
-                _append_jsonl(
-                    self.output / "deep_weak_order_candidates.jsonl",
+                self.store.append_jsonl(
+                    "deep_weak_order_candidates.jsonl",
                     {
                         "schema_version": "graph-lab-deep-weak-index-v2",
                         "generation": generation,
@@ -600,7 +614,7 @@ class GraphLabRunner:
             )
             specialization_proposals_written.add(mapping_id)
             payload["generation"] = generation
-            _append_jsonl(self.output / "specialization_pools.jsonl", payload)
+            self.store.append_jsonl("specialization_pools.jsonl", payload)
             specialization_records.append(observation)
 
         for selection_index, (proposal, metadata) in enumerate(selected):
@@ -635,12 +649,13 @@ class GraphLabRunner:
             payload = evaluation.to_dict()
             payload["generation"] = generation
             payload["selection"] = dict(metadata)
-            _append_jsonl(self.output / "mapping_observations.jsonl", payload)
-            if evaluation.deepest_filter_index >= int(
+            if self.mapping_learning_enabled:
+                self.store.append_jsonl("mapping_observations.jsonl", payload)
+            if self.mapping_learning_enabled and evaluation.deepest_filter_index >= int(
                 self.mapping_sampling.get("preserve_from_filter_index", 21)
             ):
-                _append_jsonl(
-                    self.output / "deep_mapping_candidates.jsonl",
+                self.store.append_jsonl(
+                    "deep_mapping_candidates.jsonl",
                     {
                         "schema_version": "graph-lab-deep-mapping-index-v2",
                         "generation": generation,
@@ -1051,25 +1066,10 @@ class GraphLabRunner:
         }
 
     def _training_output_bytes(self) -> int:
-        if not self.output.exists():
-            return 0
-        total = 0
-        for path in self.output.rglob("*"):
-            if not path.is_file() or path.name.endswith(".tmp"):
-                continue
-            try:
-                total += path.stat().st_size
-            except OSError:
-                # A concurrent geometry worker may atomically replace a file
-                # while the Lab samples disk usage. The next check sees it.
-                continue
-        return total
+        return self.store.total_bytes()
 
     def _output_budget_reached(self) -> bool:
-        return (
-            self.max_training_bytes is not None
-            and self._training_output_bytes() >= self.max_training_bytes
-        )
+        return self.store.budget_reached()
 
     def _state_generation(self) -> int:
         path = self.output / "state.json"
@@ -1127,7 +1127,7 @@ class GraphLabRunner:
     def _select(
         self,
         pool: Sequence[DualGraphCandidate],
-        model: GraphLearningModel,
+        policy: GraphSelectionPolicy,
         archive: DiversityArchive,
         rng: random.Random,
         amount: int,
@@ -1136,96 +1136,12 @@ class GraphLabRunner:
             raise ValueError(
                 "A simple ring reached the graph ranker while exclude_rings is enabled"
             )
-        exploration = min(
-            amount,
-            max(1, int(round(amount * float(self.sampling.get("exploration_fraction", 0.25))))),
+        return policy.select(
+            pool,
+            novelty=archive.novelty,
+            rng=rng,
+            amount=amount,
         )
-        scored = []
-        for candidate in pool:
-            novelty = archive.novelty(candidate)
-            score, prediction = model.utility(
-                candidate,
-                novelty=novelty,
-                geometry_weight=float(self.sampling.get("geometry_weight", 8.0)),
-                solution_weight=float(
-                    self.sampling.get("geometry_solution_weight", 4.0)
-                ),
-                nontrivial_solution_weight=float(
-                    self.sampling.get("nontrivial_solution_weight", 8.0)
-                ),
-                novelty_weight=float(self.sampling.get("novelty_weight", 1.5)),
-                cost_weight=float(self.sampling.get("cost_weight", 0.08)),
-            )
-            scored.append((score, candidate, prediction, novelty))
-        if not model.has_policy_signal:
-            return [
-                (
-                    candidate,
-                    {
-                        "selection_mode": "exploration",
-                        "selection_score": score,
-                        "novelty": novelty,
-                        "predicted_stage": prediction.expected_stage,
-                        "predicted_geometry_probability": (
-                            prediction.geometry_probability
-                        ),
-                        "predicted_value_probabilities": list(
-                            prediction.value_probabilities
-                        ),
-                        "predicted_transition_probabilities": list(
-                            prediction.conditional_probabilities
-                        ),
-                        "predicted_seconds": prediction.expected_seconds,
-                    },
-                )
-                for score, candidate, prediction, novelty in rng.sample(
-                    scored, amount
-                )
-            ]
-        exploit = amount - exploration
-        # Draw the control uniformly from the complete pool first. Sampling it
-        # only from the tail left by the ranker would make the control
-        # artificially weak and overstate learned enrichment.
-        random_control = rng.sample(scored, exploration) if exploration else []
-        control_ids = {item[1].graph_id for item in random_control}
-        remaining = [
-            item for item in scored if item[1].graph_id not in control_ids
-        ]
-        learned = []
-        temperature = max(1e-3, float(self.sampling.get("temperature", 0.7)))
-        epsilon = min(1.0, max(0.0, float(self.sampling.get("epsilon", 0.15))))
-        while remaining and len(learned) < exploit:
-            values = np.asarray([item[0] for item in remaining], dtype=np.float64)
-            values = values / temperature
-            values -= np.max(values)
-            weights = np.exp(np.clip(values, -60.0, 0.0))
-            weights = (1.0 - epsilon) * weights / max(
-                1e-12, float(np.sum(weights))
-            ) + epsilon / len(remaining)
-            chosen = rng.choices(range(len(remaining)), weights=weights, k=1)[0]
-            learned.append(remaining.pop(chosen))
-        selected = [(item, "learned") for item in learned]
-        selected.extend((item, "exploration") for item in random_control)
-        return [
-            (
-                candidate,
-                {
-                    "selection_mode": selection_mode,
-                    "selection_score": score,
-                    "novelty": novelty,
-                    "predicted_stage": prediction.expected_stage,
-                    "predicted_geometry_probability": prediction.geometry_probability,
-                    "predicted_value_probabilities": list(
-                        prediction.value_probabilities
-                    ),
-                    "predicted_transition_probabilities": list(
-                        prediction.conditional_probabilities
-                    ),
-                    "predicted_seconds": prediction.expected_seconds,
-                },
-            )
-            for (score, candidate, prediction, novelty), selection_mode in selected
-        ]
 
     def _generation_metrics(
         self,
@@ -1322,7 +1238,7 @@ class GraphLabRunner:
             "candidate": evaluation.candidate.to_dict(),
             "evaluation": evaluation.to_dict(),
         }
-        _append_jsonl(self.output / "geometry_graphs.jsonl", graph_payload)
+        self.store.append_jsonl("geometry_graphs.jsonl", graph_payload)
         for profile in evaluation.profiles:
             enriched = dict(profile)
             enriched["graph_lab"] = {
@@ -1331,12 +1247,12 @@ class GraphLabRunner:
                 "structural_candidate": evaluation.candidate.to_dict(),
                 "formal_evaluation": evaluation.to_dict(),
             }
-            _append_jsonl(self.output / "geometry_candidates.jsonl", enriched)
+            self.store.append_jsonl("geometry_candidates.jsonl", enriched)
 
     def _report(
         self,
         observations: Sequence[GraphEvaluation],
-        model: GraphLearningModel,
+        policy: GraphSelectionPolicy,
         generation: int,
         *,
         stop_reason: str,
@@ -1389,6 +1305,15 @@ class GraphLabRunner:
                 self.space.requested_tile_counts
             ),
             "stein_symmetric": self.stein_symmetric,
+            "policy_mode": self.policy_mode,
+            "outer_crown_only": self.outer_crown_only,
+            "free_outer_boundary": self.free_outer_boundary,
+            "partial_crown_tile_counts": (
+                list(self.partial_crown_tile_counts)
+                if self.partial_crown_tile_counts is not None
+                else None
+            ),
+            "prototype_symmetry_mode": self.prototype_symmetry_mode,
             "symmetry_order_domain": (
                 list(self.space.symmetry_orders)
                 if self.space.symmetry_orders is not None
@@ -1408,21 +1333,19 @@ class GraphLabRunner:
             "model": (
                 dict(model_metrics)
                 if model_metrics is not None
-                else model.metrics(
+                else policy.metrics(
                     observations,
                     feedback=read_learning_feedback(self.output),
-                    maximum_examples=int(
-                        self.learning.get("metric_examples", 512)
-                    ),
                 )
             ),
         }
-        _atomic_json(self.output / "report.json", report)
+        self.store.write_json("report.json", report)
         lines = [
-            "# Variable-graph learning report",
+            "# Variable-graph search report",
             "",
             f"Generation: {generation}",
             f"Stop reason: {stop_reason}",
+            f"Graph policy: {self.policy_mode}",
             f"Evaluated graph structures: {len(observations)}",
             f"Distinct evaluated graph structures: {unique_graph_count}",
             f"Geometry-ready evaluations: {len(geometry)}",
@@ -1486,48 +1409,78 @@ class GraphLabRunner:
         if restart:
             self.restart_outputs()
         self.output.mkdir(parents=True, exist_ok=True)
-        _atomic_json(self.output / "effective_config.json", self.config)
+        self.store.write_json("effective_config.json", self.config)
         observations = self._load_observations()
-        (
-            mapping_observations,
-            seen_mapping_ids,
-            mapping_observation_count,
-        ) = self._load_mapping_observations()
-        (
-            weak_order_rollouts,
-            seen_trajectory_ids,
-            weak_order_rollout_count,
-        ) = self._load_weak_order_rollouts()
-        (
-            specialization_pools,
-            specialization_pool_count,
-        ) = self._load_specialization_pools()
+        if self.mapping_learning_enabled:
+            (
+                mapping_observations,
+                seen_mapping_ids,
+                mapping_observation_count,
+            ) = self._load_mapping_observations()
+        else:
+            mapping_observations, seen_mapping_ids, mapping_observation_count = (
+                [],
+                set(),
+                0,
+            )
+        if self.weak_order_learning_enabled:
+            (
+                weak_order_rollouts,
+                seen_trajectory_ids,
+                weak_order_rollout_count,
+            ) = self._load_weak_order_rollouts()
+        else:
+            weak_order_rollouts, seen_trajectory_ids, weak_order_rollout_count = (
+                [],
+                set(),
+                0,
+            )
+        if self.specialization_learning_enabled:
+            (
+                specialization_pools,
+                specialization_pool_count,
+            ) = self._load_specialization_pools()
+        else:
+            specialization_pools, specialization_pool_count = [], 0
         seen_graph_ids = {
             observation.candidate.graph_id for observation in observations
         }
         archive = DiversityArchive(observations)
-        model = GraphLearningModel.load_or_create(
-            self.output / "model.pt", self.learning
-        )
-        mapping_model = MappingLearningModel.load_or_create(
-            self.output / "mapping_model.pt", self.mapping_learning
-        )
-        weak_order_model = WeakOrderLearningModel.load_or_create(
-            self.output / "weak_order_model.pt", self.weak_order_learning
-        )
-        specialization_model = SpecializationLearningModel.load_or_create(
-            self.output / "specialization_model.pt", self.specialization_learning
-        )
         feedback = read_learning_feedback(self.output)
-        if observations and not (self.output / "model.pt").exists():
-            model.train(
-                observations,
-                steps=int(self.learning.get("bootstrap_steps", 100)),
-                batch_size=int(self.learning.get("batch_size", 16)),
-                generation=-1,
-                feedback=feedback,
+        graph_policy = build_graph_policy(
+            self.policy_mode,
+            output=self.output,
+            learning=self.learning,
+            sampling=self.sampling,
+        )
+        if isinstance(graph_policy, LearnedGraphPolicy):
+            graph_policy.bootstrap(observations, feedback=feedback)
+        mapping_model = (
+            MappingLearningModel.load_or_create(
+                self.output / "mapping_model.pt", self.mapping_learning
             )
-        if mapping_observations and not (self.output / "mapping_model.pt").exists():
+            if self.mapping_learning_enabled
+            else None
+        )
+        weak_order_model = (
+            WeakOrderLearningModel.load_or_create(
+                self.output / "weak_order_model.pt", self.weak_order_learning
+            )
+            if self.weak_order_learning_enabled
+            else None
+        )
+        specialization_model = (
+            SpecializationLearningModel.load_or_create(
+                self.output / "specialization_model.pt", self.specialization_learning
+            )
+            if self.specialization_learning_enabled
+            else None
+        )
+        if (
+            mapping_model is not None
+            and mapping_observations
+            and not (self.output / "mapping_model.pt").exists()
+        ):
             mapping_model.train(
                 mapping_observations,
                 steps=int(self.mapping_learning.get("bootstrap_steps", 100)),
@@ -1535,7 +1488,7 @@ class GraphLabRunner:
                 generation=-1,
                 feedback=feedback,
             )
-        if weak_order_rollouts and not (
+        if weak_order_model is not None and weak_order_rollouts and not (
             self.output / "weak_order_model.pt"
         ).exists():
             weak_order_model.train(
@@ -1545,7 +1498,7 @@ class GraphLabRunner:
                 generation=-1,
                 feedback=feedback,
             )
-        if specialization_pools and not (
+        if specialization_model is not None and specialization_pools and not (
             self.output / "specialization_model.pt"
         ).exists():
             specialization_model.train(
@@ -1587,6 +1540,9 @@ class GraphLabRunner:
             f"batch={target_batch} "
             f"tiles={format_tile_count_spec(self.space.tile_counts)} "
             f"mode={'stein-symmetric' if self.stein_symmetric else 'general'} "
+            f"policy={self.policy_mode} "
+            f"partial={self._partial_mode_label()} "
+            f"prototype-symmetry={self.prototype_symmetry_mode} "
             f"exclude-rings={'on' if self.exclude_rings else 'off'} "
             f"disk-limit={disk_limit}",
             flush=True,
@@ -1606,7 +1562,7 @@ class GraphLabRunner:
                     )
                     self._report(
                         observations,
-                        model,
+                        graph_policy,
                         last_generation,
                         stop_reason=stop_reason,
                     )
@@ -1627,7 +1583,9 @@ class GraphLabRunner:
                         ),
                     )
                     generation_graph_pool.extend(pool)
-                    selected.extend(self._select(pool, model, archive, rng, remaining))
+                    selected.extend(
+                        self._select(pool, graph_policy, archive, rng, remaining)
+                    )
 
                 generation_evaluations = []
                 generation_mapping_records: list[
@@ -1647,7 +1605,14 @@ class GraphLabRunner:
                     if self._output_budget_reached():
                         stop_reason = "max_training_output_bytes"
                         break
-                    if self.mapping_learning_enabled:
+                    if self.evaluator.joint_arrangement_search_enabled:
+                        evaluation = self.evaluator.evaluate_joint_arrangements(
+                            candidate
+                        )
+                        new_mapping_observations = []
+                        new_weak_order_records = []
+                        new_specialization_records = []
+                    elif self.mapping_sampling_enabled:
                         (
                             evaluation,
                             new_mapping_records,
@@ -1664,9 +1629,11 @@ class GraphLabRunner:
                                 generation,
                             )
                         )
-                        new_mapping_observations = [
-                            item for item, _metadata in new_mapping_records
-                        ]
+                        new_mapping_observations = (
+                            [item for item, _metadata in new_mapping_records]
+                            if self.mapping_learning_enabled
+                            else []
+                        )
                         generation_mapping_records.extend(new_mapping_records)
                         generation_mapping_pool.extend(new_mapping_pool)
                         generation_weak_order_records.extend(
@@ -1723,7 +1690,7 @@ class GraphLabRunner:
                     observation["generation"] = generation
                     observation["selection"] = dict(selection)
                     observation["graph_features"] = graph_feature_payload(candidate)
-                    _append_jsonl(self.output / "observations.jsonl", observation)
+                    self.store.append_jsonl("observations.jsonl", observation)
                     archive.add(evaluation)
                     observations.append(evaluation)
                     generation_evaluations.append(evaluation)
@@ -1750,15 +1717,13 @@ class GraphLabRunner:
                         raise KeyboardInterrupt
 
                 feedback = read_learning_feedback(self.output)
-                metrics = model.train(
+                metrics = graph_policy.train(
                     observations,
-                    steps=int(self.learning.get("steps_per_generation", 8)),
-                    batch_size=int(self.learning.get("batch_size", 16)),
                     generation=generation,
                     feedback=feedback,
                 )
-                model.save(self.output / "model.pt")
                 if self.mapping_learning_enabled:
+                    assert mapping_model is not None
                     mapping_metrics = mapping_model.train(
                         mapping_observations,
                         steps=int(
@@ -1769,8 +1734,8 @@ class GraphLabRunner:
                         feedback=feedback,
                     )
                     mapping_model.save(self.output / "mapping_model.pt")
-                    _append_jsonl(
-                        self.output / "mapping_training_metrics.jsonl",
+                    self.store.append_jsonl(
+                        "mapping_training_metrics.jsonl",
                         self._mapping_generation_metrics(
                             generation,
                             generation_mapping_records,
@@ -1778,10 +1743,16 @@ class GraphLabRunner:
                         ),
                     )
                 else:
-                    mapping_metrics = mapping_model.metrics(
-                        mapping_observations, feedback=feedback
-                    )
+                    mapping_metrics = {
+                        "mode": "disabled",
+                        "status": "learning_disabled",
+                        "examples": len(mapping_observations),
+                        "filters": {},
+                        "reach": {},
+                        "values": {},
+                    }
                 if self.weak_order_learning_enabled:
+                    assert weak_order_model is not None
                     weak_order_metrics = weak_order_model.train(
                         weak_order_rollouts,
                         steps=int(
@@ -1798,8 +1769,8 @@ class GraphLabRunner:
                     weak_order_model.save(
                         self.output / "weak_order_model.pt"
                     )
-                    _append_jsonl(
-                        self.output / "weak_order_training_metrics.jsonl",
+                    self.store.append_jsonl(
+                        "weak_order_training_metrics.jsonl",
                         self._weak_order_generation_metrics(
                             generation,
                             generation_weak_order_records,
@@ -1807,10 +1778,16 @@ class GraphLabRunner:
                         ),
                     )
                 else:
-                    weak_order_metrics = weak_order_model.metrics(
-                        weak_order_rollouts, feedback=feedback
-                    )
+                    weak_order_metrics = {
+                        "mode": "disabled",
+                        "status": "learning_disabled",
+                        "rollouts": len(weak_order_rollouts),
+                        "filters": {},
+                        "reach": {},
+                        "values": {},
+                    }
                 if self.specialization_learning_enabled:
+                    assert specialization_model is not None
                     specialization_metrics = specialization_model.train(
                         specialization_pools,
                         steps=int(
@@ -1826,8 +1803,8 @@ class GraphLabRunner:
                     specialization_model.save(
                         self.output / "specialization_model.pt"
                     )
-                    _append_jsonl(
-                        self.output / "specialization_training_metrics.jsonl",
+                    self.store.append_jsonl(
+                        "specialization_training_metrics.jsonl",
                         self._specialization_generation_metrics(
                             generation,
                             generation_specialization_records,
@@ -1835,11 +1812,15 @@ class GraphLabRunner:
                         ),
                     )
                 else:
-                    specialization_metrics = specialization_model.metrics(
-                        specialization_pools
-                    )
-                _append_jsonl(
-                    self.output / "training_metrics.jsonl",
+                    specialization_metrics = {
+                        "mode": "disabled",
+                        "status": "learning_disabled",
+                        "pools": len(specialization_pools),
+                        "transitions": {},
+                        "values": {},
+                    }
+                self.store.append_jsonl(
+                    "training_metrics.jsonl",
                     self._generation_metrics(
                         generation, generation_records, metrics
                     ),
@@ -1855,9 +1836,7 @@ class GraphLabRunner:
                     seen_mapping_ids=seen_mapping_ids,
                     seen_trajectory_ids=seen_trajectory_ids,
                 )
-                _append_jsonl(
-                    self.output / "rollout_coverage_metrics.jsonl", coverage
-                )
+                self.store.append_jsonl("rollout_coverage_metrics.jsonl", coverage)
                 seen_graph_ids.update(
                     evaluation.candidate.graph_id
                     for evaluation, _selection in generation_records
@@ -1872,14 +1851,23 @@ class GraphLabRunner:
                 )
                 if self._output_budget_reached():
                     stop_reason = "max_training_output_bytes"
-                _atomic_json(
-                    self.output / "state.json",
+                self.store.write_json(
+                    "state.json",
                     {
                         "schema_version": "graph-lab-state-v1",
                         "fingerprint": self.fingerprint,
                         "exclude_rings": self.exclude_rings,
                         "tile_counts": list(self.space.tile_counts),
                         "stein_symmetric": self.stein_symmetric,
+                        "policy_mode": self.policy_mode,
+                        "outer_crown_only": self.outer_crown_only,
+                        "free_outer_boundary": self.free_outer_boundary,
+                        "partial_crown_tile_counts": (
+                            list(self.partial_crown_tile_counts)
+                            if self.partial_crown_tile_counts is not None
+                            else None
+                        ),
+                        "prototype_symmetry_mode": self.prototype_symmetry_mode,
                         "symmetry_orders": (
                             list(self.space.symmetry_orders)
                             if self.space.symmetry_orders is not None
@@ -1894,7 +1882,7 @@ class GraphLabRunner:
                 )
                 report = self._report(
                     observations,
-                    model,
+                    graph_policy,
                     generation,
                     stop_reason=(
                         stop_reason
@@ -1930,16 +1918,16 @@ class GraphLabRunner:
         except KeyboardInterrupt:
             stop_reason = "keyboard_interrupt"
             print("Graph Lab interrupted; completed observations are already durable.", flush=True)
-            model.save(self.output / "model.pt")
-            if self.mapping_learning_enabled:
+            graph_policy.save()
+            if mapping_model is not None:
                 mapping_model.save(self.output / "mapping_model.pt")
-            if self.weak_order_learning_enabled:
+            if weak_order_model is not None:
                 weak_order_model.save(self.output / "weak_order_model.pt")
-            if self.specialization_learning_enabled:
+            if specialization_model is not None:
                 specialization_model.save(self.output / "specialization_model.pt")
             self._report(
                 observations,
-                model,
+                graph_policy,
                 last_generation,
                 stop_reason=stop_reason,
             )

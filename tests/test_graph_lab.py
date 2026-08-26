@@ -538,6 +538,11 @@ class GraphLabTests(unittest.TestCase):
         self.assertFalse(arguments.exclude_rings)
         self.assertIsNone(arguments.tile_counts)
         self.assertFalse(arguments.stein_symmetric)
+        self.assertFalse(arguments.outer_crown_only)
+        self.assertFalse(arguments.free_outer_boundary)
+        self.assertIsNone(arguments.policy)
+        self.assertIsNone(arguments.partial_crown_tiles)
+        self.assertIsNone(arguments.prototype_symmetry)
         self.assertIsNone(arguments.symmetry_orders)
         self.assertIsNone(arguments.output_directory)
         self.assertTrue(
@@ -556,12 +561,36 @@ class GraphLabTests(unittest.TestCase):
                 "2-4,6",
                 "--output-directory",
                 "output/graph_lab/stein-test",
+                "--outer-crown-only",
             ]
         )
         self.assertTrue(stein.stein_symmetric)
+        self.assertTrue(stein.outer_crown_only)
         self.assertEqual(stein.symmetry_orders, "2-4,6")
         self.assertEqual(
             stein.output_directory, "output/graph_lab/stein-test"
+        )
+        partial = build_lab_app_parser().parse_args(
+            [
+                "--stein-symmetric",
+                "--symmetry-orders",
+                "3",
+                "--partial-crown-tiles",
+                "1-4",
+                "--prototype-symmetry",
+                "none",
+            ]
+        )
+        self.assertEqual(partial.partial_crown_tiles, "1-4")
+        self.assertEqual(partial.prototype_symmetry, "none")
+        self.assertTrue(
+            build_lab_app_parser()
+            .parse_args(["--free-outer-boundary"])
+            .free_outer_boundary
+        )
+        self.assertEqual(
+            build_lab_app_parser().parse_args(["--policy", "learned"]).policy,
+            "learned",
         )
 
     def test_stein_mode_filters_before_the_graph_ranker(self) -> None:
@@ -680,6 +709,21 @@ class GraphLabTests(unittest.TestCase):
             self.assertEqual(with_rings.fingerprint, expanded.fingerprint)
             self.assertEqual(expanded._state_generation(), 624)
             self.assertEqual(expanded.space.tile_counts, (3, 4, 18, 19))
+
+            learned_config = json.loads(json.dumps(base_config))
+            learned_config["policy"] = {"mode": "learned"}
+            learned = GraphLabRunner(ROOT, learned_config)
+            self.assertEqual(with_rings.fingerprint, learned.fingerprint)
+            self.assertEqual(learned._state_generation(), 624)
+
+            joint_config = json.loads(json.dumps(base_config))
+            joint_config["evaluation"]["joint_arrangement_search"] = {
+                "enabled": True,
+                "max_nodes": 123,
+            }
+            joint = GraphLabRunner(ROOT, joint_config)
+            self.assertEqual(with_rings.fingerprint, joint.fingerprint)
+            self.assertEqual(joint._state_generation(), 624)
 
     def test_mapping_comparison_excludes_exploration_only_parents(self) -> None:
         def record(
@@ -914,6 +958,7 @@ class GraphLabTests(unittest.TestCase):
             runner = GraphLabRunner(
                 ROOT,
                 {
+                    "policy": {"mode": "learned"},
                     "output": {"directory": raw_output},
                     "space": {
                         "maximum_tiles": 3,

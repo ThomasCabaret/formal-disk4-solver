@@ -25,6 +25,28 @@ setup.bat
 run_tests.bat
 ```
 
+## Maintained exploratory workflow
+
+The maintained interactive search surface is the unified web Graph Lab:
+
+```powershell
+$env:PYTHONPATH="$PWD\src"
+py.exe -m formal_disk4.graph_lab.app `
+  --config config\graph_lab\up-to-13.json `
+  --geometry-config config\graph_lab\geometry.json
+```
+
+It starts the structural search, dashboard, and geometry queue together. The
+stable default uses the stochastic structural prior without instantiating or
+training neural models. Experimental learned ordering remains available with
+`--policy learned`.
+
+The older Tk case GUI and headless Graph Lab command are compatibility clients.
+They share the production formal kernel but are not the primary surface for new
+search controls. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+strategy boundaries and [docs/README.md](docs/README.md) for documentation
+layout and PDF generation.
+
 ## One case runner
 
 Run without arguments to select both a case and an action from menus:

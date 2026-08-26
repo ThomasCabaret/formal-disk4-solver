@@ -11,6 +11,10 @@ from formal_disk4.orchestration.catalog_diagrams import (
     catalog_schematic_svg,
 )
 
+from .free_outer_boundary import (
+    FREE_OUTER_BOUNDARY_STRUCTURE_KIND,
+)
+from .outer_crown import dynamic_from_structure_descriptor
 from .space import DualGraphCandidate, build_dynamic_planar_map
 
 
@@ -41,7 +45,9 @@ class RecentStructureGallery:
         self.offset = 0
         self.source_line = 0
         self.items: deque[dict[str, object]] = deque()
-        self.candidates: dict[str, DualGraphCandidate] = {}
+        self.candidates: dict[
+            str, tuple[DualGraphCandidate, Mapping[str, object] | None]
+        ] = {}
         self.svg_cache: dict[str, str] = {}
         self._initialize_tail()
 
@@ -122,21 +128,45 @@ class RecentStructureGallery:
         selection = record.get("selection", {})
         if not isinstance(selection, Mapping):
             selection = {}
+        raw_structure = record.get("evaluated_structure")
+        evaluated_structure = (
+            dict(raw_structure) if isinstance(raw_structure, Mapping) else None
+        )
+        if evaluated_structure is not None and "retained_imposed_permutation" in evaluated_structure:
+            raw_retained_permutation = evaluated_structure.get(
+                "retained_imposed_permutation"
+            )
+            retained_permutation = (
+                tuple(int(value) for value in raw_retained_permutation)
+                if isinstance(raw_retained_permutation, list)
+                else None
+            )
+        else:
+            retained_permutation = candidate.imposed_permutation
         item = {
             "visit_id": visit_id,
             "line": line_number,
             "source_offset": offset,
             "generation": int(record.get("generation", 0) or 0),
             "graph_id": candidate.graph_id,
-            "tile_count": candidate.tile_count,
-            "edge_count": candidate.edge_count,
+            "tile_count": int(
+                evaluated_structure.get("retained_tile_count", candidate.tile_count)
+                if evaluated_structure is not None
+                else candidate.tile_count
+            ),
+            "source_tile_count": candidate.tile_count,
+            "edge_count": int(
+                evaluated_structure.get("retained_edge_count", candidate.edge_count)
+                if evaluated_structure is not None
+                else candidate.edge_count
+            ),
             "symmetry_order": candidate.symmetry_order,
             "imposed_permutation": (
-                list(candidate.imposed_permutation)
-                if candidate.imposed_permutation is not None
+                list(retained_permutation)
+                if retained_permutation is not None
                 else None
             ),
-            "symmetry_cycles": _permutation_cycles(candidate.imposed_permutation),
+            "symmetry_cycles": _permutation_cycles(retained_permutation),
             "source_symmetry": candidate.source_symmetry,
             "stein_center_tile": candidate.stein_center_tile,
             "origin": candidate.origin,
@@ -147,13 +177,14 @@ class RecentStructureGallery:
             "selection_score": selection.get("selection_score"),
             "stage": str(record.get("stage_name", "unknown")),
             "profile_count": int(record.get("profile_count", 0) or 0),
+            "evaluated_structure": evaluated_structure,
             "preview_url": f"/api/structure-svg?visit={visit_id}",
         }
         if len(self.items) >= self.capacity:
             removed = self.items.popleft()
             self.candidates.pop(str(removed["visit_id"]), None)
         self.items.append(item)
-        self.candidates[visit_id] = candidate
+        self.candidates[visit_id] = (candidate, evaluated_structure)
 
     def refresh(self) -> int:
         with self.lock:
@@ -197,16 +228,32 @@ class RecentStructureGallery:
     def svg(self, visit_id: str) -> str | None:
         self.refresh()
         with self.lock:
-            candidate = self.candidates.get(str(visit_id))
-            if candidate is None:
+            entry = self.candidates.get(str(visit_id))
+            if entry is None:
                 return None
-            cached = self.svg_cache.get(candidate.graph_id)
+            candidate, descriptor = entry
+            cache_key = candidate.graph_id + ":" + json.dumps(
+                descriptor, sort_keys=True, separators=(",", ":")
+            )
+            cached = self.svg_cache.get(cache_key)
             if cached is not None:
                 return cached
-            planar_map = build_dynamic_planar_map(candidate).planar_map
+            if (
+                descriptor is not None
+                and descriptor.get("kind") == FREE_OUTER_BOUNDARY_STRUCTURE_KIND
+            ):
+                # The catalogue renderer is intentionally a disk-embedding
+                # renderer.  Show the complete source topology here and let
+                # the badge describe the relaxed outer boundary; geometric
+                # solution cards render the actual free-boundary profile.
+                planar_map = build_dynamic_planar_map(candidate).planar_map
+            else:
+                planar_map = dynamic_from_structure_descriptor(
+                    candidate, descriptor
+                ).planar_map
             schematic = build_catalog_schematic(planar_map)
             rendered = catalog_schematic_svg(schematic)
             if len(self.svg_cache) >= 512:
                 self.svg_cache.clear()
-            self.svg_cache[candidate.graph_id] = rendered
+            self.svg_cache[cache_key] = rendered
             return rendered

@@ -1,4 +1,45 @@
-# Architecture 1.2
+# Architecture 1.3
+
+## 0. Maintained runtime boundary
+
+The maintained interactive entry point is `formal-disk4-lab`
+(`formal_disk4.graph_lab.app`). It owns the web dashboard, the structural
+search job, and the background geometry queue. The standalone Graph Lab CLI,
+dashboard command, and Tk catalog GUI are compatibility clients; they must call
+the same kernel rather than grow separate solver implementations.
+
+`FormalSolverAPI` is the formal-kernel boundary. It accepts complete planar
+maps, selected assignments, or already constructed placements. Consequently a
+strategy may enumerate a fixed catalog map, jointly backtrack a mapping and a
+weak order, or eventually construct the graph incrementally without changing
+word compilation, exact pruning, decoration, or profile acceptance.
+
+The stable Graph Lab default is the unlearned structural prior. Experimental
+learning is selected explicitly with `--policy learned`. Policy choice affects
+ordering only and must never change the mathematical acceptance rules.
+
+## 0.1 Composable search request
+
+`GraphLabSearchRequest` separates six independent concerns:
+
+- the graph domain (tile counts, symmetry orders, ring exclusion);
+- structural hypotheses such as symmetric Stein mode;
+- the selected region (complete map, outer crown, or connected crown region);
+- boundary conditions (disk or free outer boundary);
+- intrinsic prototype constraints;
+- arrangement and graph-ordering strategies.
+
+This division is intentional. Graph proposal, mapping construction, and
+weak-order construction are replaceable traversal strategies. Future
+backtracking at any of these levels should implement the corresponding strategy
+contract instead of adding another end-to-end mode.
+
+## 0.2 Output and documentation policy
+
+All runtime and generated documentation artifacts live below `output/`.
+Editable documentation has a single source root, `docs/`. Historical learning
+notes are retained under `docs/legacy/` and are not maintained runtime
+contracts.
 
 ## 1. Map-driven core
 

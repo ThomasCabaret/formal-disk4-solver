@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from .arguments import add_search_arguments
 from .runner import GraphLabRunner
 
 
@@ -11,49 +12,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="formal-disk4-graph-lab",
         description=(
-            "Explore valid planar dual graphs and complete contour mappings "
-            "with shared graph, mapping, and weak-order rankers driving "
-            "bounded production-solver rollouts."
+            "Compatibility wrapper for headless Graph Lab searches. New user "
+            "workflows should normally use formal-disk4-lab."
         ),
     )
     parser.add_argument(
         "--config", default="config/graph_lab/up-to-13.json"
     )
     parser.add_argument("--root", default=".")
-    parser.add_argument(
-        "--output-directory",
-        help="override the Graph Lab output directory (kept inside the project)",
-    )
     parser.add_argument("--generations", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument(
-        "--tile-counts",
-        metavar="DOMAIN",
-        help=(
-            "override the tile-count domain, for example 3-13,18-19; "
-            "omitted sizes are never proposed"
-        ),
-    )
-    parser.add_argument(
-        "--exclude-rings",
-        action="store_true",
-        help=(
-            "exclude outside-star plus simple tile-cycle graphs before graph ranking"
-        ),
-    )
-    parser.add_argument(
-        "--stein-symmetric",
-        action="store_true",
-        help=(
-            "restrict proposals to audited Stein graphs with an imposed "
-            "nontrivial rotational symmetry"
-        ),
-    )
-    parser.add_argument(
-        "--symmetry-orders",
-        metavar="DOMAIN",
-        help="optional Stein rotation-order domain, for example 2-4,6,8",
-    )
+    add_search_arguments(parser)
     parser.add_argument(
         "--restart",
         action="store_true",
@@ -71,6 +40,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         tile_counts=args.tile_counts,
         stein_symmetric=True if args.stein_symmetric else None,
         symmetry_orders=args.symmetry_orders,
+        outer_crown_only=True if args.outer_crown_only else None,
+        free_outer_boundary=True if args.free_outer_boundary else None,
+        partial_crown_tile_counts=args.partial_crown_tiles,
+        prototype_symmetry_mode=args.prototype_symmetry,
+        joint_arrangement_search=(
+            True if args.joint_arrangement_search else None
+        ),
+        policy_mode=args.policy,
         output_directory=args.output_directory,
     )
     result = runner.run(

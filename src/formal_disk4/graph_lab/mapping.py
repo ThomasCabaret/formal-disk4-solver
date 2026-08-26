@@ -25,6 +25,13 @@ class MappingProposal:
     cyclic_offsets: tuple[int, ...]
     contour_lengths: tuple[int, ...]
     edge_ports: tuple[tuple[float, ...], ...]
+    source_candidate: DualGraphCandidate | None = None
+
+    @property
+    def evaluation_source(self) -> DualGraphCandidate:
+        """Complete graph from which an experimental partial map was cut."""
+
+        return self.source_candidate or self.candidate
 
     @property
     def mapping_id(self) -> str:
@@ -36,6 +43,8 @@ class MappingProposal:
             self.contour_lengths,
             self.edge_ports,
         )
+        if self.source_candidate is not None:
+            payload = (*payload, ("source", self.source_candidate.graph_id))
         encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         return "mp-" + hashlib.sha256(encoded).hexdigest()[:32]
 
@@ -45,6 +54,8 @@ class MappingProposal:
         candidate: DualGraphCandidate,
         assignment: ContourAssignment,
         planar_map: PlanarMap,
+        *,
+        source_candidate: DualGraphCandidate | None = None,
     ) -> "MappingProposal":
         piece_index = {
             name: index for index, name in enumerate(assignment.piece_names)
@@ -70,6 +81,13 @@ class MappingProposal:
 
         interface_by_edge: dict[tuple[int, int], object] = {}
         for interface in planar_map.interfaces:
+            # A free cut is not the disk exterior and therefore has no dual
+            # graph edge. In a crown, the same tile commonly owns both an
+            # outer-circle arc and an unrelated free inner edge; allowing the
+            # latter to reuse the OUTSIDE key would silently encode the wrong
+            # contour port for the mapping ranker.
+            if interface.is_free:
+                continue
             left = piece_index[interface.left_piece]
             right = (
                 -1
@@ -97,11 +115,12 @@ class MappingProposal:
             cyclic_offsets=tuple(int(value) for value in assignment.cyclic_offsets),
             contour_lengths=tuple(len(sequence) for sequence in assignment.sequences),
             edge_ports=tuple(edge_ports),
+            source_candidate=source_candidate,
         )
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "graph-lab-mapping-proposal-v1",
+            "schema_version": "graph-lab-mapping-proposal-v2",
             "mapping_id": self.mapping_id,
             "candidate": self.candidate.to_dict(),
             "raw_assignment_id": self.raw_assignment_id,
@@ -109,6 +128,11 @@ class MappingProposal:
             "cyclic_offsets": list(self.cyclic_offsets),
             "contour_lengths": list(self.contour_lengths),
             "edge_ports": [list(value) for value in self.edge_ports],
+            "source_candidate": (
+                self.source_candidate.to_dict()
+                if self.source_candidate is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -128,6 +152,11 @@ class MappingProposal:
             edge_ports=tuple(
                 tuple(float(item) for item in value)
                 for value in payload["edge_ports"]  # type: ignore[union-attr]
+            ),
+            source_candidate=(
+                DualGraphCandidate.from_dict(payload["source_candidate"])  # type: ignore[arg-type]
+                if isinstance(payload.get("source_candidate"), Mapping)
+                else None
             ),
         )
 

@@ -449,6 +449,7 @@ def build_dashboard_data(
             ),
             "max_training_bytes": rows[-1].get("max_training_bytes"),
             "training_loss": latest_model.get("training_loss"),
+            "policy_mode": latest_model.get("mode", "learned"),
             "curriculum": latest_model.get("curriculum", {}),
             "pool_coverage": rows[-1].get("pool_coverage", {}),
             "validation_auc_regressions": sum(

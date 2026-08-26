@@ -35,7 +35,9 @@ class CatalogSchematic:
 
 def _outer_cycle(planar_map: PlanarMap) -> tuple[str, ...]:
     outer_vertices = {
-        vertex.name for vertex in planar_map.vertices if vertex.kind == "outer"
+        vertex.name
+        for vertex in planar_map.vertices
+        if vertex.is_outer_boundary
     }
     directed: dict[str, str] = {}
     directed_valid = True
@@ -61,9 +63,40 @@ def _outer_cycle(planar_map: PlanarMap) -> tuple[str, ...]:
             return tuple(order)
 
     if not outer_vertices or any(len(undirected[name]) != 2 for name in outer_vertices):
-        raise ValueError(
-            f"Map {planar_map.name!r} does not expose one simple outer boundary cycle"
-        )
+        # A partial crown owns only an arc of the disk circle.  Its outer arcs
+        # and free cut nevertheless form the closed boundary of the retained
+        # patch, which is the appropriate anchor cycle for a schematic.
+        boundary: dict[str, set[str]] = {}
+        for interface in planar_map.interfaces:
+            if not (interface.is_outer or interface.is_free):
+                continue
+            view = interface.views[0]
+            boundary.setdefault(view.start_vertex, set()).add(view.end_vertex)
+            boundary.setdefault(view.end_vertex, set()).add(view.start_vertex)
+        if len(boundary) < 3 or any(len(values) != 2 for values in boundary.values()):
+            raise ValueError(
+                f"Map {planar_map.name!r} does not expose one simple boundary cycle"
+            )
+        start = min(boundary)
+        order = [start]
+        previous = None
+        current = start
+        while True:
+            choices = sorted(
+                boundary[current] - ({previous} if previous is not None else set())
+            )
+            if not choices:
+                raise ValueError(f"Open partial boundary in map {planar_map.name!r}")
+            following = choices[0]
+            if following == start:
+                break
+            if following in order:
+                raise ValueError(f"Repeated partial boundary in {planar_map.name!r}")
+            order.append(following)
+            previous, current = current, following
+        if set(order) != set(boundary):
+            raise ValueError(f"Disconnected partial boundary in {planar_map.name!r}")
+        return tuple(order)
     start = min(outer_vertices)
     order = [start]
     previous = None
@@ -273,7 +306,7 @@ def build_catalog_schematic(planar_map: PlanarMap) -> CatalogSchematic:
                 for piece in planar_map.pieces
                 if piece.outer_boundary_contact == "point"
                 for vertex in piece.contour_vertices
-                if planar_map.vertex_map()[vertex].kind == "outer"
+                if planar_map.vertex_map()[vertex].is_outer_boundary
             }
         )
     )

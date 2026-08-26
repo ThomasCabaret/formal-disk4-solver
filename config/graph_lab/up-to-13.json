@@ -1,5 +1,8 @@
 {
-  "schema_version": "graph-lab-config-v6",
+  "policy": {
+    "mode": "prior"
+  },
+  "schema_version": "graph-lab-config-v7",
   "output": {
     "directory": "output/graph_lab/up-to-13",
     "max_training_megabytes": 8192
