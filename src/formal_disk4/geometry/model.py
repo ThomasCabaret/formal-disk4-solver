@@ -111,6 +111,20 @@ class FormalPointSpec:
 
 
 @dataclass(frozen=True)
+class FormalStrictAngleConstraint:
+    kind: str
+    terms: Tuple[Tuple[int, float], ...]
+    upper_pi: float
+    sources: Tuple[str, ...]
+
+    def evaluate(self, angles_pi: Sequence[float]) -> float:
+        return sum(
+            coefficient * float(angles_pi[boundary])
+            for boundary, coefficient in self.terms
+        )
+
+
+@dataclass(frozen=True)
 class FormalSegmentOccurrence:
     segment_index: int
     literal: str
@@ -149,6 +163,8 @@ class FormalGeometryProblem:
     points: Tuple[FormalPointSpec, ...]
     segments: Tuple[FormalSegmentOccurrence, ...]
     components: Tuple[FormalCurveComponent, ...]
+    strict_angle_constraints: Tuple[FormalStrictAngleConstraint, ...] = ()
+    prototype_rotation_order: int = 1
 
     @property
     def component_map(self) -> Dict[str, FormalCurveComponent]:
@@ -302,6 +318,13 @@ def parse_formal_geometry_problem(
     cycle = decorated.get("cycle")
     if not isinstance(cycle, Sequence) or not cycle:
         raise ValueError("Decorated contour cycle is empty")
+    prototype_rotation_order = int(profile.get("prototype_rotation_order", 1))
+    if prototype_rotation_order < 1:
+        raise ValueError("prototype_rotation_order must be at least one")
+    if len(cycle) % prototype_rotation_order:
+        raise ValueError(
+            "Decorated contour length is incompatible with prototype rotation order"
+        )
 
     point_witnesses = {}
     raw_points = profile.get("points", [])
@@ -405,6 +428,32 @@ def parse_formal_geometry_problem(
     if missing:
         raise ValueError(f"Missing curve component definitions: {missing}")
 
+    strict_angle_constraints = []
+    raw_angle_constraints = profile.get("angle_equations", [])
+    if isinstance(raw_angle_constraints, Sequence):
+        for item in raw_angle_constraints:
+            if not isinstance(item, Mapping) or item.get("comparison") != "strict_less":
+                continue
+            raw_terms = item.get("terms", [])
+            if not isinstance(raw_terms, Sequence):
+                raise ValueError("Invalid strict angle constraint terms")
+            terms = []
+            for term in raw_terms:
+                if not isinstance(term, Mapping):
+                    raise ValueError("Invalid strict angle constraint term")
+                boundary = int(term["boundary_index"])
+                if not 0 <= boundary < len(points):
+                    raise ValueError("Strict angle constraint references an unknown boundary")
+                terms.append((boundary, float(term["coefficient"])))
+            strict_angle_constraints.append(
+                FormalStrictAngleConstraint(
+                    kind=str(item.get("kind", "strict_angle_bound")),
+                    terms=tuple(terms),
+                    upper_pi=_fraction_float(item.get("rhs_pi")),
+                    sources=tuple(str(value) for value in item.get("sources", [])),
+                )
+            )
+
     map_record = candidate.get("map")
     map_name = (
         str(map_record.get("name"))
@@ -420,6 +469,8 @@ def parse_formal_geometry_problem(
         points=tuple(sorted(points, key=lambda item: item.boundary_index)),
         segments=tuple(sorted(segments, key=lambda item: item.segment_index)),
         components=tuple(components),
+        strict_angle_constraints=tuple(strict_angle_constraints),
+        prototype_rotation_order=prototype_rotation_order,
     )
 
 

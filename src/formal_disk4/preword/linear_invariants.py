@@ -284,6 +284,10 @@ class PrewordLinearInvariantFilter:
         compiled: CompiledWordCase,
         topology: RadiusArcTopologyResult,
     ) -> PrewordLinearInvariantResult:
+        radius_concavity_required = (
+            planar_map.hypotheses.requires_radius_r_concavity
+            and not planar_map.has_free_boundary
+        )
         if not topology.feasible:
             return PrewordLinearInvariantResult(
                 False,
@@ -295,7 +299,7 @@ class PrewordLinearInvariantFilter:
                 False,
                 False,
                 False,
-                planar_map.hypotheses.requires_radius_r_concavity,
+                radius_concavity_required,
                 None,
             )
 
@@ -313,7 +317,7 @@ class PrewordLinearInvariantFilter:
                 metric_audit[0],
                 metric_audit[1],
                 False,
-                planar_map.hypotheses.requires_radius_r_concavity,
+                radius_concavity_required,
                 sqrt_bound,
                 metric.margin,
             )
@@ -330,7 +334,7 @@ class PrewordLinearInvariantFilter:
                 metric_audit[0],
                 metric_audit[1],
                 point_derived,
-                planar_map.hypotheses.requires_radius_r_concavity,
+                radius_concavity_required,
                 sqrt_bound,
                 metric.margin,
                 point.margin,
@@ -346,7 +350,7 @@ class PrewordLinearInvariantFilter:
             metric_audit[0],
             metric_audit[1],
             point_derived,
-            planar_map.hypotheses.requires_radius_r_concavity,
+            radius_concavity_required,
             sqrt_bound,
             metric.margin,
             point.margin,
@@ -385,8 +389,10 @@ class PrewordLinearInvariantFilter:
                 point.margin,
                 point.status,
                 point.exact_certificate_used,
-                len(placement.angle_equations) + 1,
-                2 * placement.interval_count + 1,
+                len(placement.angle_equations),
+                2 * placement.interval_count
+                + len(placement.angle_inequalities)
+                + (0 if planar_map.has_free_boundary else 1),
             )
         )
         return PrewordLinearCurriculumResult(
@@ -633,9 +639,10 @@ class PrewordLinearInvariantFilter:
         radius_equation = LinearConstraint.build(radius_global, 0)
         radius_derived = (
             self.enable_radius_measures
+            and not planar_map.has_free_boundary
             and _AffineRowSpace(width, local_equalities_before_globals).implies(radius_equation)
         )
-        if self.enable_radius_measures:
+        if self.enable_radius_measures and not planar_map.has_free_boundary:
             # FILTER JUSTIFICATION (local): summing radius-R measure over all
             # congruent copies cancels every internal interface with opposite
             # sign; only the physical outer-circle arcs remain.
@@ -659,10 +666,15 @@ class PrewordLinearInvariantFilter:
         smooth_equation = LinearConstraint.build(smooth_global, 0)
         smooth_derived = (
             self.enable_smooth_turns
+            and not planar_map.has_free_boundary
             and planar_map.hypotheses.piecewise_c2_boundary
             and _AffineRowSpace(width, local_equalities_before_globals).implies(smooth_equation)
         )
-        if self.enable_smooth_turns and planar_map.hypotheses.piecewise_c2_boundary:
+        if (
+            self.enable_smooth_turns
+            and planar_map.hypotheses.piecewise_c2_boundary
+            and not planar_map.has_free_boundary
+        ):
             # FILTER JUSTIFICATION (local): total boundary turn is additive;
             # internal interface turns cancel between the two physical sides,
             # while the disk boundary contributes one full positive turn.
@@ -683,6 +695,7 @@ class PrewordLinearInvariantFilter:
         if (
             self.enable_radius_measures
             and planar_map.hypotheses.requires_radius_r_concavity
+            and not planar_map.has_free_boundary
         ):
             # FILTER JUSTIFICATION (theorem):
             # docs/six_structural_results.tex, Theorem 1.3. A Stein center tile
@@ -705,7 +718,7 @@ class PrewordLinearInvariantFilter:
             )
 
         sqrt_bound: Fraction | None = None
-        if self.enable_isoperimetric:
+        if self.enable_isoperimetric and not planar_map.has_free_boundary:
             # FILTER JUSTIFICATION (local): the disk perimeter divided among n
             # congruent copies and the planar isoperimetric inequality imply
             # outer_length <= sqrt(n) * prototype_perimeter. The rational
@@ -773,17 +786,27 @@ class PrewordLinearInvariantFilter:
             values = [Fraction(value) for value in equation.coefficients] + [Fraction(0)]
             equalities.append(LinearConstraint.build(values, Fraction(str(equation.rhs))))
 
+        for constraint in placement.angle_inequalities:
+            values = [Fraction(value) for value in constraint.coefficients] + [Fraction(1)]
+            inequalities.append(
+                LinearConstraint.build(values, Fraction(str(constraint.rhs)))
+            )
+
         tile_count = len(planar_map.pieces)
         global_values = [Fraction(1) for _ in range(point_count)] + [Fraction(0)]
         global_equation = LinearConstraint.build(
             global_values,
             Fraction(2) - Fraction(2, tile_count),
         )
-        derived = _AffineRowSpace(width, equalities).implies(global_equation)
+        derived = (
+            not planar_map.has_free_boundary
+            and _AffineRowSpace(width, equalities).implies(global_equation)
+        )
         if (
             self.enable_point_turns
             and self.enforce_global_point_turn_balance
             and planar_map.hypotheses.piecewise_c2_boundary
+            and not planar_map.has_free_boundary
         ):
             # FILTER JUSTIFICATION (local): the total prototype turn is 2pi;
             # after separating smooth turn, the remaining point turns have the

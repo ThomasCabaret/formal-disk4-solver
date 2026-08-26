@@ -16,6 +16,7 @@ from formal_disk4.words.compile import (
     CompiledWordCase,
     ContactMapping,
     DirectedSegmentRef,
+    TerminalSmoothBoundary,
     TerminalTemplateRelation,
 )
 
@@ -58,9 +59,7 @@ class TemplateTransform:
 
 
 IDENTITY = TemplateTransform()
-REVERSE = TemplateTransform(reverse=True)
 MIRROR = TemplateTransform(mirror=True)
-MIRROR_REVERSE = TemplateTransform(reverse=True, mirror=True)
 
 
 class _SignedUnionFind:
@@ -113,6 +112,7 @@ class AngleEquationRecord:
     rhs_pi: Fraction
     sources: Tuple[str, ...]
     relation: str
+    comparison: str = "equal"
 
 
 @dataclass(frozen=True)
@@ -122,6 +122,7 @@ class AngularEquationRecord:
     rhs_pi: Fraction
     sources: Tuple[str, ...]
     relation: str
+    comparison: str = "equal"
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,13 @@ class OuterArcRecord:
 
 
 @dataclass(frozen=True)
+class FreeBoundaryRecord:
+    name: str
+    piece: str
+    terminal_word: Word
+
+
+@dataclass(frozen=True)
 class DecorationBundle:
     points: Tuple[PointRecord, ...]
     point_classes: Tuple[PointClassRecord, ...]
@@ -222,6 +230,7 @@ class DecorationBundle:
     exact_length_solution: ExactLinearSolution
     template_relations: Tuple[TemplateRelationRecord, ...]
     outer_arcs: Tuple[OuterArcRecord, ...]
+    free_boundaries: Tuple[FreeBoundaryRecord, ...]
     angle_margin: float
     terminal_length_margin: float
     formal_constraints: Tuple[Dict[str, object], ...]
@@ -301,10 +310,18 @@ def _terminal_boundary_sources(
         names = tuple(occurrence_names[item] for item in placement.blocks[atomic_index])
         vertices = {name.split(":", 1)[1] for name in names}
         roles = []
-        if any(vertex_kinds.get(vertex) == "outer" for vertex in vertices):
+        if any(
+            vertex_kinds.get(vertex) in {"outer", "free_outer"}
+            for vertex in vertices
+        ):
             roles.append("outer-map-vertex-occurrence")
         if any(vertex_kinds.get(vertex) == "interior" for vertex in vertices):
             roles.append("interior-map-vertex-occurrence")
+        if any(
+            vertex_kinds.get(vertex) in {"free", "free_outer"}
+            for vertex in vertices
+        ):
+            roles.append("free-boundary-vertex-occurrence")
         sources.append(("map_vertex", atomic_index, names, tuple(roles)))
         for _ in expansion[1:]:
             sources.append(("solver_split", None, (), ("solver-introduced-boundary",)))
@@ -314,6 +331,9 @@ def _terminal_boundary_sources(
 def _exact_strict_witness(
     solution: ExactLinearSolution,
     bounds: Mapping[str, Tuple[Fraction | None, Fraction | None]],
+    strict_upper_bounds: Sequence[
+        Tuple[Mapping[str, int | Fraction], Fraction]
+    ] = (),
 ) -> Tuple[str, Fraction | None, Tuple[Fraction, ...]]:
     """Maximize a common strict margin in an exact affine solution.
 
@@ -352,6 +372,13 @@ def _exact_strict_witness(
             row, constant = expression_row(exact_map[name], scale=-1, delta=1)
             inequalities.append((row, -lower - constant))
 
+    for coefficients, upper in strict_upper_bounds:
+        expression = LinearExpression.value(0)
+        for name, coefficient in coefficients.items():
+            expression = expression + exact_map[name].scale(coefficient)
+        row, constant = expression_row(expression, delta=1)
+        inequalities.append((row, upper - constant))
+
     delta_lower = [Fraction(0) for _ in lp_names]
     delta_lower[index[delta_name]] = Fraction(-1)
     inequalities.append((delta_lower, Fraction(0)))
@@ -388,7 +415,9 @@ def _build_angle_decorations(
     mappings: Sequence[ContactMapping],
     boundary_sources: Sequence[Tuple[str, int | None, Tuple[str, ...], Tuple[str, ...]]],
     outer_arc_internal_boundaries: Sequence[Tuple[str, Tuple[int, ...]]],
+    forced_smooth_boundaries: Sequence[TerminalSmoothBoundary],
     tolerance: float,
+    prototype_rotation_order: int = 1,
 ) -> Tuple[
     Tuple[PointRecord, ...],
     Tuple[PointClassRecord, ...],
@@ -404,6 +433,7 @@ def _build_angle_decorations(
     equation_records: list[AngleEquationRecord] = []
     equation_record_index: Dict[Tuple[object, ...], int] = {}
     exact_equations: list[Tuple[Dict[str, Fraction], Fraction]] = []
+    strict_upper_bounds: list[Tuple[Dict[str, Fraction], Fraction]] = []
     angle_names = tuple(f"alpha_B{index}" for index in range(segment_count))
 
     def add_equation(
@@ -434,6 +464,36 @@ def _build_angle_decorations(
         )
         exact_equations.append(
             ({angle_names[index]: Fraction(coefficient) for index, coefficient in compact}, rhs)
+        )
+
+    def add_strict_upper_bound(
+        kind: str,
+        terms: Mapping[int, int],
+        rhs: Fraction,
+        source: str,
+        relation: str,
+    ) -> None:
+        compact = tuple(
+            sorted((index, coefficient) for index, coefficient in terms.items() if coefficient)
+        )
+        equation_records.append(
+            AngleEquationRecord(
+                kind,
+                compact,
+                rhs,
+                (source,),
+                relation,
+                "strict_less",
+            )
+        )
+        strict_upper_bounds.append(
+            (
+                {
+                    angle_names[index]: Fraction(coefficient)
+                    for index, coefficient in compact
+                },
+                rhs,
+            )
         )
 
     for mapping in mappings:
@@ -500,6 +560,31 @@ def _build_angle_decorations(
                     source,
                     "opposite_signed_turns_at_internal_mapped_point",
                 )
+
+    if prototype_rotation_order > 1:
+        if segment_count % prototype_rotation_order:
+            raise DecorationInfeasible(
+                "prototype_rotational_symmetry",
+                "terminal contour length is not divisible by the imposed order",
+            )
+        sector_length = segment_count // prototype_rotation_order
+        if tuple(terminal_contour) != tuple(terminal_contour[:sector_length]) * prototype_rotation_order:
+            raise DecorationInfeasible(
+                "prototype_rotational_symmetry",
+                "terminal curve-template sequence is not periodic",
+            )
+        for sector_offset in range(sector_length):
+            representative = sector_offset
+            for copy_index in range(1, prototype_rotation_order):
+                image = sector_offset + copy_index * sector_length
+                union.union(representative, image, 1)
+                add_equation(
+                    "prototype_rotation_point_angle_equality",
+                    {representative: 1, image: -1},
+                    Fraction(0),
+                    f"rotation-sector:{sector_offset}:copy{copy_index}",
+                    "corresponding sector boundaries have equal prototype angles",
+                )
     union.normalize()
 
     occurrence_index = {
@@ -521,21 +606,34 @@ def _build_angle_decorations(
             # congruent copy preserves them; no orientation sign belongs in
             # the physical vertex-sum equation.
             terms[boundary_index] += 1
-        rhs = vertex.required_solid_angle_sum_pi
+        rhs = vertex.solid_angle_limit_pi
         nonzero_terms = {index: coefficient for index, coefficient in terms.items() if coefficient}
         if vertex.kind == "outer":
             relation = "incident_piece_angles_sum_to_pi"
         elif vertex.kind == "interior":
             relation = "incident_piece_angles_sum_to_full_turn"
+        elif vertex.kind == "free":
+            relation = "incident_piece_angles_leave_a_strictly_positive_free_sector"
+        elif vertex.kind == "free_outer":
+            relation = "incident_piece_angles_leave_a_strictly_positive_outer_free_sector"
         else:
             relation = "physical_vertex_angle_sum"
-        add_equation(
-            "physical_vertex_angle_sum",
-            nonzero_terms,
-            rhs,
-            vertex.name,
-            relation,
-        )
+        if vertex.solid_angle_relation == "equal":
+            add_equation(
+                "physical_vertex_angle_sum",
+                nonzero_terms,
+                rhs,
+                vertex.name,
+                relation,
+            )
+        else:
+            add_strict_upper_bound(
+                "free_boundary_vertex_angle_bound",
+                nonzero_terms,
+                rhs,
+                vertex.name,
+                relation,
+            )
 
     # A word solution may refine one disk-boundary arc into several terminal
     # segments. Every strict internal split is only a subdivision of the same
@@ -549,6 +647,26 @@ def _build_angle_decorations(
                 f"{outer_name}:internal-boundary{split_index}",
                 "strictly internal disk-boundary subdivision has zero point turn",
             )
+
+    # An endpoint-swapping terminal involution is represented formally as two
+    # half-factors. Their common endpoint is a subdivision point of one smooth
+    # curve, not a free polygonal corner.
+    for boundary in forced_smooth_boundaries:
+        if not 0 <= boundary.boundary_index < segment_count:
+            raise DecorationInfeasible(
+                "point_decorations",
+                "terminal involution midpoint is outside the contour",
+            )
+        add_equation(
+            "terminal_involution_midpoint_smoothness",
+            {boundary.boundary_index: 1},
+            Fraction(1),
+            f"terminal-involution:{boundary.source_variable}",
+            (
+                f"{boundary.transform} fixed factor is split at a smooth "
+                "solver-introduced midpoint"
+            ),
+        )
 
     try:
         exact_solution = solve_exact_linear_system(angle_names, exact_equations)
@@ -580,6 +698,13 @@ def _build_angle_decorations(
         lower[epsilon_index] = 1.0
         a_ub.append(lower)
         b_ub.append(0.0)
+    for coefficients, rhs in strict_upper_bounds:
+        row = [0.0] * variable_count
+        for name, coefficient in coefficients.items():
+            row[angle_names.index(name)] = float(coefficient)
+        row[epsilon_index] = 1.0
+        a_ub.append(row)
+        b_ub.append(float(rhs))
     try:
         result = linprog(
             objective,
@@ -605,6 +730,7 @@ def _build_angle_decorations(
         status, exact_margin, exact_values = _exact_strict_witness(
             exact_solution,
             {name: (Fraction(0), Fraction(2)) for name in angle_names},
+            strict_upper_bounds,
         )
         if status == "infeasible":
             raise DecorationInfeasible(
@@ -737,14 +863,15 @@ def _curve_components(
                 else:
                     symmetries.add(transforms[target].compose(candidate))
         members = tuple(sorted(transforms))
-        if MIRROR in symmetries:
-            mode = "straight"
-        elif REVERSE in symmetries:
-            mode = "half_turn"
-        elif MIRROR_REVERSE in symmetries:
-            mode = "endpoint_swapping_reflection"
-        else:
-            mode = "free"
+        if any(symmetry.reverse for symmetry in symmetries) and MIRROR not in symmetries:
+            raise DecorationInfeasible(
+                "curve_templates",
+                (
+                    f"endpoint-swapping self-identification survived formal "
+                    f"terminal refinement for {representative}"
+                ),
+            )
+        mode = "straight" if MIRROR in symmetries else "free"
         component_index = len(components)
         for variable in members:
             component_by_variable[variable] = component_index
@@ -759,12 +886,18 @@ def _terminal_lengths(
     components: Sequence[Tuple[str, Tuple[str, ...], Dict[str, TemplateTransform], Tuple[TemplateTransform, ...], str]],
     component_by_variable: Mapping[str, int],
     tolerance: float,
+    *,
+    open_outer_boundary: bool = False,
 ) -> Tuple[Tuple[float, ...], float, ExactLinearSolution]:
     count = len(components)
     if count == 0:
         raise DecorationInfeasible("terminal_lengths", "terminal contour has no curve component")
 
-    parameter_names = tuple(f"L_C{index}" for index in range(count))
+    component_parameter_names = tuple(f"L_C{index}" for index in range(count))
+    outer_gap_name = "L_OUTER_GAP"
+    parameter_names = component_parameter_names + (
+        (outer_gap_name,) if open_outer_boundary and compiled.outer_arcs else ()
+    )
     atomic_counts: list[Counter[int]] = []
     for variable in compiled.atomic_variables:
         atomic_counts.append(
@@ -778,7 +911,7 @@ def _terminal_lengths(
             if not atomic_coefficient:
                 continue
             for component_index, multiplicity in atomic_counts[atomic_index].items():
-                coefficients[parameter_names[component_index]] += Fraction(
+                coefficients[component_parameter_names[component_index]] += Fraction(
                     int(atomic_coefficient) * int(multiplicity)
                 )
         compact = {name: value for name, value in coefficients.items() if value}
@@ -792,11 +925,18 @@ def _terminal_lengths(
     if expanded_outer:
         for word in expanded_outer:
             for literal in word:
-                normalization[parameter_names[component_by_variable[literal.variable]]] += 1
+                normalization[
+                    component_parameter_names[component_by_variable[literal.variable]]
+                ] += 1
     else:
         for counts in atomic_counts:
             for component_index, multiplicity in counts.items():
-                normalization[parameter_names[component_index]] += multiplicity
+                normalization[component_parameter_names[component_index]] += multiplicity
+    if open_outer_boundary and expanded_outer:
+        # The represented patch occupies only a proper arc of the unit disk
+        # circle.  This positive slack is the omitted outer-boundary length,
+        # so the retained outer arcs sum to strictly less than one turn.
+        normalization[outer_gap_name] += 1
     if not normalization:
         raise DecorationInfeasible("terminal_lengths", "no length normalization can be constructed")
     exact_equations.append((dict(normalization), Fraction(1)))
@@ -806,8 +946,8 @@ def _terminal_lengths(
     except ExactLinearInfeasible as error:
         raise DecorationInfeasible("terminal_lengths", str(error)) from error
 
-    variable_count = count + 1
-    epsilon_index = count
+    variable_count = len(parameter_names) + 1
+    epsilon_index = len(parameter_names)
     objective = np.zeros(variable_count)
     objective[epsilon_index] = -1.0
     a_eq = []
@@ -820,7 +960,7 @@ def _terminal_lengths(
         b_eq.append(float(rhs))
     a_ub = []
     b_ub = []
-    for index in range(count):
+    for index in range(len(parameter_names)):
         row = [0.0] * variable_count
         row[index] = -1.0
         row[epsilon_index] = 1.0
@@ -866,7 +1006,7 @@ def _terminal_lengths(
                 "terminal_lengths",
                 "disk-normalized terminal curve lengths have zero strict margin",
             )
-        lengths = tuple(float(value) for value in exact_values)
+        lengths = tuple(float(value) for value in exact_values[:count])
         margin = float(exact_margin)
     return lengths, margin, exact_solution
 
@@ -914,6 +1054,7 @@ def _build_joint_angular_feasibility(
     exact_length_solution: ExactLinearSolution,
     expanded_outer: Sequence[Tuple[str, str, Word]],
     piece_orientation_signs: Mapping[str, int],
+    angle_constraints: Sequence[AngleEquationRecord] = (),
     tile_count: int = 1,
     piecewise_c2_boundary: bool = False,
 ) -> JointAngularFeasibility:
@@ -986,6 +1127,24 @@ def _build_joint_angular_feasibility(
             rhs,
             f"point-angle-basis:{index}",
             "existing point-angle equalities",
+        )
+
+    strict_angle_constraints = tuple(
+        item for item in angle_constraints if item.comparison == "strict_less"
+    )
+    for item in strict_angle_constraints:
+        records.append(
+            AngularEquationRecord(
+                kind=item.kind,
+                terms=tuple(
+                    (f"alpha_B{boundary}", Fraction(coefficient))
+                    for boundary, coefficient in item.terms
+                ),
+                rhs_pi=item.rhs_pi,
+                sources=item.sources,
+                relation=item.relation,
+                comparison="strict_less",
+            )
         )
 
     for index, (coefficients, rhs) in enumerate(
@@ -1106,6 +1265,15 @@ def _build_joint_angular_feasibility(
         row_values, constant = expression_row(exact_map[name], scale=-1, delta=1)
         inequalities.append((row_values, -constant))
 
+    for constraint in strict_angle_constraints:
+        expression = LinearExpression.value(0)
+        for boundary, coefficient in constraint.terms:
+            expression = expression + exact_map[f"alpha_B{boundary}"].scale(
+                coefficient
+            )
+        row_values, constant = expression_row(expression, delta=1)
+        inequalities.append((row_values, constraint.rhs_pi - constant))
+
     # -length + delta <= 0.
     for name in length_names:
         row_values, constant = expression_row(exact_map[name], scale=-1, delta=1)
@@ -1172,6 +1340,7 @@ def build_decorations(
     terminal_contour: Word,
     mappings: Sequence[ContactMapping],
     additional_template_relations: Sequence[TerminalTemplateRelation] = (),
+    forced_smooth_boundaries: Sequence[TerminalSmoothBoundary] = (),
     tolerance: float = 1e-9,
 ) -> DecorationBundle:
     boundary_sources = _terminal_boundary_sources(
@@ -1188,7 +1357,9 @@ def build_decorations(
         mappings,
         boundary_sources,
         outer_arc_internal_boundaries,
+        forced_smooth_boundaries,
         tolerance,
+        prototype_rotation_order=compiled.prototype_rotation_order,
     )
 
     raw_relations = _template_relations(
@@ -1202,11 +1373,16 @@ def build_decorations(
         components,
         component_by_variable,
         tolerance,
+        open_outer_boundary=planar_map.has_open_outer_boundary,
     )
 
     expanded_outer = tuple(
         (arc.name, arc.piece, substitute_word(arc.positive_word, environment))
         for arc in compiled.outer_arcs
+    )
+    expanded_free = tuple(
+        (arc.name, arc.piece, substitute_word(arc.positive_word, environment))
+        for arc in compiled.free_arcs
     )
     circular_variables = {
         literal.variable
@@ -1222,6 +1398,7 @@ def build_decorations(
         components=components,
         component_by_variable=component_by_variable,
         exact_angle_solution=exact_angle_solution,
+        angle_constraints=angle_equations,
         exact_length_solution=exact_length_solution,
         expanded_outer=expanded_outer,
         piece_orientation_signs={
@@ -1229,7 +1406,14 @@ def build_decorations(
             for index, name in enumerate(placement.assignment.piece_names)
         },
         tile_count=len(planar_map.pieces),
-        piecewise_c2_boundary=planar_map.hypotheses.piecewise_c2_boundary,
+        # The split global balance used by complete disk tilings does not hold
+        # when an unprescribed free-boundary contribution remains.  The joint
+        # solver then falls back to the intrinsic total winding of one closed
+        # prototype contour.
+        piecewise_c2_boundary=(
+            planar_map.hypotheses.piecewise_c2_boundary
+            and not planar_map.has_free_boundary
+        ),
     )
     joint_expression_map = joint_angular.exact_solution.expression_map()
     joint_witness_map = joint_angular.witness_map()
@@ -1351,7 +1535,35 @@ def build_decorations(
             )
         )
 
+    free_records = tuple(
+        FreeBoundaryRecord(name=name, piece=piece, terminal_word=word)
+        for name, piece, word in expanded_free
+    )
+
     formal_constraints: list[Dict[str, object]] = []
+    if compiled.prototype_rotation_order > 1:
+        sector_length = len(terminal_contour) // compiled.prototype_rotation_order
+        formal_constraints.append(
+            {
+                "kind": "prototype_rotational_symmetry",
+                "order": compiled.prototype_rotation_order,
+                "orientation": "direct",
+                "sector_terminal_segment_count": sector_length,
+                "sector_word": [
+                    literal.to_text() for literal in terminal_contour[:sector_length]
+                ],
+                "contour_relation": (
+                    f"terminal_contour = sector^{compiled.prototype_rotation_order}"
+                ),
+                "point_relation": (
+                    "corresponding sector-boundary interior angles are equal"
+                ),
+                "geometric_meaning": (
+                    "each sector uses the same oriented curve templates, lengths, "
+                    "curve turns, and point turns"
+                ),
+            }
+        )
     formal_constraints.append(
         {
             "kind": "terminal_point_angle_bounds",
@@ -1364,6 +1576,23 @@ def build_decorations(
     )
     formal_constraints.append(
         {
+            "kind": "free_boundary_contract",
+            "interfaces": [
+                {
+                    "name": item.name,
+                    "piece": item.piece,
+                    "terminal_word": [literal.to_text() for literal in item.terminal_word],
+                }
+                for item in free_records
+            ],
+            "rule": (
+                "No contact word, length matching, or outer-circle equation is "
+                "imposed on these boundary factors."
+            ),
+        }
+    )
+    formal_constraints.append(
+        {
             "kind": "terminal_curve_length_positivity",
             "normalization": "disk_circumference = 1",
             "strictly_positive_parameters": [
@@ -1371,38 +1600,67 @@ def build_decorations(
             ],
         }
     )
-    formal_constraints.append(
-        {
-            "kind": "outer_circle_positivity",
-            "strictly_positive_parameters": [
-                "C_disk",
-                *[item.length_parameter for item in outer_records],
-                *[item.turn_parameter for item in outer_records],
-            ],
-        }
-    )
-    formal_constraints.append(
-        {
-            "kind": "outer_circle_total_turn",
-            "unit": "pi",
-            "equation": " + ".join(item.turn_parameter for item in outer_records) + " = 2",
-            "terms": [[item.turn_parameter, 1] for item in outer_records],
-            "rhs": 2,
-            "solved_last_parameter": (
-                f"{outer_records[-1].turn_parameter} = 2 - "
-                + " - ".join(item.turn_parameter for item in outer_records[:-1])
-                if outer_records else None
-            ),
-        }
-    )
-    formal_constraints.append(
-        {
-            "kind": "outer_circle_total_length",
-            "equation": " + ".join(item.length_parameter for item in outer_records) + " = C_disk",
-            "terms": [[item.length_parameter, 1] for item in outer_records],
-            "rhs_parameter": "C_disk",
-        }
-    )
+    if outer_records:
+        formal_constraints.append(
+            {
+                "kind": "outer_circle_positivity",
+                "strictly_positive_parameters": [
+                    "C_disk",
+                    *[item.length_parameter for item in outer_records],
+                    *[item.turn_parameter for item in outer_records],
+                ],
+            }
+        )
+        if planar_map.has_open_outer_boundary:
+            formal_constraints.append(
+                {
+                    "kind": "partial_outer_circle_total_turn",
+                    "unit": "pi",
+                    "inequality": " + ".join(
+                        item.turn_parameter for item in outer_records
+                    ) + " < 2",
+                    "terms": [[item.turn_parameter, 1] for item in outer_records],
+                    "comparison": "strict_less",
+                    "rhs": 2,
+                    "reason": "a positive outer-circle arc is omitted by the free cut",
+                }
+            )
+            formal_constraints.append(
+                {
+                    "kind": "partial_outer_circle_total_length",
+                    "equation": " + ".join(
+                        item.length_parameter for item in outer_records
+                    ) + " + L_OUTER_GAP = C_disk",
+                    "terms": [
+                        *[[item.length_parameter, 1] for item in outer_records],
+                        ["L_OUTER_GAP", 1],
+                    ],
+                    "rhs_parameter": "C_disk",
+                    "strictly_positive_gap": "L_OUTER_GAP",
+                }
+            )
+        else:
+            formal_constraints.append(
+                {
+                    "kind": "outer_circle_total_turn",
+                    "unit": "pi",
+                    "equation": " + ".join(item.turn_parameter for item in outer_records) + " = 2",
+                    "terms": [[item.turn_parameter, 1] for item in outer_records],
+                    "rhs": 2,
+                    "solved_last_parameter": (
+                        f"{outer_records[-1].turn_parameter} = 2 - "
+                        + " - ".join(item.turn_parameter for item in outer_records[:-1])
+                    ),
+                }
+            )
+            formal_constraints.append(
+                {
+                    "kind": "outer_circle_total_length",
+                    "equation": " + ".join(item.length_parameter for item in outer_records) + " = C_disk",
+                    "terms": [[item.length_parameter, 1] for item in outer_records],
+                    "rhs_parameter": "C_disk",
+                }
+            )
     for item in outer_records:
         expression = " + ".join(
             f"{coefficient}*{parameter}" if coefficient != 1 else parameter
@@ -1443,6 +1701,7 @@ def build_decorations(
                 {
                     "kind": equation.kind,
                     "relation": equation.relation,
+                    "comparison": equation.comparison,
                     "sources": list(equation.sources),
                     "terms": [
                         [name, {
@@ -1496,6 +1755,7 @@ def build_decorations(
         exact_length_solution=exact_length_solution,
         template_relations=relation_records,
         outer_arcs=tuple(outer_records),
+        free_boundaries=free_records,
         angle_margin=angle_margin,
         terminal_length_margin=terminal_length_margin,
         formal_constraints=tuple(formal_constraints),

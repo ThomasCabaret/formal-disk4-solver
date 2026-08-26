@@ -155,6 +155,7 @@ def validate_geometry(
     intersection_tolerance: float,
     minimum_area: float,
     minimum_edge_length: float,
+    prototype_rotation_order: int = 1,
 ) -> GeometryValidation:
     if not occurrences:
         checks = (("nonempty_contour", False, "No curve occurrence was generated"),)
@@ -214,7 +215,7 @@ def validate_geometry(
     minimum_distance, intersections = nonadjacent_distances(polyline)
     area = signed_area(polyline)
 
-    checks = (
+    checks = [
         (
             "closed_contour",
             closure_error <= closure_tolerance,
@@ -260,7 +261,80 @@ def validate_geometry(
                 f"tolerance={intersection_tolerance:.3e}"
             ),
         ),
-    )
+    ]
+
+    if prototype_rotation_order > 1:
+        rotational_error = math.inf
+        tangent_rotation_error = math.inf
+        if len(occurrences) % prototype_rotation_order == 0:
+            sector_size = len(occurrences) // prototype_rotation_order
+            theta = 2.0 * math.pi / prototype_rotation_order
+            rotation = np.asarray(
+                (
+                    (math.cos(theta), -math.sin(theta)),
+                    (math.sin(theta), math.cos(theta)),
+                ),
+                dtype=float,
+            )
+            origin = occurrences[0].start_point
+            translation = occurrences[sector_size].start_point - rotation @ origin
+            affine_rotation = np.eye(2, dtype=float)
+            affine_translation = np.zeros(2, dtype=float)
+            errors = []
+            tangent_errors = []
+            for copy_index in range(prototype_rotation_order):
+                for sector_offset in range(sector_size):
+                    source = occurrences[sector_offset]
+                    target = occurrences[copy_index * sector_size + sector_offset]
+                    for source_points, target_points in (
+                        (source.control_points, target.control_points),
+                        (source.sample_points, target.sample_points),
+                    ):
+                        if source_points.shape != target_points.shape:
+                            errors.append(math.inf)
+                            continue
+                        expected = np.asarray(
+                            [affine_rotation @ point + affine_translation for point in source_points]
+                        )
+                        errors.append(float(np.max(np.linalg.norm(expected - target_points, axis=1))))
+                    tangent_errors.extend(
+                        (
+                            abs(
+                                angle_wrap(
+                                    target.start_tangent
+                                    - source.start_tangent
+                                    - copy_index * theta
+                                )
+                            ),
+                            abs(
+                                angle_wrap(
+                                    target.end_tangent
+                                    - source.end_tangent
+                                    - copy_index * theta
+                                )
+                            ),
+                        )
+                    )
+                affine_translation = rotation @ affine_translation + translation
+                affine_rotation = rotation @ affine_rotation
+            rotational_error = max(errors, default=0.0)
+            tangent_rotation_error = max(tangent_errors, default=0.0)
+        symmetry_tolerance = max(closure_tolerance, length_tolerance)
+        symmetry_passed = (
+            rotational_error <= symmetry_tolerance
+            and tangent_rotation_error <= tangent_tolerance
+        )
+        checks.append(
+            (
+                "prototype_rotational_symmetry",
+                symmetry_passed,
+                (
+                    f"order={prototype_rotation_order}, "
+                    f"max_point_error={rotational_error:.3e}, "
+                    f"max_tangent_error={tangent_rotation_error:.3e}"
+                ),
+            )
+        )
     return GeometryValidation(
         passed=all(passed for _name, passed, _detail in checks),
         closure_error=closure_error,
@@ -271,5 +345,5 @@ def validate_geometry(
         minimum_nonadjacent_distance=minimum_distance,
         self_intersection_count=intersections,
         minimum_edge_length=minimum_observed_edge,
-        checks=checks,
+        checks=tuple(checks),
     )

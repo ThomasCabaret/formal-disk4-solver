@@ -1,6 +1,7 @@
 from .api import (
     AssignmentSelection,
     FormalSolverAPI,
+    PlacementSelection,
     SolverAPIRequest,
     SolverAPIResult,
     evaluate_formal_search,
@@ -24,6 +25,7 @@ __all__ = [
     "FilterObservation",
     "FilterReport",
     "FormalSolverAPI",
+    "PlacementSelection",
     "LEARNING_FILTER_IDS",
     "SolverAPIRequest",
     "SolverAPIResult",

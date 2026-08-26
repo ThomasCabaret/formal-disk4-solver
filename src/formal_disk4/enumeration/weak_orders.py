@@ -8,7 +8,11 @@ from itertools import combinations, product
 from math import lcm
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
 
-from formal_disk4.constraints.angle_lp import AngleEquation, AngleFeasibilityOracle
+from formal_disk4.constraints.angle_lp import (
+    AngleEquation,
+    AngleFeasibilityOracle,
+    AngleInequality,
+)
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
@@ -125,6 +129,7 @@ class Placement:
     angle_equations: Tuple[AngleEquation, ...]
     angle_margin: float
     angle_witness: Tuple[float, ...]
+    angle_inequalities: Tuple[AngleInequality, ...] = ()
 
     @property
     def interval_count(self) -> int:
@@ -147,6 +152,10 @@ class Placement:
             "angle_equations": [
                 {"coefficients": list(equation.coefficients), "rhs": equation.rhs}
                 for equation in self.angle_equations
+            ],
+            "angle_inequalities": [
+                {"coefficients": list(item.coefficients), "rhs": item.rhs}
+                for item in self.angle_inequalities
             ],
         }
 
@@ -506,7 +515,9 @@ class WeakOrderEnumerator:
             output.append((interface.name, (views[0], views[1])))
         return tuple(output)
 
-    def _build_vertex_occurrences(self) -> Tuple[Tuple[str, float, Tuple[int, ...]], ...]:
+    def _build_vertex_occurrences(
+        self,
+    ) -> Tuple[Tuple[str, str, float, Tuple[int, ...]], ...]:
         output = []
         for vertex in self.planar_map.vertices:
             occurrences = tuple(
@@ -516,7 +527,8 @@ class WeakOrderEnumerator:
             output.append(
                 (
                     vertex.name,
-                    float(vertex.required_solid_angle_sum_pi),
+                    vertex.solid_angle_relation,
+                    float(vertex.solid_angle_limit_pi),
                     occurrences,
                 )
             )
@@ -577,7 +589,9 @@ class WeakOrderEnumerator:
         self, positions: Sequence[int], block_count: int
     ) -> Tuple[AngleEquation, ...]:
         equations: List[AngleEquation] = []
-        for vertex_name, angle_sum_pi, occurrences in self.vertex_occurrences:
+        for vertex_name, relation, angle_sum_pi, occurrences in self.vertex_occurrences:
+            if relation != "equal":
+                continue
             if any(positions[occurrence_id] < 0 for occurrence_id in occurrences):
                 continue
             coefficients = [0] * block_count
@@ -593,6 +607,24 @@ class WeakOrderEnumerator:
             rhs = float(len(occurrences) - angle_sum_pi)
             equations.append(AngleEquation(tuple(coefficients), rhs))
         return tuple(equations)
+
+    def _resolved_angle_inequalities(
+        self, positions: Sequence[int], block_count: int
+    ) -> Tuple[AngleInequality, ...]:
+        inequalities: List[AngleInequality] = []
+        for _vertex_name, relation, angle_limit_pi, occurrences in self.vertex_occurrences:
+            if relation != "strict_upper":
+                continue
+            if any(positions[occurrence_id] < 0 for occurrence_id in occurrences):
+                continue
+            # sum(alpha_i) < limit, alpha_i = 1 - tau_i, hence
+            # -sum(tau_i) < limit - degree.
+            coefficients = [0] * block_count
+            for occurrence_id in occurrences:
+                coefficients[positions[occurrence_id]] -= 1
+            rhs = float(angle_limit_pi - len(occurrences))
+            inequalities.append(AngleInequality(tuple(coefficients), rhs))
+        return tuple(inequalities)
 
     @staticmethod
     def _transform_blocks(
@@ -1242,11 +1274,17 @@ class WeakOrderEnumerator:
             self._mark_subtree_complete(path, 1)
             return
         angle_equations = self._resolved_angle_equations(positions, block_count)
+        angle_inequalities = self._resolved_angle_inequalities(positions, block_count)
         if self.enable_angle_filter:
             self.event_sink("angle_checks", 1)
             self.event_sink("complete_angle_checks", 1)
         angle_result = (
-            self.angle_oracle.analyze(block_count, angle_equations, need_witness=True)
+            self.angle_oracle.analyze(
+                block_count,
+                angle_equations,
+                need_witness=True,
+                inequalities=angle_inequalities,
+            )
             if self.enable_angle_filter
             else None
         )
@@ -1273,6 +1311,7 @@ class WeakOrderEnumerator:
             angle_equations=angle_equations,
             angle_margin=angle_result.margin if angle_result else 0.0,
             angle_witness=angle_result.turns_pi if angle_result else (),
+            angle_inequalities=angle_inequalities,
         )
         self._placement_id += 1
         self._mark_subtree_complete(path, 1)
@@ -2210,7 +2249,9 @@ class WeakOrderEnumerator:
                 return
 
         angle_equations = self._resolved_angle_equations(positions, block_count)
-        if self.enable_angle_filter and len(angle_equations) > previous_angle_equation_count:
+        angle_inequalities = self._resolved_angle_inequalities(positions, block_count)
+        angle_constraint_count = len(angle_equations) + len(angle_inequalities)
+        if self.enable_angle_filter and angle_constraint_count > previous_angle_equation_count:
             self._set_progress(
                 "angle_lp",
                 path=path,
@@ -2219,7 +2260,11 @@ class WeakOrderEnumerator:
                 positions=positions,
             )
             self.event_sink("angle_checks", 1)
-            angle_result = self.angle_oracle.analyze(block_count, angle_equations)
+            angle_result = self.angle_oracle.analyze(
+                block_count,
+                angle_equations,
+                inequalities=angle_inequalities,
+            )
             # FILTER JUSTIFICATION: exact angle-equation contradiction; see
             # AngleFeasibilityOracle.
             if not angle_result.feasible:
@@ -2236,7 +2281,10 @@ class WeakOrderEnumerator:
                 block_count, length_rows, need_witness=True
             ) if self.enable_length_filter else None
             angle_result = self.angle_oracle.analyze(
-                block_count, angle_equations, need_witness=True
+                block_count,
+                angle_equations,
+                need_witness=True,
+                inequalities=angle_inequalities,
             ) if self.enable_angle_filter else None
             if length_result is not None and not length_result.feasible:
                 self.event_sink("complete_length_rejections", 1)
@@ -2263,6 +2311,7 @@ class WeakOrderEnumerator:
                 angle_equations=angle_equations,
                 angle_margin=angle_result.margin if angle_result else 0.0,
                 angle_witness=angle_result.turns_pi if angle_result else (),
+                angle_inequalities=angle_inequalities,
             )
             yield placement
             self._placement_id += 1
@@ -2291,7 +2340,7 @@ class WeakOrderEnumerator:
                 targets=self.target_counters,
                 block_count=block_count,
                 resolved_length_equations=len(length_rows),
-                resolved_angle_equations=len(angle_equations),
+                resolved_angle_equations=angle_constraint_count,
                 available_mask=available_mask,
             )
             candidate_masks = self._policy_propose_masks(
@@ -2320,10 +2369,12 @@ class WeakOrderEnumerator:
             )
             next_angle_count = len(
                 self._resolved_angle_equations(next_positions, len(next_blocks))
+            ) + len(
+                self._resolved_angle_inequalities(next_positions, len(next_blocks))
             )
             score = (
                 next_length_count - len(length_rows),
-                next_angle_count - len(angle_equations),
+                next_angle_count - angle_constraint_count,
                 mask.bit_count(),
                 -mask,
             )
@@ -2359,7 +2410,7 @@ class WeakOrderEnumerator:
                 next_counters,
                 next_positions,
                 previous_length_equation_count=len(length_rows),
-                previous_angle_equation_count=len(angle_equations),
+                previous_angle_equation_count=angle_constraint_count,
                 path=path + (mask,),
             )
         if not self.stop_predicate():

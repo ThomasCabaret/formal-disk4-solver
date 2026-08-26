@@ -104,6 +104,10 @@ def build_exterior_arc_repetition_constraint(
 
     if not enabled:
         return ExteriorArcRepetitionConstraint(False, "disabled")
+    if planar_map.has_free_boundary:
+        return ExteriorArcRepetitionConstraint(
+            False, "requires_complete_disk_tiling"
+        )
     if not planar_map.hypotheses.center_strictly_inside_one_tile:
         return ExteriorArcRepetitionConstraint(
             False, "requires_stein_center_hypothesis"

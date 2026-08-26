@@ -912,6 +912,7 @@ class ExactPartialWordSolver:
         self,
         limits: SolverLimits,
         stop_predicate: Callable[[], bool] | None = None,
+        family_predicate: Callable[[ExactFormalFamily], bool] | None = None,
     ) -> Iterator[ExactFormalFamily]:
         if self.initial_residual is None:
             self._progress["phase"] = "exact_unsat"
@@ -1066,14 +1067,7 @@ class ExactPartialWordSolver:
                     )
                 )
                 return
-            emitted_signatures.add(signature)
             kind = _family_kind(canonical_map)
-            if kind == "finite":
-                counters.finite_families += 1
-            elif kind == "power":
-                counters.power_families += 1
-            else:
-                counters.nested_power_families += 1
             result = ExactFormalFamily(
                 family_id=family_id,
                 kind=kind,
@@ -1083,6 +1077,21 @@ class ExactPartialWordSolver:
                 residual_graph_nodes=counters.visited_states,
                 validation_assignments=validation_assignments,
             )
+            # An exact downstream structural constraint may reject a complete
+            # family without making it consume the caller's family budget.
+            # The signature is still remembered so another path cannot offer
+            # the same rejected family repeatedly.  When the predicate is
+            # complete for the added constraint, exhaustive search remains an
+            # exact UNSAT certificate for the augmented problem.
+            emitted_signatures.add(signature)
+            if family_predicate is not None and not family_predicate(result):
+                return
+            if kind == "finite":
+                counters.finite_families += 1
+            elif kind == "power":
+                counters.power_families += 1
+            else:
+                counters.nested_power_families += 1
             family_id += 1
             yield result
             if limits.max_families is not None and family_id >= limits.max_families:

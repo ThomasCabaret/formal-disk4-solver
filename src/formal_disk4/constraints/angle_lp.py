@@ -18,6 +18,14 @@ class AngleEquation:
 
 
 @dataclass(frozen=True)
+class AngleInequality:
+    """Strict linear upper bound in signed contour turns, ``a.t < rhs``."""
+
+    coefficients: Tuple[int, ...]
+    rhs: float
+
+
+@dataclass(frozen=True)
 class AngleFeasibilityResult:
     feasible: bool
     margin: float
@@ -79,10 +87,12 @@ class AngleFeasibilityOracle:
     only when transporting signed turns at points strictly inside a mapped
     interface.  At a geometric map vertex the enumerator simply sums all
     incident solid angles: 2*pi for an interior vertex and pi for an outer
-    vertex. These are necessary local winding identities. The only rejection is
-    exact rational inconsistency of those equalities; floating LP failure or an
-    unverified strict margin is conservatively returned as unknown/feasible.
-    This oracle maximizes a common strict margin.
+    vertex.  At a free-boundary vertex their sum is strictly below 2*pi. These
+    are necessary local winding conditions. The only early rejection is exact
+    rational inconsistency of the equalities; floating LP failure, including a
+    possible inequality contradiction, is conservatively returned as
+    unknown/feasible and is certified later by the exact pre-word oracle. This
+    oracle maximizes a common strict margin for useful witnesses.
     """
 
     def __init__(self, tolerance: float = 1e-9) -> None:
@@ -92,7 +102,12 @@ class AngleFeasibilityOracle:
         self.elapsed_seconds = 0.0
         self.lp_seconds = 0.0
         self._cache: dict[
-            Tuple[int, Tuple[Tuple[Tuple[int, ...], float], ...]], AngleFeasibilityResult
+            Tuple[
+                int,
+                Tuple[Tuple[Tuple[int, ...], float], ...],
+                Tuple[Tuple[Tuple[int, ...], float], ...],
+            ],
+            AngleFeasibilityResult,
         ] = {}
 
     def analyze(
@@ -100,10 +115,11 @@ class AngleFeasibilityOracle:
         point_count: int,
         equations: Iterable[AngleEquation],
         need_witness: bool = False,
+        inequalities: Iterable[AngleInequality] = (),
     ) -> AngleFeasibilityResult:
         started = time.perf_counter()
         try:
-            return self._analyze(point_count, equations, need_witness)
+            return self._analyze(point_count, equations, need_witness, inequalities)
         finally:
             self.elapsed_seconds += time.perf_counter() - started
 
@@ -112,6 +128,7 @@ class AngleFeasibilityOracle:
         point_count: int,
         equations: Iterable[AngleEquation],
         need_witness: bool = False,
+        inequalities: Iterable[AngleInequality] = (),
     ) -> AngleFeasibilityResult:
         if point_count <= 0:
             raise ValueError("point_count must be positive")
@@ -121,7 +138,21 @@ class AngleFeasibilityOracle:
                 key=lambda item: (item[0], item[1]),
             )
         )
-        key = (point_count, normalized)
+        normalized_inequalities = tuple(
+            sorted(
+                (
+                    (tuple(inequality.coefficients), float(inequality.rhs))
+                    for inequality in inequalities
+                ),
+                key=lambda item: (item[0], item[1]),
+            )
+        )
+        for coefficients, _rhs in normalized_inequalities:
+            if len(coefficients) != point_count:
+                raise ValueError(
+                    "Angle inequality coefficient count does not match point_count"
+                )
+        key = (point_count, normalized, normalized_inequalities)
         self.calls += 1
         cached = self._cache.get(key)
         if cached is not None:
@@ -163,6 +194,12 @@ class AngleFeasibilityOracle:
             a_ub.append(lower)
             b_ub.append(1.0)
 
+        for coefficients, rhs in normalized_inequalities:
+            # The same optimized epsilon makes both 0 < alpha < 2 and every
+            # free-boundary angular gap strict.
+            a_ub.append(list(coefficients) + [1.0])
+            b_ub.append(rhs)
+
         lp_started = time.perf_counter()
         try:
             try:
@@ -197,7 +234,7 @@ class AngleFeasibilityOracle:
         margin = float(solution.x[epsilon_index])
         turns = tuple(float(value) for value in solution.x[:point_count])
         verified = margin > self.tolerance and self._verify(
-            turns, normalized, margin
+            turns, normalized, normalized_inequalities, margin
         )
         result = AngleFeasibilityResult(
             True,
@@ -214,6 +251,7 @@ class AngleFeasibilityOracle:
         self,
         turns: Sequence[float],
         equations: Sequence[Tuple[Tuple[int, ...], float]],
+        inequalities: Sequence[Tuple[Tuple[int, ...], float]],
         margin: float,
     ) -> bool:
         tolerance = max(self.tolerance * 100.0, 1e-8)
@@ -224,5 +262,12 @@ class AngleFeasibilityOracle:
         for coefficients, rhs in equations:
             residual = sum(coefficient * value for coefficient, value in zip(coefficients, turns))
             if abs(residual - rhs) > tolerance:
+                return False
+        for coefficients, rhs in inequalities:
+            value = sum(
+                coefficient * turn
+                for coefficient, turn in zip(coefficients, turns)
+            )
+            if value > rhs - margin + tolerance:
                 return False
         return True

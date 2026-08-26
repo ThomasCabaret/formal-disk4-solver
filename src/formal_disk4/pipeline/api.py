@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Sequence, Tuple
 
 from formal_disk4.maps.base import PlanarMap
+from formal_disk4.enumeration.weak_orders import Placement
 from formal_disk4.enumeration.weak_policy import WeakOrderBranchPolicy
 from formal_disk4.words.specialization_policy import FamilySpecializationPolicy
 
@@ -41,6 +42,27 @@ class AssignmentSelection:
 
 
 @dataclass(frozen=True)
+class PlacementSelection:
+    """Inject already constructed placements for one map into the kernel.
+
+    This is the clean hand-off used by joint arrangement searches: mapping and
+    weak order are constructed together, while word compilation, pre-word
+    pruning, word solving, decoration, and profile filtering remain shared with
+    the production pipeline.
+    """
+
+    map_name: str
+    placements: Tuple[Placement, ...]
+
+    def __post_init__(self) -> None:
+        normalized = tuple(self.placements)
+        if not normalized:
+            raise ValueError("placements must not be empty")
+        object.__setattr__(self, "map_name", str(self.map_name))
+        object.__setattr__(self, "placements", normalized)
+
+
+@dataclass(frozen=True)
 class SolverAPIRequest:
     """Typed input contract for a production-kernel evaluation.
 
@@ -52,6 +74,7 @@ class SolverAPIRequest:
     config: Mapping[str, Any]
     planar_maps: Tuple[PlanarMap, ...] | None = None
     assignments: Tuple[AssignmentSelection, ...] = ()
+    placements: Tuple[PlacementSelection, ...] = ()
     weak_order_random_seed: int | None = None
     weak_order_branch_policy: WeakOrderBranchPolicy | None = None
     family_specialization_policy: FamilySpecializationPolicy | None = None
@@ -66,6 +89,28 @@ class SolverAPIRequest:
                     f"Duplicate AssignmentSelection for {selection.map_name!r}"
                 )
             result[selection.map_name] = selection.raw_assignment_ids
+        for selection in self.placements:
+            if selection.map_name in result:
+                raise ValueError(
+                    "A map cannot have both AssignmentSelection and "
+                    "PlacementSelection"
+                )
+            result[selection.map_name] = tuple(
+                dict.fromkeys(
+                    placement.assignment.assignment_id
+                    for placement in selection.placements
+                )
+            )
+        return result
+
+    def placements_by_map(self) -> Dict[str, Tuple[Placement, ...]]:
+        result: Dict[str, Tuple[Placement, ...]] = {}
+        for selection in self.placements:
+            if selection.map_name in result:
+                raise ValueError(
+                    f"Duplicate PlacementSelection for {selection.map_name!r}"
+                )
+            result[selection.map_name] = selection.placements
         return result
 
 
@@ -110,6 +155,7 @@ class FormalSolverAPI:
             config,
             planar_maps=request.planar_maps,
             raw_assignment_ids_by_map=request.assignment_ids_by_map(),
+            placements_by_map=request.placements_by_map(),
             collect_assignment_reports=True,
             collect_learning_diagnostics=request.collect_learning_diagnostics,
             collect_profiles=request.collect_profiles,
@@ -136,6 +182,7 @@ def evaluate_formal_search(
     *,
     planar_maps: Sequence[PlanarMap] | None = None,
     assignments: Sequence[AssignmentSelection] = (),
+    placements: Sequence[PlacementSelection] = (),
     weak_order_random_seed: int | None = None,
     weak_order_branch_policy: WeakOrderBranchPolicy | None = None,
     family_specialization_policy: FamilySpecializationPolicy | None = None,
@@ -149,6 +196,7 @@ def evaluate_formal_search(
             config=config,
             planar_maps=(tuple(planar_maps) if planar_maps is not None else None),
             assignments=tuple(assignments),
+            placements=tuple(placements),
             weak_order_random_seed=weak_order_random_seed,
             weak_order_branch_policy=weak_order_branch_policy,
             family_specialization_policy=family_specialization_policy,

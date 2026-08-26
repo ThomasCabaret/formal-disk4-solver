@@ -116,6 +116,33 @@ class ExactPartialSolverTests(unittest.TestCase):
         self.assertEqual(solver.last_summary.status, "interrupted_external_stop")
         self.assertTrue(solver.last_summary.external_stop_reached)
 
+    def test_rejected_families_do_not_consume_accepted_family_budget(self) -> None:
+        solver = ExactPartialWordSolver(
+            (Equation(word("X", "Y"), word("Y", "X")),),
+            ("X", "Y"),
+        )
+        seen = []
+
+        def accept_after_two_rejections(family) -> bool:
+            seen.append(family)
+            return len(seen) >= 3
+
+        families = list(
+            solver.solve(
+                SolverLimits(
+                    max_graph_nodes=500,
+                    max_graph_edges=2_000,
+                    max_families=1,
+                ),
+                family_predicate=accept_after_two_rejections,
+            )
+        )
+
+        self.assertGreaterEqual(len(seen), 3)
+        self.assertEqual(len(families), 1)
+        self.assertEqual(families[0].family_id, 0)
+        self.assertTrue(solver.last_summary.family_limit_reached)
+
     def test_residual_literal_budget_defers_growth_before_canonicalization(self) -> None:
         solver = ExactPartialWordSolver(
             (Equation(word("A", "B"), word("B", "A")),),

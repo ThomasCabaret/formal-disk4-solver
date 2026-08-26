@@ -15,7 +15,7 @@ from .output import atomic_replace
 
 
 CHECKPOINT_SCHEMA_VERSION = 1
-SEARCH_SEMANTICS_VERSION = "formal-contour-search-v17"
+SEARCH_SEMANTICS_VERSION = "formal-contour-search-v18"
 
 
 def _utc_now_text() -> str:

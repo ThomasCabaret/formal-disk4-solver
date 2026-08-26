@@ -11,6 +11,7 @@ from formal_disk4.words.families import ExactFormalFamily, FamilySpecialization
 from .decorations import (
     AngleEquationRecord,
     CurveComponentRecord,
+    FreeBoundaryRecord,
     JointAngularFeasibility,
     OuterArcRecord,
     PointClassRecord,
@@ -65,7 +66,8 @@ def _angle_equation_text(item: AngleEquationRecord) -> str:
         else:
             terms.append(f"{coefficient}*{variable}")
     left = " + ".join(terms).replace("+ -", "- ") or "0"
-    return f"{left} = {fraction_text(item.rhs_pi)}"
+    operator = "<" if item.comparison == "strict_less" else "="
+    return f"{left} {operator} {fraction_text(item.rhs_pi)}"
 
 
 def _joint_angular_dict(item: JointAngularFeasibility) -> Dict[str, object]:
@@ -82,6 +84,7 @@ def _joint_angular_dict(item: JointAngularFeasibility) -> Dict[str, object]:
             {
                 "kind": equation.kind,
                 "relation": equation.relation,
+                "comparison": equation.comparison,
                 "sources": list(equation.sources),
                 "terms": [
                     {"variable": name, "coefficient": fraction_record(coefficient)}
@@ -133,6 +136,8 @@ class FormalProfile:
     placement_id: int
     expected_internal_mapping_count: int
     expected_outer_arc_count: int
+    expected_free_boundary_count: int
+    prototype_rotation_order: int
     family: ExactFormalFamily
     specialization: FamilySpecialization
     atomic_contour: Word
@@ -147,6 +152,7 @@ class FormalProfile:
     template_relations: Tuple[TemplateRelationRecord, ...]
     contact_mappings: Tuple[ContactMapping, ...]
     outer_arcs: Tuple[OuterArcRecord, ...]
+    free_boundaries: Tuple[FreeBoundaryRecord, ...]
     formal_constraints: Tuple[Dict[str, object], ...]
     placement_length_margin: float
     placement_angle_margin: float
@@ -231,6 +237,7 @@ class FormalProfile:
                     "kind": item.kind,
                     "sources": list(item.sources),
                     "relation": item.relation,
+                    "comparison": item.comparison,
                     "equation": _angle_equation_text(item),
                     "terms": [
                         {"boundary_index": boundary, "coefficient": coefficient}
@@ -253,6 +260,8 @@ class FormalProfile:
             "placement_id": self.placement_id,
             "expected_internal_mapping_count": self.expected_internal_mapping_count,
             "expected_outer_arc_count": self.expected_outer_arc_count,
+            "expected_free_boundary_count": self.expected_free_boundary_count,
+            "prototype_rotation_order": self.prototype_rotation_order,
             "word_family": self.family.to_dict(),
             "specialization": self.specialization.to_dict(),
             "atomic_contour": word_to_text(self.atomic_contour),
@@ -315,6 +324,7 @@ class FormalProfile:
                     "kind": item.kind,
                     "sources": list(item.sources),
                     "relation": item.relation,
+                    "comparison": item.comparison,
                     "equation": _angle_equation_text(item),
                     "terms": [
                         {"boundary_index": boundary, "coefficient": coefficient}
@@ -323,6 +333,15 @@ class FormalProfile:
                     "rhs_pi": fraction_record(item.rhs_pi),
                 }
                 for item in self.angle_equations
+            ],
+            "free_boundaries": [
+                {
+                    "name": item.name,
+                    "piece": item.piece,
+                    "terminal_word": word_to_text(item.terminal_word),
+                    "constraint": "unconstrained_boundary_curve",
+                }
+                for item in self.free_boundaries
             ],
             "exact_angle_solution": self.exact_angle_solution.to_dict(),
             "joint_angular_feasibility": _joint_angular_dict(self.joint_angular_feasibility),

@@ -44,16 +44,19 @@ def build_formal_profile(
         terminal_contour=terminal_contour,
         mappings=mappings,
         additional_template_relations=terminal_system.template_relations,
+        forced_smooth_boundaries=terminal_system.forced_smooth_boundaries,
         tolerance=tolerance,
     )
 
     return FormalProfile(
-        schema_version="formal-contour-profile-v6",
+        schema_version="formal-contour-profile-v8",
         map_name=planar_map.name,
         assignment_id=placement.assignment.assignment_id,
         placement_id=placement.placement_id,
         expected_internal_mapping_count=len(planar_map.internal_interfaces()),
         expected_outer_arc_count=len(planar_map.outer_interfaces()),
+        expected_free_boundary_count=len(planar_map.free_interfaces()),
+        prototype_rotation_order=compiled.prototype_rotation_order,
         family=family,
         specialization=specialization,
         atomic_contour=compiled.contour_word,
@@ -68,6 +71,7 @@ def build_formal_profile(
         template_relations=decorations.template_relations,
         contact_mappings=mappings,
         outer_arcs=decorations.outer_arcs,
+        free_boundaries=decorations.free_boundaries,
         formal_constraints=decorations.formal_constraints,
         placement_length_margin=placement.length_margin,
         placement_angle_margin=placement.angle_margin,

@@ -4,7 +4,7 @@ import hashlib
 import json
 import sys
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import threading
 import time
 import traceback
@@ -21,6 +21,7 @@ from formal_disk4.enumeration.assignments import (
 )
 from formal_disk4.enumeration.mapping_subdomain import MappingSubdomain
 from formal_disk4.enumeration.weak_orders import (
+    Placement,
     WeakOrderEnumerator,
     count_weak_orders_for_lengths,
 )
@@ -37,7 +38,11 @@ from formal_disk4.preword import (
     PrewordPruningPipeline,
     RadiusArcTopologyFilter,
 )
-from formal_disk4.words.compile import compile_word_case
+from formal_disk4.words.compile import (
+    TerminalMappingInfeasible,
+    compile_word_case,
+    refine_mirror_compatible_terminal_environment,
+)
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 from formal_disk4.words.specialization_policy import (
@@ -49,6 +54,29 @@ from formal_disk4.words.specialization_policy import (
 
 from .checkpoint import CheckpointStore, search_fingerprint
 from .heartbeat import HeartbeatReporter
+
+
+def _decoration_rejection_category(error: DecorationInfeasible) -> str:
+    """Keep rejection diagnostics bounded while preserving the mathematical cause."""
+
+    reason = error.reason
+    if reason.startswith("non-contiguous left mapping"):
+        return "noncontiguous_left_mapping"
+    if reason.startswith("non-contiguous right mapping"):
+        return "noncontiguous_right_mapping"
+    if "terminal contour length is not divisible" in reason:
+        return "prototype_period_divisibility"
+    if "terminal curve-template sequence is not periodic" in reason:
+        return "prototype_sequence_not_periodic"
+    if "infeasible terminal angle system" in reason:
+        return "infeasible_terminal_angle_system"
+    if "terminal angle system has zero strict margin" in reason:
+        return "zero_terminal_angle_margin"
+    if "inconsistent" in reason:
+        return "inconsistent_exact_system"
+    if "exact terminal angle LP status" in reason:
+        return "unexpected_terminal_angle_status"
+    return "other"
 from .filter_report import AssignmentFilterEvaluation, FilterReport
 from .output import JsonlWriter, NullJsonlWriter, atomic_write_json
 from .stats import RunStats
@@ -90,6 +118,40 @@ class MapContext:
         return self.assignment_count * self.mass_per_assignment
 
 
+class _ProvidedPlacementEnumerator:
+    """Weak-order-enumerator interface for joint-search placements."""
+
+    def __init__(self, placements: Sequence[Placement]) -> None:
+        self._placements = tuple(placements)
+        self._processed = 0
+
+    @property
+    def processed_leaf_mass(self) -> int:
+        return self._processed
+
+    @property
+    def total_leaf_mass(self) -> int:
+        return len(self._placements)
+
+    def progress_snapshot(self) -> Dict[str, object]:
+        return {
+            "phase": "provided_joint_arrangements",
+            "processed_leaf_mass": self._processed,
+            "total_leaf_mass": len(self._placements),
+        }
+
+    def checkpoint_state(self) -> Dict[str, object]:
+        return {
+            "provided_joint_arrangements": True,
+            "processed_leaf_mass": self._processed,
+        }
+
+    def enumerate(self):
+        for placement in self._placements:
+            yield placement
+            self._processed += 1
+
+
 class SolverRunner:
     def __init__(
         self,
@@ -97,6 +159,7 @@ class SolverRunner:
         *,
         planar_maps: Sequence[PlanarMap] | None = None,
         raw_assignment_ids_by_map: Mapping[str, Sequence[int]] | None = None,
+        placements_by_map: Mapping[str, Sequence[Placement]] | None = None,
         collect_assignment_reports: bool = False,
         collect_learning_diagnostics: bool = False,
         collect_profiles: bool = False,
@@ -111,6 +174,10 @@ class SolverRunner:
         self._raw_assignment_ids_by_map = {
             str(map_name): tuple(int(item) for item in assignment_ids)
             for map_name, assignment_ids in (raw_assignment_ids_by_map or {}).items()
+        }
+        self._provided_placements_by_map = {
+            str(map_name): tuple(placements)
+            for map_name, placements in (placements_by_map or {}).items()
         }
         self._collect_assignment_reports = bool(collect_assignment_reports)
         self._collect_learning_diagnostics = bool(collect_learning_diagnostics)
@@ -211,6 +278,14 @@ class SolverRunner:
         ):
             raise ValueError(
                 "External Lab traversal policies require checkpoint.enabled=false"
+            )
+        unknown_placement_maps = set(self._provided_placements_by_map) - set(
+            configured_map_names
+        )
+        if unknown_placement_maps:
+            raise ValueError(
+                "Placement selections name maps outside config['maps']: "
+                + ", ".join(sorted(unknown_placement_maps))
             )
         checkpoint_path = self.output_directory / str(
             checkpoint_config.get("file", "checkpoint.sqlite3")
@@ -1298,7 +1373,15 @@ class SolverRunner:
                                 topology_config.get("max_intervals", 1024)
                             ),
                         )
-                    weak_orders = WeakOrderEnumerator(
+                    provided = tuple(
+                        placement
+                        for placement in self._provided_placements_by_map.get(
+                            planar_map.name, ()
+                        )
+                        if placement.assignment.assignment_id
+                        == assignment.assignment_id
+                    )
+                    weak_orders = _ProvidedPlacementEnumerator(provided) if provided else WeakOrderEnumerator(
                         planar_map=planar_map,
                         assignment=assignment,
                         occurrence_names=assignment_enumerator.occurrence_names,
@@ -1427,6 +1510,10 @@ class SolverRunner:
                     placement_started = time.perf_counter()
 
                     for placement in weak_orders.enumerate():
+                        if isinstance(weak_orders, _ProvidedPlacementEnumerator):
+                            self.stats.increment("placement_nodes")
+                            self.stats.increment("surviving_placements")
+                            self.stats.increment("provided_joint_arrangements")
                         self.stats.add_time(
                             "placement_enumeration",
                             time.perf_counter() - placement_started,
@@ -1702,6 +1789,74 @@ class SolverRunner:
 
                         placement_context["word_budget_seconds"] = word_budget_seconds
                         self._set_stage("word_solver_initialization", **placement_context)
+                        compatible_specialization_cache: Dict[
+                            object, Tuple[int, Tuple[object, ...]]
+                        ] = {}
+
+                        def compatible_specializations(
+                            family: object,
+                        ) -> Tuple[int, Tuple[object, ...]]:
+                            cached = compatible_specialization_cache.get(family)
+                            if cached is not None:
+                                return cached
+                            raw = tuple(expand_family(family, expansion_policy))
+                            compatible = []
+                            for specialization in raw:
+                                self.stats.increment(
+                                    "mirror_involution_specialization_checks"
+                                )
+                                try:
+                                    refined = (
+                                        refine_mirror_compatible_terminal_environment(
+                                            specialization.environment_map(),
+                                            compiled.mirror_variables,
+                                        )
+                                    )
+                                except TerminalMappingInfeasible:
+                                    self.stats.increment(
+                                        "mirror_involution_incompatible_specializations"
+                                    )
+                                    continue
+                                environment = tuple(
+                                    (variable, refined[variable])
+                                    for variable, _word in specialization.environment
+                                )
+                                if environment != specialization.environment:
+                                    self.stats.increment(
+                                        "mirror_involution_refined_specializations"
+                                    )
+                                    specialization = replace(
+                                        specialization,
+                                        environment=environment,
+                                    )
+                                self.stats.increment(
+                                    "mirror_involution_compatible_specializations"
+                                )
+                                compatible.append(specialization)
+                            result = (len(raw), tuple(compatible))
+                            # Rejected families are never yielded, so retaining
+                            # thousands of their symbolic environments until
+                            # the placement ends would only waste memory.
+                            if not raw or compatible:
+                                compatible_specialization_cache[family] = result
+                            return result
+
+                        def mirror_family_admissible(family: object) -> bool:
+                            raw_count, compatible = compatible_specializations(family)
+                            # A symbolic family outside the configured expansion
+                            # domain is retained: rejecting it would turn a
+                            # deliberately unexpanded branch into a false UNSAT
+                            # statement. Concrete families are budgeted only
+                            # after the exact mirror-length constraint passes.
+                            if raw_count == 0:
+                                return True
+                            if compatible:
+                                return True
+                            self.stats.increment(
+                                "mirror_involution_incompatible_families"
+                            )
+                            return False
+
                         solver = ExactPartialWordSolver(
                             compiled.effective_solver_equations,
                             compiled.solver_variables,
@@ -1717,6 +1872,7 @@ class SolverRunner:
                                 solver.solve(
                                     solver_limits,
                                     stop_predicate=should_stop_word_case,
+                                    family_predicate=mirror_family_admissible,
                                 )
                             )
                             def register_family(family: object) -> None:
@@ -1771,6 +1927,11 @@ class SolverRunner:
                                     self.stats.increment("profile_emission_rejections")
                                     self.stats.increment(
                                         f"decoration_rejection_{error.stage}"
+                                    )
+                                    self.stats.increment(
+                                        "decoration_rejection_reason_"
+                                        f"{error.stage}_"
+                                        f"{_decoration_rejection_category(error)}"
                                     )
                                     return SpecializationOutcomeView(
                                         False,
@@ -1952,8 +2113,8 @@ class SolverRunner:
                                     if family is None:
                                         break
                                     register_family(family)
-                                    specializations = tuple(
-                                        expand_family(family, expansion_policy)
+                                    _raw_count, specializations = (
+                                        compatible_specializations(family)
                                     )
                                     if not specializations:
                                         self.stats.increment("families_not_specialized")
@@ -1973,8 +2134,8 @@ class SolverRunner:
                                     families.append(family)
                                 candidates = []
                                 for family in families:
-                                    specializations = tuple(
-                                        expand_family(family, expansion_policy)
+                                    _raw_count, specializations = (
+                                        compatible_specializations(family)
                                     )
                                     if not specializations:
                                         self.stats.increment("families_not_specialized")

@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Mapping, Sequence, Tuple
 
 import numpy as np
@@ -125,6 +125,7 @@ class _BuiltGeometry:
     target_angles: Tuple[float, ...]
     occurrences: Tuple[OccurrenceGeometry, ...]
     final_tangent_after_closure_vertex: float
+    prototype_rotation_order: int
 
 
 class _CandidateTimeout(RuntimeError):
@@ -567,6 +568,40 @@ class NumericalContourSolver:
             intersection_tolerance=self.config.intersection_tolerance,
             minimum_area=self.config.minimum_area,
             minimum_edge_length=self.config.minimum_sample_edge_length,
+            prototype_rotation_order=built.prototype_rotation_order,
+        )
+
+    def _validate_formal_constraints(
+        self,
+        problem: FormalGeometryProblem,
+        built: _BuiltGeometry,
+        validation,
+    ):
+        if not problem.strict_angle_constraints:
+            return validation
+        angles_pi = tuple(value / math.pi for value in built.target_angles)
+        checks = list(validation.checks)
+        strict_passed = True
+        details = []
+        for constraint in problem.strict_angle_constraints:
+            value = constraint.evaluate(angles_pi)
+            gap = constraint.upper_pi - value
+            passed = gap > self.config.angle_tolerance
+            strict_passed = strict_passed and passed
+            details.append(
+                f"{constraint.kind}:value={value:.9g},upper={constraint.upper_pi:.9g},gap={gap:.3e}"
+            )
+        checks.append(
+            (
+                "formal_strict_angle_bounds",
+                strict_passed,
+                "; ".join(details),
+            )
+        )
+        return replace(
+            validation,
+            passed=validation.passed and strict_passed,
+            checks=tuple(checks),
         )
 
     def _build_layout(self, problem: FormalGeometryProblem) -> _ParameterLayout:
@@ -859,6 +894,7 @@ class NumericalContourSolver:
             target_angles=target_angles,
             occurrences=tuple(occurrences),
             final_tangent_after_closure_vertex=current_tangent,
+            prototype_rotation_order=problem.prototype_rotation_order,
         )
 
     def _closure_residual(
@@ -889,6 +925,15 @@ class NumericalContourSolver:
             angle_pi = point.angle_pi.evaluate(formal_values)
             residuals.append(positivity_weight * max(0.0, 1e-7 - angle_pi))
             residuals.append(positivity_weight * max(0.0, angle_pi - (2.0 - 1e-7)))
+        angles_pi = tuple(
+            point.angle_pi.evaluate(formal_values) for point in problem.points
+        )
+        for constraint in problem.strict_angle_constraints:
+            value = constraint.evaluate(angles_pi)
+            residuals.append(
+                positivity_weight
+                * max(0.0, value - (constraint.upper_pi - 1e-7))
+            )
         for component in problem.components:
             length = component.length.evaluate(formal_values)
             residuals.append(
@@ -982,7 +1027,8 @@ class NumericalContourSolver:
             vector,
             arc_sample_count=self.config.arc_sample_count,
         )
-        return self._validate_built(built), built
+        validation = self._validate_built(built)
+        return self._validate_formal_constraints(problem, built, validation), built
 
     def _refine_closed_geometry(
         self,

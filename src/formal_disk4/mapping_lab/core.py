@@ -825,6 +825,9 @@ class CompleteMappingEvaluator:
         angle_equations = self.enumerator._resolved_angle_equations(
             positions, block_count
         )
+        angle_inequalities = self.enumerator._resolved_angle_inequalities(
+            positions, block_count
+        )
         placement = Placement(
             placement_id=-1,
             assignment=self.space.assignment,
@@ -836,6 +839,7 @@ class CompleteMappingEvaluator:
             angle_equations=angle_equations,
             angle_margin=0.0,
             angle_witness=(),
+            angle_inequalities=angle_inequalities,
         )
         compiled = compile_word_case(self.space.planar_map, placement)
         topology = self.preword.topology_filter.analyze(
@@ -1026,8 +1030,14 @@ class CompleteMappingEvaluator:
         angle_equations = self.enumerator._resolved_angle_equations(
             positions, block_count
         )
+        angle_inequalities = self.enumerator._resolved_angle_inequalities(
+            positions, block_count
+        )
         angle = self.enumerator.angle_oracle.analyze(
-            block_count, angle_equations, need_witness=True
+            block_count,
+            angle_equations,
+            need_witness=True,
+            inequalities=angle_inequalities,
         )
         placement = Placement(
             placement_id=-1,
@@ -1040,6 +1050,7 @@ class CompleteMappingEvaluator:
             angle_equations=angle_equations,
             angle_margin=angle.margin,
             angle_witness=angle.turns_pi,
+            angle_inequalities=angle_inequalities,
         )
         compiled = compile_word_case(self.space.planar_map, placement)
         preword = self.preword.analyze(

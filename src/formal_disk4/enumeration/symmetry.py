@@ -232,7 +232,10 @@ class MappingSymmetryQuotient:
                     f"Automorphism {automorphism.name} splits interface {interface.name}"
                 )
             target = interface_by_name[next(iter(target_names))]
-            if interface.is_outer != target.is_outer:
+            if (
+                interface.is_outer != target.is_outer
+                or interface.is_free != target.is_free
+            ):
                 raise ValueError(
                     f"Automorphism {automorphism.name} changes interface type of "
                     f"{interface.name}"

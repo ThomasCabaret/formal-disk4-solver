@@ -53,11 +53,21 @@ class PositiveTerminalLengthFilter:
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
         analysis = profile.joint_angular_feasibility
         witness = analysis.witness_map()
-        names = analysis.length_variables
-        if not profile.curve_components or len(names) != len(profile.curve_components):
+        component_names = tuple(
+            component.length_parameter for component in profile.curve_components
+        )
+        if not component_names:
             return False, "missing terminal component length"
-        if any(name not in witness or witness[name] <= 0 for name in names):
+        if any(name not in witness or witness[name] <= 0 for name in component_names):
             return False, "missing or nonpositive exact terminal component length"
+        # Auxiliary normalized lengths (currently the omitted disk-boundary
+        # slack of an open patch) are also part of the certified strict witness,
+        # but do not correspond to a terminal curve component.
+        if any(
+            name not in witness or witness[name] <= 0
+            for name in analysis.length_variables
+        ):
+            return False, "missing or nonpositive auxiliary exact length"
         return True, "pass:exact"
 
 
@@ -149,6 +159,8 @@ class OuterCircleDecorationFilter:
 
     def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
         expected = profile.expected_outer_arc_count
+        if expected == 0 and profile.expected_free_boundary_count:
+            return True, "not_applicable:no retained disk-circle boundary"
         if len(profile.outer_arcs) != expected:
             return False, (
                 f"expected {expected} outer circle arcs, "
@@ -159,18 +171,46 @@ class OuterCircleDecorationFilter:
         circular_components = {item.component_id for item in profile.curve_components if item.circular}
         if not circular_components:
             return False, "no terminal curve component marked as disk-circle arc"
-        required_kinds = {
+        common_kinds = {
             "outer_circle_positivity",
-            "outer_circle_total_turn",
-            "outer_circle_total_length",
             "outer_arc_length_definition",
             "common_circle_length_turn_relation",
         }
         present = {str(item.get("kind")) for item in profile.formal_constraints}
-        missing = sorted(required_kinds - present)
+        partial_kinds = {
+            "partial_outer_circle_total_turn",
+            "partial_outer_circle_total_length",
+        }
+        complete_kinds = {
+            "outer_circle_total_turn",
+            "outer_circle_total_length",
+        }
+        total_kinds = partial_kinds if partial_kinds.issubset(present) else complete_kinds
+        missing = sorted((common_kinds | total_kinds) - present)
         if missing:
             return False, "missing circle constraints: " + ", ".join(missing)
         return True, "pass"
+
+
+class FreeBoundaryDecorationFilter:
+    """INTEGRITY FILTER: preserve each declared unconstrained boundary factor."""
+
+    name = "free_boundary_decorations"
+
+    def apply(self, profile: FormalProfile) -> Tuple[bool, str]:
+        expected = profile.expected_free_boundary_count
+        if len(profile.free_boundaries) != expected:
+            return False, (
+                f"expected {expected} free boundary factors, "
+                f"got {len(profile.free_boundaries)}"
+            )
+        if any(not item.terminal_word for item in profile.free_boundaries):
+            return False, "empty free boundary factor"
+        if expected:
+            kinds = {str(item.get("kind")) for item in profile.formal_constraints}
+            if "free_boundary_contract" not in kinds:
+                return False, "missing free boundary contract"
+        return True, "pass" if expected else "not_applicable"
 
 
 class DeferredSubsumptionFilter:
@@ -215,6 +255,7 @@ class ProfileFilterPipeline:
             MappingCoverageFilter(),
             CurveTemplateCompatibilityFilter(),
             OuterCircleDecorationFilter(),
+            FreeBoundaryDecorationFilter(),
         ])
         if enable_subsumption_hook:
             self.filters.append(DeferredSubsumptionFilter())

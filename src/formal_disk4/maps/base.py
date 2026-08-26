@@ -21,9 +21,47 @@ class Occurrence:
 @dataclass(frozen=True)
 class VertexSpec:
     name: str
-    kind: str  # "interior" or "outer"
+    kind: str  # "interior", "outer", "free", or "free_outer"
     incident_pieces: Tuple[str, ...]
     angle_sum_pi: float
+
+    @property
+    def solid_angle_relation(self) -> str:
+        """Relation imposed on the incident positive polygon angles.
+
+        A complete disk tiling fills either a full or a half neighbourhood.
+        A vertex on a cut/free boundary need only leave a non-empty angular
+        sector for the omitted part of the tiling.
+        """
+        if self.kind in {"interior", "outer"}:
+            return "equal"
+        if self.kind in {"free", "free_outer"}:
+            return "strict_upper"
+        raise ValueError(f"Unknown map-vertex kind: {self.kind}")
+
+    @property
+    def solid_angle_limit_pi(self) -> Fraction:
+        if self.kind == "interior":
+            return Fraction(2)
+        if self.kind == "outer":
+            return Fraction(1)
+        if self.kind == "free":
+            return Fraction(2)
+        if self.kind == "free_outer":
+            return Fraction(1)
+        raise ValueError(f"Unknown map-vertex kind: {self.kind}")
+
+    @property
+    def is_outer_boundary(self) -> bool:
+        """Whether the geometric point lies on the fixed disk circle."""
+
+        return self.kind in {"outer", "free_outer"}
+
+    @property
+    def is_free_boundary(self) -> bool:
+        """Whether omitted material leaves a positive angular sector."""
+
+        return self.kind in {"free", "free_outer"}
 
     @property
     def required_solid_angle_sum_pi(self) -> Fraction:
@@ -33,11 +71,12 @@ class VertexSpec:
         interior junction fills a full neighbourhood and an outer junction
         fills a half-neighbourhood bounded by the disk tangent.
         """
-        if self.kind == "interior":
-            return Fraction(2)
-        if self.kind == "outer":
-            return Fraction(1)
-        raise ValueError(f"Unknown map-vertex kind: {self.kind}")
+        if self.solid_angle_relation != "equal":
+            raise ValueError(
+                f"Map vertex {self.name!r} has no required angle equality; "
+                f"kind={self.kind!r} imposes a strict upper bound"
+            )
+        return self.solid_angle_limit_pi
 
 
 @dataclass(frozen=True)
@@ -90,13 +129,27 @@ class InterfaceSpec:
     right_piece: str | None
     views: Tuple[InterfaceView, ...]
     is_outer: bool = False
+    is_free: bool = False
 
     def __post_init__(self) -> None:
+        if self.is_outer and self.is_free:
+            raise ValueError("An interface cannot be both outer-circle and free")
         if self.is_outer:
             if self.right_piece is not None or len(self.views) != 1:
                 raise ValueError("An outer interface must have exactly one piece view")
+        elif self.is_free:
+            if self.right_piece is not None or len(self.views) != 1:
+                raise ValueError("A free interface must have exactly one piece view")
         elif self.right_piece is None or len(self.views) != 2:
             raise ValueError("An internal interface must have exactly two piece views")
+
+    @property
+    def boundary_kind(self) -> str:
+        if self.is_outer:
+            return "outer_circle"
+        if self.is_free:
+            return "free"
+        return "internal"
 
 
 @dataclass(frozen=True)
@@ -148,6 +201,8 @@ class PlanarMap:
     automorphisms: Tuple[MapAutomorphism, ...]
     reference_piece: str
     hypotheses: ProblemHypotheses = ProblemHypotheses()
+    prototype_rotation_order: int = 1
+    outer_boundary_is_complete: bool = True
 
     def piece_map(self) -> Dict[str, PieceSpec]:
         return {piece.name: piece for piece in self.pieces}
@@ -156,10 +211,27 @@ class PlanarMap:
         return {vertex.name: vertex for vertex in self.vertices}
 
     def internal_interfaces(self) -> Tuple[InterfaceSpec, ...]:
-        return tuple(interface for interface in self.interfaces if not interface.is_outer)
+        return tuple(
+            interface
+            for interface in self.interfaces
+            if not interface.is_outer and not interface.is_free
+        )
 
     def outer_interfaces(self) -> Tuple[InterfaceSpec, ...]:
         return tuple(interface for interface in self.interfaces if interface.is_outer)
+
+    def free_interfaces(self) -> Tuple[InterfaceSpec, ...]:
+        return tuple(interface for interface in self.interfaces if interface.is_free)
+
+    @property
+    def has_free_boundary(self) -> bool:
+        return bool(self.free_interfaces())
+
+    @property
+    def has_open_outer_boundary(self) -> bool:
+        """Whether retained outer arcs cover only a proper part of the disk circle."""
+
+        return not self.outer_boundary_is_complete
 
     def occurrences(self) -> Tuple[Occurrence, ...]:
         return tuple(
@@ -171,6 +243,14 @@ class PlanarMap:
     def validate(self) -> None:
         pieces = self.piece_map()
         vertices = self.vertex_map()
+        if isinstance(self.prototype_rotation_order, bool) or not isinstance(
+            self.prototype_rotation_order, int
+        ):
+            raise ValueError("prototype_rotation_order must be an integer")
+        if self.prototype_rotation_order < 1:
+            raise ValueError("prototype_rotation_order must be at least one")
+        if not isinstance(self.outer_boundary_is_complete, bool):
+            raise ValueError("outer_boundary_is_complete must be boolean")
         if self.reference_piece not in pieces:
             raise ValueError("Unknown reference piece")
 
@@ -189,7 +269,16 @@ class PlanarMap:
 
         outer_interface_count = {piece.name: 0 for piece in self.pieces}
         edge_views: Dict[Tuple[str, frozenset[str]], str] = {}
+        edge_boundary_kinds: Dict[Tuple[str, frozenset[str]], str] = {}
         for interface in self.interfaces:
+            declared_pieces = {interface.left_piece}
+            if interface.right_piece is not None:
+                declared_pieces.add(interface.right_piece)
+            viewed_pieces = {view.piece for view in interface.views}
+            if declared_pieces != viewed_pieces:
+                raise ValueError(
+                    f"Interface {interface.name} piece incidence does not match its views"
+                )
             if interface.is_outer:
                 outer_interface_count[interface.views[0].piece] += 1
             for view in interface.views:
@@ -204,10 +293,13 @@ class PlanarMap:
                 if key in edge_views:
                     raise ValueError(f"Piece edge reused by {interface.name}")
                 edge_views[key] = interface.name
+                edge_boundary_kinds[key] = interface.boundary_kind
 
         for piece in self.pieces:
             outer_vertex_count = sum(
-                1 for vertex in piece.contour_vertices if vertices[vertex].kind == "outer"
+                1
+                for vertex in piece.contour_vertices
+                if vertices[vertex].is_outer_boundary
             )
             if piece.outer_boundary_contact == "arc" and outer_interface_count[piece.name] == 0:
                 raise ValueError(f"Piece {piece.name} declares an outer arc but owns no outer interface")
@@ -232,12 +324,12 @@ class PlanarMap:
             )
             if actual != tuple(sorted(vertex.incident_pieces)):
                 raise ValueError(f"Incorrect incidence list for vertex {vertex.name}")
-            required_sum = vertex.required_solid_angle_sum_pi
             declared_sum = Fraction(str(vertex.angle_sum_pi))
-            if declared_sum != required_sum:
+            limit = vertex.solid_angle_limit_pi
+            if declared_sum != limit:
                 raise ValueError(
                     f"Vertex {vertex.name} has angle_sum_pi={declared_sum}, "
-                    f"but kind={vertex.kind!r} requires {required_sum}"
+                    f"but kind={vertex.kind!r} requires {limit} as its declared limit"
                 )
 
         for automorphism in self.automorphisms:
@@ -256,11 +348,31 @@ class PlanarMap:
                     raise ValueError(
                         f"Automorphism {automorphism.name} does not preserve contour of {piece.name}"
                     )
+            for vertex in self.vertices:
+                target = vertices[vertex_map[vertex.name]]
+                if vertex.kind != target.kind:
+                    raise ValueError(
+                        f"Automorphism {automorphism.name} changes vertex kind of "
+                        f"{vertex.name}"
+                    )
+            for key, boundary_kind in edge_boundary_kinds.items():
+                piece, endpoints = key
+                mapped_key = (
+                    piece_map[piece],
+                    frozenset(vertex_map[vertex] for vertex in endpoints),
+                )
+                if edge_boundary_kinds.get(mapped_key) != boundary_kind:
+                    raise ValueError(
+                        f"Automorphism {automorphism.name} changes boundary kind of "
+                        f"{piece}:{'-'.join(sorted(endpoints))}"
+                    )
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "name": self.name,
             "reference_piece": self.reference_piece,
+            "prototype_rotation_order": self.prototype_rotation_order,
+            "outer_boundary_is_complete": self.outer_boundary_is_complete,
             "hypotheses": self.hypotheses.to_dict(),
             "pieces": [
                 {
@@ -277,6 +389,7 @@ class PlanarMap:
                     "kind": vertex.kind,
                     "incident_pieces": list(vertex.incident_pieces),
                     "angle_sum_pi": vertex.angle_sum_pi,
+                    "angle_relation": vertex.solid_angle_relation,
                 }
                 for vertex in self.vertices
             ],
@@ -286,6 +399,8 @@ class PlanarMap:
                     "left_piece": interface.left_piece,
                     "right_piece": interface.right_piece,
                     "is_outer": interface.is_outer,
+                    "is_free": interface.is_free,
+                    "boundary_kind": interface.boundary_kind,
                     "views": [
                         {
                             "piece": view.piece,

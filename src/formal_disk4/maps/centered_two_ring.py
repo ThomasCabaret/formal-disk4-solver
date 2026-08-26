@@ -127,6 +127,7 @@ def _inflate_center_vertex(base: PlanarMap, name: str) -> PlanarMap:
                 interface.right_piece,
                 views,
                 interface.is_outer,
+                interface.is_free,
             )
         )
     interfaces.extend(
