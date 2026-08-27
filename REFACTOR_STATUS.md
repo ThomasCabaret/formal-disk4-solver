@@ -30,11 +30,14 @@ without reconstructing it from the Git history.
    orders.
 5. Separated graph policy, search request, shared CLI arguments, and run-state
    persistence from the main Graph Lab loop.
+6. Extracted diversity archiving and stochastic graph-pool construction behind
+   the `GraphProposalSource` protocol.
 
 ## Remaining work
 
-1. Split `GraphLabRunner` into proposal, evaluation, and orchestration services.
-   This is the main remaining structural debt.
+1. Finish splitting evaluation and generation orchestration out of
+   `GraphLabRunner`. Graph proposal is already independent; the remaining
+   runner is still the main structural debt.
 2. Define a common proposal protocol before adding incremental graph or
    weak-order backtracking. New strategies should produce the same request and
    observation types as current strategies.

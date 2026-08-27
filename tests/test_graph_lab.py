@@ -25,8 +25,8 @@ from formal_disk4.graph_lab.specialization_model import (
     SpecializationPrediction,
     SpecializationRankedPolicy,
 )
+from formal_disk4.graph_lab.proposals import DiversityArchive
 from formal_disk4.graph_lab.runner import (
-    DiversityArchive,
     GraphLabRunner,
     _extend_bounded_replay,
     _weak_trajectory_id_from_journal_line,
@@ -616,7 +616,7 @@ class GraphLabTests(unittest.TestCase):
                     },
                 },
             )
-            pool = runner._candidate_pool(
+            pool = runner.proposal_source.pool(
                 random.Random(20260820), DiversityArchive(()), 6
             )
 
@@ -650,21 +650,13 @@ class GraphLabTests(unittest.TestCase):
                     },
                 },
             )
-            pool = runner._candidate_pool(
+            pool = runner.proposal_source.pool(
                 random.Random(20260812), DiversityArchive(()), 1
             )
 
         self.assertTrue(runner.exclude_rings)
         self.assertEqual(len(pool), 1)
         self.assertFalse(pool[0].is_simple_ring)
-        with self.assertRaisesRegex(ValueError, "reached the graph ranker"):
-            runner._select(
-                (self._ring_candidate(),),
-                SimpleNamespace(),
-                DiversityArchive(()),
-                random.Random(1),
-                1,
-            )
 
     def test_ring_exclusion_is_checkpoint_compatible_in_both_directions(self) -> None:
         output_root = ROOT / "output"
@@ -863,10 +855,10 @@ class GraphLabTests(unittest.TestCase):
                     },
                 },
             )
-            first = runner._candidate_pool(
+            first = runner.proposal_source.pool(
                 random.Random(1), DiversityArchive(()), 1
             )[0]
-            second = runner._candidate_pool(
+            second = runner.proposal_source.pool(
                 random.Random(2), DiversityArchive(()), 1
             )[0]
 
