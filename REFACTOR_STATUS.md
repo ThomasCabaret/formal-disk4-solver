@@ -36,12 +36,15 @@ without reconstructing it from the Git history.
    `GraphLabReplayStore`.
 8. Moved generation metrics, final reports, and geometry-queue exports into
    `GraphLabReporter`.
+9. Isolated the optional mapping, weak-order, and specialization policies in
+   `HierarchicalPolicyRuntime`.
 
 ## Remaining work
 
-1. Finish splitting learned mapping/weak-order policy execution and generation
-   orchestration out of `GraphLabRunner`. Proposal and reporting are already
-   independent; the remaining runner is still the main structural debt.
+1. Split the remaining generation loop orchestration out of `GraphLabRunner` if
+   a second caller actually needs it. Proposal, hierarchical policies,
+   persistence, and reporting are now independent; avoid adding an interface
+   merely to reduce the remaining line count.
 2. Define a common proposal protocol before adding incremental graph or
    weak-order backtracking. New strategies should produce the same request and
    observation types as current strategies.

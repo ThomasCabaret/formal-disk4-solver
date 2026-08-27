@@ -16,6 +16,7 @@ from formal_disk4.geometry.status import GeometryCandidateStatus, SOLUTION_FOUND
 from formal_disk4.graph_lab.app import build_parser as build_lab_app_parser
 from formal_disk4.graph_lab.evaluator import GraphEvaluation
 from formal_disk4.graph_lab.feedback import LearningFeedback, balanced_binary_weights
+from formal_disk4.graph_lab.hierarchical_policy import HierarchicalPolicyRuntime
 from formal_disk4.graph_lab.curriculum import build_curriculum, curriculum_utility
 from formal_disk4.graph_lab.mapping import MappingProposal
 from formal_disk4.graph_lab.specialization_model import (
@@ -742,8 +743,8 @@ class GraphLabTests(unittest.TestCase):
                 "predicted_reach_probabilities": [0.5],
             }
 
-        runner = object.__new__(GraphLabRunner)
-        metrics = runner._mapping_generation_metrics(
+        runtime = object.__new__(HierarchicalPolicyRuntime)
+        metrics = runtime.mapping_generation_metrics(
             4,
             (
                 record("easy-singleton", "exploration", passed=True),
