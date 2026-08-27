@@ -34,12 +34,14 @@ without reconstructing it from the Git history.
    the `GraphProposalSource` protocol.
 7. Isolated bounded replay-journal loading for experimental learned policies in
    `GraphLabReplayStore`.
+8. Moved generation metrics, final reports, and geometry-queue exports into
+   `GraphLabReporter`.
 
 ## Remaining work
 
-1. Finish splitting evaluation and generation orchestration out of
-   `GraphLabRunner`. Graph proposal is already independent; the remaining
-   runner is still the main structural debt.
+1. Finish splitting learned mapping/weak-order policy execution and generation
+   orchestration out of `GraphLabRunner`. Proposal and reporting are already
+   independent; the remaining runner is still the main structural debt.
 2. Define a common proposal protocol before adding incremental graph or
    weak-order backtracking. New strategies should produce the same request and
    observation types as current strategies.
