@@ -32,6 +32,8 @@ without reconstructing it from the Git history.
    persistence from the main Graph Lab loop.
 6. Extracted diversity archiving and stochastic graph-pool construction behind
    the `GraphProposalSource` protocol.
+7. Isolated bounded replay-journal loading for experimental learned policies in
+   `GraphLabReplayStore`.
 
 ## Remaining work
 
@@ -57,5 +59,5 @@ $env:PYTHONPATH = "$PWD\src"
 py.exe -m pytest -q
 ```
 
-The stabilization baseline at the time this note was written passed 317 tests,
+The stabilization baseline at the time this note was written passed 318 tests,
 with one skipped test and 217 parameterized subtests.

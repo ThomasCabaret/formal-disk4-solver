@@ -26,10 +26,12 @@ from formal_disk4.graph_lab.specialization_model import (
     SpecializationRankedPolicy,
 )
 from formal_disk4.graph_lab.proposals import DiversityArchive
+from formal_disk4.graph_lab.replay_store import (
+    extend_bounded_replay,
+    weak_trajectory_id_from_journal_line,
+)
 from formal_disk4.graph_lab.runner import (
     GraphLabRunner,
-    _extend_bounded_replay,
-    _weak_trajectory_id_from_journal_line,
 )
 from formal_disk4.graph_lab.space import DualGraphCandidate
 from formal_disk4.graph_lab.weak_model import (
@@ -142,10 +144,10 @@ class GraphLabTests(unittest.TestCase):
                 ),
             ):
                 mappings, mapping_ids, mapping_total = (
-                    runner._load_mapping_observations()
+                    runner.replays.load_mappings()
                 )
                 rollouts, trajectory_ids, rollout_total = (
-                    runner._load_weak_order_rollouts()
+                    runner.replays.load_weak_orders()
                 )
 
         self.assertEqual([item.index for item in mappings], [3, 4])
@@ -156,7 +158,7 @@ class GraphLabTests(unittest.TestCase):
         self.assertEqual(
             trajectory_ids,
             {
-                _weak_trajectory_id_from_journal_line(
+                weak_trajectory_id_from_journal_line(
                     json.dumps(
                         {
                             "proposal": {"mapping_id": f"mapping-{index}"},
@@ -169,7 +171,7 @@ class GraphLabTests(unittest.TestCase):
         )
 
         replay = [1, 2]
-        _extend_bounded_replay(replay, [3, 4], limit=3)
+        extend_bounded_replay(replay, [3, 4], limit=3)
         self.assertEqual(replay, [2, 3, 4])
 
     def test_mutation_parent_sampling_uses_the_same_size_growth_prior(self) -> None:
