@@ -5,18 +5,19 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Current selection
 
-- Active iteration: none running. [MATH-003](studies/MATH-003-two-orbit-stein.md)
-  completed its first bounded iteration with a proposed two-orbit exclusion
-  for all `m>=2`; independent proof review remains pending.
-- Current path: `R0 -> APP-IMP -> MATH-003`.
-- Next bounded action: critically review the new sector/lens argument and its
-  external premises before treating `k>=3` as established or changing code.
-  In particular, audit the external outer-trace proof's area-equality steps for
-  arbitrary Jordan boundaries; the tiling conclusion remains conditional.
+- Active iteration: none running. [MATH-002](studies/MATH-002-outer-trace-audit.md)
+  supplied a local area-free replacement in the interior-circumcenter class,
+  which contains all rotational Stein candidates considered in `MATH-003`.
+- Owning path: `R0 -> MATH-001 -> MATH-002`; cross-dependency served:
+  `R0 -> APP-IMP -> MATH-003`. No solver experiment or code change.
+- Next bounded action: critically review the integrated circumcenter/crosscut
+  and sector/lens proof before treating `k>=3` as accepted or changing code.
+  The draft no longer assumes the disputed outer-trace premises. The source
+  lemma's general area question remains unresolved outside the substitute's scope.
   [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
   optional owner-mediated review, not submitted. Other approaches remain open.
-- Latest completed iteration: [MATH-003](studies/MATH-003-two-orbit-stein.md),
-  yielding [a proof draft](../two_orbit_stein_obstruction.tex), not a new filter.
+- Latest completed iteration: [MATH-002](studies/MATH-002-outer-trace-audit.md),
+  integrated into [the proof draft](../two_orbit_stein_obstruction.tex).
 - Optional external audit: [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
   for `MATH-002`, ready for the owner to submit. No answer is assumed or required
   before continuing independent research.
@@ -49,7 +50,7 @@ R0  Nontrivial monohedral tilings of the disk
 +-- SPEC-001  Shared support: define the target and finite variants
 |
 +-- MATH-001  Shared support: survey and audit structural mathematics
-|   +-- MATH-002 Audit rotational Stein boundary-orbit necessity (RSS-ORB)
+|   +-- MATH-002 Area-free outer-trace bridge for rotational Stein candidates
 |   `-- APPLIED-001 Promote one audited high-leverage result into a tested reduction
 |
 +-- VALID-001 Withdrawn known-shape/placement replay proposal (historical)
@@ -72,8 +73,8 @@ R0  Nontrivial monohedral tilings of the disk
 | `SPEC-001` | supported-in-scope | `R0` | [Working specification](PROBLEM_SPEC.md) and [study](studies/SPEC-001-problem-domain.md): broad Jordan-region target, center predicates, F1/F2/F3 and result semantics. | Delivered as a research contract; independent mathematical review remains pending. Revise if a later target needs different hypotheses. |
 | `VALID-001` | superseded | `R0` | Known-shape/known-placement acceptance exercise withdrawn: no useful dependency on the actual contour pipeline was established. No study or run started. | A future validation task must name a concrete interface/property of the actual solver and the research conclusion it enables. |
 | `MATH-001` | supported-in-scope | `R0` | First [literature pass](LITERATURE_FRONTIER.md) and [study](studies/MATH-001-literature-frontier.md) completed: four primary sources and explicit search limitations. | Proof audits and a comprehensive literature frontier remain open; no complete classification asserted. |
-| `MATH-002` | proposed | `MATH-001` | Independently audit `RSS-OVERLAP`/`RSS-ORB`: do the precise Jordan/rotation hypotheses force two boundary-reaching orbits and centered matching? | Local deductions conditional on KLV were re-derived in `MATH-003`; full independent acceptance and code-premise audit are still pending. [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md) remains ready, not submitted. |
-| `MATH-003` | supported-in-scope | `APP-IMP` | [First proof-draft deliverable](studies/MATH-003-two-orbit-stein.md): proposed exclusion of exactly two moving tile orbits for every `m>=2`, yielding candidate `N>=3m+1`. | Independent review and novelty check pending; no production rejection. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready. Do not automatically extend to three orbits or assume general Stein nonexistence. |
+| `MATH-002` | supported-in-scope | `MATH-001` | [Replacement-proof draft](studies/MATH-002-outer-trace-audit.md): interior circumcenters imply connected outer traces; rotational Stein candidates have that property. The other two transport facts are locally derived too. | Independent review pending. The general published Jordan-boundary area question is not settled; code premise detectors are unaudited. Updated `EXT-MATH-002` ready, not submitted. |
+| `MATH-003` | supported-in-scope | `APP-IMP` | [Integrated proof draft](studies/MATH-003-two-orbit-stein.md): proposed exclusion of exactly two moving tile orbits for every `m>=2`, with candidate `N>=3m+1`; no additional outer-trace assumptions after `MATH-002`. | Independent review and novelty check pending; no production rejection. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready. Do not automatically extend to three orbits or assume general Stein nonexistence. |
 | `APPLIED-001` | proposed | `MATH-001` | For one audited result, implement or evaluate the premise detector and measure sound selectivity/cost. | Requires an audited theorem and a trusted positive-control pack. |
 | `ALG-001` | proposed | `APP-SEARCH` | Supporting comparison: formal-contour, incremental obligation, placement-first and constructive/constraint formulations. Deliver state, coverage and certificate analysis, not a large implementation. | Informs selection or creation of sibling approaches under `APP-SEARCH`. Empirical bottleneck claims need relevant evidence; no blanket witness-replay prerequisite. |
 | `ALG-002` | proposed | `ALG-001` | Implement the smallest discriminator for the most promising alternative and compare it on identical controls. | Requires `ALG-001` selection and controls of the actual compared algorithms. |

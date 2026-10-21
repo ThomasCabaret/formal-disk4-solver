@@ -43,14 +43,18 @@ intrinsic-rotation/sector obstruction for `m>=3` with a five-lens area bound for
 `m=2`. If accepted together with the needed orbit reduction, this strengthens
 the count bound to `N=1+km`, `k>=3` (`N>=3m+1`).
 
-The local dependency deductions were re-derived conditional on KLV's published
-premises, whose statements were checked. Full independent proof acceptance and
-literature novelty remain pending. Finite numerical identity checks are merely
-algebra sanity checks, not an exhaustive geometry search or a proof certificate.
-The tiling conclusion is conditional on the outer-trace premises. A specific
-area-equality issue in the external proof's unrestricted Jordan-boundary domain
-is recorded for review, not asserted to disprove that premise. The new sector
-lemma and lens bound do not depend on it.
+The first draft was conditional on KLV's published outer-trace premises.
+[MATH-002](studies/MATH-002-outer-trace-audit.md) now supplies an area-free local
+replacement: a prototile whose smallest enclosing disk has its center strictly
+inside the tile has connected outer traces. Rotational Stein tiles satisfy
+that condition by a zero-mean orbit argument. The two transport facts are also
+locally proved, so the integrated draft has no additional outer-trace premise.
+
+The published proof's general Jordan-boundary area question was not settled;
+the replacement suffices for this narrower application rather than refuting
+the general lemma. Independent acceptance and novelty remain pending. Earlier
+finite numerical identity checks are algebra sanity checks, not proof
+certificates; no numerical test is claimed to validate the new topology proof.
 [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
 optional independent review, not submitted. No new rejection was enabled in code;
 no discovery run or performance benchmark was launched. The larger-orbit and

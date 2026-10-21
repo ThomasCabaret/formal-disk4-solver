@@ -1,5 +1,12 @@
 # MATH-003 — Can two moving orbits form a rotational Stein tiling?
 
+Update after the first iteration: [MATH-002](MATH-002-outer-trace-audit.md)
+supplied an area-free outer-trace proof for the interior-circumcenter class,
+which contains all rotational Stein candidates here. The integrated TeX no
+longer assumes P1–P3; the conditional statements below preserve the first
+iteration's rationale and are superseded in that respect. Independent proof
+review and novelty remain pending. No program filter was changed.
+
 ## Identity
 
 - Node / parent: `MATH-003` / `APP-IMP`.

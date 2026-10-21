@@ -216,3 +216,34 @@ extending the claim or implementing a filter.**
   Next: review this exact argument; if it fails, return to the affected step.
   Other root approaches remain open. No solver/filter, learned policy, run data
   or checkpoint changed; no discovery computation was launched.
+
+## 2026-10-21 — Replace the area-dependent trace premise in the Stein class
+
+**Decision `D-013`: close the bounded MATH-002 iteration with an area-free
+replacement proof, return it to MATH-003, and retain independent review as
+the next check rather than extend the orbit count or change code.**
+
+- Owning path: `R0 -> MATH-001 -> MATH-002`; the served dependency is
+  `R0 -> APP-IMP -> MATH-003`. The owner approved this targeted investigation
+  rather than a new solver run or an automatic three-orbit study.
+- The journal/preprint area equalities were located, but their justification
+  for completely general positive-area Jordan boundaries was not settled.
+  No counterexample to the published connected-trace lemma is asserted.
+- A narrower sufficient condition was identified and proved in draft: if a
+  congruent Jordan prototile's circumcenter is interior, its outer trace in a
+  disk tiling is connected. A crosscut traps another tile in the same minimal
+  enclosing disk; congruence and uniqueness then force an interior overlap.
+  No area equality or boundary smoothness is used.
+- Actual rotational Stein tiles satisfy this circumcenter condition by an
+  orbit-average squared-distance identity. The condition is deduced, not
+  imposed as an extra symmetry or graph restriction. The two trace-transport
+  facts were also proved locally for that class.
+- `RSS-TRACE-IC` and the integrated TeX now remove the former outer-trace
+  assumptions from the proposed `N>=3m+1` obstruction. This supersedes D-012's
+  conditional status in this class, not its pending independent acceptance
+  or novelty checks. Code premise detectors remain unaudited and unchanged.
+- [Study](studies/MATH-002-outer-trace-audit.md) records proof, scope and
+  critical checks. `EXT-MATH-002` was updated while still unsent to include the
+  complete replacement argument. Next: independent review of the integrated
+  proof, especially trapping of the connected interior and sector geometry.
+  Other root approaches remain available; no discovery computation was launched.

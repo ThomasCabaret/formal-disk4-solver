@@ -6,6 +6,13 @@
 - Requested result: a rigorous audit, counterexample or exact proof gap. Treat
   all assertions below as candidates. Literature novelty is a separate issue.
 
+Update following `MATH-002`: the intended integrated proof no longer assumes
+P1–P3. Section 2A below supplies a proposed area-free replacement in the
+interior-circumcenter class, which is deduced for every rotational Stein tile.
+Please audit that argument as well as the original sector/lens calculation.
+The earlier conditional route remains below as context; the general published
+area question is not being declared resolved. This packet remains unsent.
+
 ## 1. Tiling question
 
 Let `D={x in R^2: |x|<=1}`, `O=0`. A finite family of congruent compact Jordan
@@ -19,9 +26,64 @@ The proposed theorem excludes exactly two noncentral `R`-orbits, hence excludes
 `N=2m+1`. Combined with the separate at-least-two-orbits reduction, it would
 give `N=1+km`, `k>=3`, not general Stein nonexistence.
 
-## 2. External premises and claimed reductions
+## 2A. New local replacement: an interior circumcenter
 
-For a conditional audit take these published premises as explicit assumptions:
+Claim: if `N>1` congruent compact Jordan regions tile the unit disk and the
+center of the prototile's smallest enclosing disk is in its interior, each
+nonempty outer trace is a closed connected circular arc, possibly a point.
+
+Proposed proof, independent of P1–P3 and any area equalities:
+
+1. A compact set has a unique minimal enclosing disk. For uniqueness, two
+   different radius-`r` centers `a,b` would enclose their intersection in a
+   disk of radius `sqrt(r^2-|a-b|^2/4)<r` about their midpoint.
+2. All tile circumradii equal some `r<=1`. If `r=1`, the outer unit disk is
+   minimal for every tile. Their circumcenters would all be `O`, lying inside
+   every tile. This contradicts disjoint interiors, so `r<1`.
+3. For a tile `A`, write its circumdisk as `B(a,r)`. If `a=0` its outer trace
+   is empty. Otherwise its circumdisk's intersection with the unit circle is
+   described by `u dot (a/|a|) >= (1+|a|^2-r^2)/(2|a|)>0`. It is therefore
+   empty, a point, or one closed arc `J` shorter than a semicircle.
+4. If `A intersect boundary(D)` is disconnected, choose two points `p,q` in
+   it with a missing point `x` on the intervening arc `Gamma subset J`. The
+   Jordan disk `A` has a simple crosscut `gamma` from `p` to `q`, with other
+   points in `int(A)`. Hence `L=Gamma union gamma` is a Jordan curve inside
+   `B(a,r) intersect D`. Its closed bounded region `F` lies in `conv(L)` and
+   thus in that same intersection.
+5. Another tile `U` contains `x`. Near `x`, `L` is just the circle arc and
+   its bounded side is the disk side because `F subset D`. Since `U` is the
+   closure of its interior, `int(U)` meets `int(F)` near `x`.
+6. The connected set `int(U)` avoids `L`: it cannot meet the outer circle;
+   the crosscut's other points are in `int(A)`, and its endpoints are on that
+   circle. Jordan separation forces `int(U) subset int(F)`, hence `U subset F`.
+7. Therefore `U subset B(a,r)`, and this disk has exactly `U`'s minimal radius.
+   It is the unique circumdisk of both `A` and `U`, so its center is in both
+   tile interiors by hypothesis. Contradiction.
+
+Why the extra premise is available here: `R(C)=C`, `O in int(C)`. If
+`r=max_{x in C}|x|` and `|u|=r`, the orbit `R^j u` has mean zero. Any disk
+`B(a,t)` containing `C` satisfies `t^2 >= average_j |R^j u-a|^2 = r^2+|a|^2`.
+Thus the minimal enclosing disk of `C` is centered at `O`. Congruent copies,
+including reflected ones, inherit interior circumcenters. The lemma therefore
+applies without adding an extra hypothesis to the rotational Stein question.
+
+Local replacements for P2–P3: for `phi_i:T_i->U`, set `B_i=phi_i(D)`.
+Transported traces are exactly `A_i=U intersect boundary(B_i)`, with `U subset B_i`.
+They lie on `boundary(conv(U))`. Equal disks give equal complete traces. For
+distinct equal-radius disks, a common point interior to either arc would force
+that arc outside the other disk at a transverse intersection. Tangency is
+external and would leave only a point in the disk intersection, incompatible
+with `int(U)` nonempty. All remaining intersections are arc endpoints.
+
+Please challenge in particular the crosscut construction, which side is bounded
+near `x`, trapping of the connected interior, closure, uniqueness, and whether
+any unmentioned smoothness or contact-connectedness enters. Do not silently
+generalize the interior-circumcenter hypothesis to all Jordan prototiles.
+
+## 2B. Earlier conditional scaffold and claimed reductions
+
+For comparison, the first version took these published premises as assumptions;
+the updated proof must instead derive them by Section 2A in the stated class:
 
 - P1: each nonempty `S_T = T intersect boundary(D)` is a connected circular arc,
   possibly a point.

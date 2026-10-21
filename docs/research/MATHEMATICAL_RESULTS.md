@@ -37,31 +37,32 @@ Precise hypotheses and versions are in [the literature map](LITERATURE_FRONTIER.
 | `NV-3` | Nagy–Vígh, Theorem 1.2: normal three-tile classification with explicit target and tile regularity. | Hypotheses checked; no promotion to an unrestricted theorem. |
 | `BL-3` | Basit–Lángi, Theorem 1: two/three-tile classifications of regular polygons. | Statement checked; different target boundary. |
 
-For `RSS-OVERLAP`/`RSS-ORB`, the cited KLV labels were matched to primary-source
-statements. The additional local inference is still pending audit under
-`MATH-002`; [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
-is ready for optional external review. No reply or independent acceptance has
-been recorded. `MATH-003` subsequently re-derived the needed local deductions
-conditional on these published premises; this does not independently certify
-their proofs or their detection by code.
+For `RSS-OVERLAP`/`RSS-ORB`, the initial restart matched KLV labels to primary
+statements and re-derived the local deductions conditionally. The subsequent
+[MATH-002 iteration](studies/MATH-002-outer-trace-audit.md) supplied an area-free
+replacement in the interior-circumcenter class, which contains rotational Stein
+tilings. The integrated local proof no longer assumes KLV's outer-trace facts.
+Independent acceptance and implementation premise-detector audits remain
+pending. No external contract has been submitted or accepted by this agent.
 
-## New proof drafts from MATH-003 — independent review pending
+## New proof drafts from MATH-003 and MATH-002 — independent review pending
 
 Source: [two_orbit_stein_obstruction.tex](../two_orbit_stein_obstruction.tex).
 The [study](studies/MATH-003-two-orbit-stein.md) records scope, attempted
 falsification and auxiliary checks. These are new proof drafts in this project,
 not certified literature novelty, production filters, or independent audits.
 
-The tiling corollary is explicitly conditional on the KLV outer-trace premises.
-A specific review question remains about the area-equality steps in the proof
-of its Lemma 2.6 for unrestricted Jordan boundaries of positive planar area.
-No counterexample to that lemma is claimed. `RSS-SECTOR` and the order-two
-lens bound are elementary local arguments independent of these premises.
+The initial tiling draft was conditional on KLV outer-trace premises. The
+replacement below removes that dependency for the stated rotational Stein
+class without imposing smoothness. The general area-equality question in the
+published proof remains unresolved in this audit; no counterexample is claimed.
+Removing a premise reservation is not independent proof certification.
 
 | ID | Proposed result | Exact domain and dependencies | Proof/review status and code use |
 | --- | --- | --- | --- |
+| `RSS-TRACE-IC` | In a monohedral tiling of the circular disk by at least two compact Jordan regions, an interior circumcenter of the prototile forces every nonempty outer trace to be a closed connected arc. | The circumcenter means the unique center of its smallest enclosing disk, not a centroid or arbitrary intrinsic-symmetry point. Congruence, Jordan interiors and complete circle boundary are used; no area equality, smoothness or connected internal contacts. Rotational Stein tiles satisfy the extra condition by a zero-mean orbit argument. | Full area-free draft, `lem:circumtrace`, in the same TeX; `MATH-002` records the crosscut/containment review. Independent acceptance and novelty pending. No code use. |
 | `RSS-SECTOR` | For `m>=3`, an intrinsically order-`m` rotational compact set inside a unit-disk sector of angle `pi/m`, containing both outer endpoints and omitting the disk center, is impossible when its rotation center is interior to the set. For `m=2`, central symmetry confines it to a lens of area at most `pi/2-1`. | Actual intrinsic Euclidean rotation, exact sector/endpoints and disk containment. No convexity of the set, boundary smoothness, connected contacts or graph restriction. | Full local proof draft, `lem:sector` and `lem:lens`; identities sanity-checked for `m=2,...,200`, not proof-certified by sampling. No code use. |
-| `RSS-2ORB-EXCL` | A rotational Stein disk tiling cannot have exactly two moving tile orbits; combined with `RSS-ORB`, the candidate bound is `N=1+km`, `k>=3`. | Complete disk, congruent compact Jordan tiles, reflections allowed, actual rotation order `m>=2`, center interior to one tile. Uses KLV facts, the local `RSS-ORB`/`RSS-2ORB` deductions and `RSS-SECTOR`; order two uses measure subadditivity, not zero-area boundaries. | Full draft, `thm:exclusion`. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) ready, not submitted; independent proof acceptance and novelty remain pending. No generator/filter change. |
+| `RSS-2ORB-EXCL` | A rotational Stein disk tiling cannot have exactly two moving tile orbits; combined with `RSS-ORB`, the candidate bound is `N=1+km`, `k>=3`. | Complete disk, congruent compact Jordan tiles, reflections allowed, actual rotation order `m>=2`, center interior to one tile. Uses local `RSS-TRACE-IC`, orbit/sector deductions and `RSS-SECTOR`; no additional KLV premises after `MATH-002`. Order two uses subadditivity, not zero-area boundaries. | Integrated draft, `thm:exclusion`. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) updated, ready, not submitted; independent acceptance and novelty pending. No generator/filter change. |
 
 The exclusion does not address three or more moving orbits, asymmetric Stein
 tilings, free-boundary patches, or general weaker nontrivial disk tilings.
@@ -76,9 +77,9 @@ tilings, free-boundary patches, or general weaker nontrivial disk tilings.
 | `SSR-PAL` | Under a fixed-point-free reversal-complement involution, every nonempty fixed word has the unique form `r mu(r)`. | Fixed-point-free alphabet involution; non-erasing variable; equivariant signed renaming. | same source, `thm:palindrome` | palindrome branch in [`words/compact.py`](../../src/formal_disk4/words/compact.py). | Source proof present; the fixed-point-free premise is essential. |
 | `SSR-LOOP` | A certified fixed-context unary loop iterates as `p^n V s^n`; simple/properly nested cycle conditions license the represented family. | Invariant contexts, preserved parameters, exits retained, canonical renamings undone; not arbitrary repeated residual states. | same source, `thm:loops` and `cor:safe-scc` | loop classifier and compilation in [`words/compact.py`](../../src/formal_disk4/words/compact.py) / [`words/exact_partial.py`](../../src/formal_disk4/words/exact_partial.py). | Source proof present; coverage outside this restricted class is explicitly not claimed. |
 | `SSR-CONCUR` | Concurrent noncommuting Nielsen cycles already occur for `XY=YX`; unary/nested powers alone are not complete. | General non-erasing word-equation residual graph; also survives compatible mirror equations. | same source, `thm:concurrent` | unsupported-SCC path in [`words/exact_partial.py`](../../src/formal_disk4/words/exact_partial.py); this result prevents false UNSAT. | Source proof/counterexample present; not re-audited here. |
-| `RSS-OVERLAP` | Outer traces transported to the center tile cannot all be distinct. | Rotational Stein tiling; nondegenerate outer traces; KLV connectedness/convex-hull/no-partial-overlap facts. | [`rotational_stein_structural_note.tex`](../rotational_stein_structural_note.tex), `lem:overlap` | premise for exterior-arc repetition and Stein-domain checks. | Local conditional deduction re-derived in `MATH-003`; primary premise statements checked, independent proof/code audit pending. |
-| `RSS-ORB` | The center tile is fixed, every other orbit has full order `m`, at least two noncentral orbits reach the boundary, and two are related by a center-fixing isometry; hence `n=1+km`, `k>=2`. | Actual geometric rotation of exact order `m>=2`, complete disk, Stein center tile, congruent Jordan regions. An abstract graph automorphism is insufficient. | same source, `thm:main` and `cor:k2` | [`graph_lab/space.py`](../../src/formal_disk4/graph_lab/space.py), [`enumeration/exterior_arc_repetition.py`](../../src/formal_disk4/enumeration/exterior_arc_repetition.py), weak-order comments and tests. | Local conditional deduction re-derived in `MATH-003`; Brouwer/KLV dependencies explicit. Not an independent full proof or code-premise audit. |
-| `RSS-2ORB` | If exactly two noncentral orbits remain, outer traces alternate, centered matching is reflective, the tiling is dihedral and tiles are sector-confined. | All `RSS-ORB` hypotheses plus exactly two noncentral orbits. | same source, `thm:twoorbit` | two-orbit reflection/domain code in [`graph_lab/space.py`](../../src/formal_disk4/graph_lab/space.py) and associated tests. | Local deduction re-derived in `MATH-003`; independent acceptance pending. The proposed stronger exclusion is separately indexed as draft `RSS-2ORB-EXCL`. |
+| `RSS-OVERLAP` | Outer traces transported to the center tile cannot all be distinct. | Rotational Stein tiling; nondegenerate outer traces; convex perimeter and transport facts. | [`rotational_stein_structural_note.tex`](../rotational_stein_structural_note.tex), `lem:overlap`; updated local route in the integrated MATH-002/003 TeX | premise for exterior-arc repetition and Stein-domain checks. | Area-free trace replacement now supplied by `RSS-TRACE-IC`; independent mathematical/code audit pending. |
+| `RSS-ORB` | The center tile is fixed, every other orbit has full order `m`, at least two noncentral orbits reach the boundary, and two are related by a center-fixing isometry; hence `n=1+km`, `k>=2`. | Actual geometric rotation of exact order `m>=2`, complete disk, Stein center tile, congruent Jordan regions. An abstract graph automorphism is insufficient. | same original source, `thm:main` and `cor:k2`; integrated local replacement in the new TeX | [`graph_lab/space.py`](../../src/formal_disk4/graph_lab/space.py), [`enumeration/exterior_arc_repetition.py`](../../src/formal_disk4/enumeration/exterior_arc_repetition.py), weak-order comments and tests. | Local route uses `RSS-TRACE-IC`, elementary geometry and Brouwer, no extra KLV trace premise. Independent mathematical/code audit pending. |
+| `RSS-2ORB` | If exactly two noncentral orbits remain, outer traces alternate, centered matching is reflective, the tiling is dihedral and tiles are sector-confined. | All `RSS-ORB` hypotheses plus exactly two noncentral orbits. | same original source, `thm:twoorbit`; updated integrated draft | two-orbit reflection/domain code in [`graph_lab/space.py`](../../src/formal_disk4/graph_lab/space.py) and associated tests. | Local route updated with the area-free replacement; independent acceptance pending. Stronger exclusion remains separately indexed as draft `RSS-2ORB-EXCL`. |
 
 Before trusting any of these gates mathematically, audit both the proof and the
 premise detector. The current code citations are useful traceability, not proof
@@ -134,8 +135,11 @@ promoted to a grand theorem.
 Published external facts (especially KLV 2020)
   |
   +--> SSR-REP
-  +--> RSS-OVERLAP --> RSS-ORB --> RSS-2ORB
   `--> FPR-REP+ / FPR-ROT (overlapping later derivations)
+
+RSS-TRACE-IC + intrinsic rotation of the Stein center tile
+  `--> RSS-OVERLAP --> RSS-ORB --> RSS-2ORB --> RSS-2ORB-EXCL
+         (local draft route; independent acceptance pending)
 
 Basic Jordan/curvature cancellation facts
   +--> SSR-CONC

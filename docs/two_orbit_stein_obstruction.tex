@@ -11,15 +11,17 @@
 \newcommand{\area}{\operatorname{area}}
 \newcommand{\Rot}{\operatorname{Rot}}
 \title{A sector obstruction to two-orbit rotational Stein tilings}
-\author{MATH-003 research draft --- LLM-generated}
+\author{MATH-003, with MATH-002 dependency repair --- LLM-generated draft}
 \date{21 October 2026}
 \begin{document}
 \maketitle
 
 \noindent\textbf{Status.} This is a proof draft, not an independently reviewed
 theorem or an enabled software filter. The local deductions have been checked
-within this research iteration. Published premises are identified below;
-neither their full proofs nor literature novelty are certified here. The
+within the recorded research iterations. The MATH-002 update replaces the
+previously assumed outer-trace facts by local proofs for the class in question;
+it does not settle the published lemma for all Jordan tiles. Independent
+acceptance and literature novelty remain pending. The
 earlier source is \texttt{rotational\_stein\_structural\_note.tex}.
 
 \section{Question and hypotheses}
@@ -34,7 +36,6 @@ For a different generator of this same cyclic group, use a suitable power to
 obtain $R$.
 
 \begin{theorem}[Two moving orbits are impossible: draft]\label{thm:exclusion}
-Assume the three outer-trace premises stated in Section~\ref{sec:premises}.
 Under the tiling hypotheses above, the noncentral tiles cannot form exactly two
 $R$-orbits. In particular, using the boundary-orbit reduction below,
 \[
@@ -45,21 +46,68 @@ This does not exclude rotational Stein tilings with more orbits, or Stein
 tilings without rotational symmetry.
 \end{theorem}
 
-\section{The required reductions and their dependencies}\label{sec:premises}
+\section{An area-free replacement for the outer-trace premise}\label{sec:premises}
 
-We use three published facts about monohedral Jordan-region disk tilings:
-outer traces $S_T=T\cap\partial D$ are connected when nonempty (KLV,
-Lemma~2.6); an outer trace transported to another tile is on the boundary of
-its convex hull (Remark~2.7); two transported traces of positive length either
-coincide or intersect only at endpoints (Remark~2.8) \cite{KLV}.
-These are used for arbitrary tile congruences; empty and point traces do not
-contribute length. Their statements and surrounding scope were checked in the
-primary preprint, not independently reproved in this iteration.
-In particular, the proof of KLV Lemma~2.6 uses tile-area equalities. Their
-justification in the unrestricted positive-area Jordan-boundary case is a
-specific external-review question, not settled here. This observation is not
-a counterexample to the published lemma. The main draft is conditional on
-the stated outer-trace premises until that review is resolved.
+The initial draft assumed the conclusions of KLV Lemma~2.6 and
+Remarks~2.7--2.8 \cite{KLV}. Its area-equality concern for completely general
+Jordan tiles is not settled here. Instead, the following narrower argument
+suffices for rotational Stein tilings. It uses no boundary measure assumption.
+
+A nonempty compact set has a smallest enclosing disk. Its center is unique:
+if disks of the same minimal radius $r$ with different centers $a,b$ both
+contained the set, their intersection would lie in the disk with center
+$(a+b)/2$ and radius $\sqrt{r^2-|a-b|^2/4}<r$, a contradiction.
+
+\begin{lemma}[Interior circumcenter implies connected outer traces]
+\label{lem:circumtrace}
+Let $N>1$ congruent compact Jordan regions tile $D$. Suppose the center of
+the smallest enclosing disk of the prototile is in its interior. Then each
+nonempty $T\cap\partial D$ is a closed connected circular arc, possibly a point.
+\end{lemma}
+
+\begin{proof}
+Congruence gives every tile the same circumradius $r>0$ and puts its unique
+circumcenter in its interior. Since the tiles are contained in $D$, $r\leq1$.
+If $r=1$, $D$ is a minimal enclosing disk for every tile, so uniqueness puts
+all their circumcenters at $O$ and therefore $O$ in all interiors. Hence $r<1$.
+
+Fix a tile $A$ and its smallest enclosing disk $B=\overline B(a,r)$.
+If $a=0$, its outer trace is empty. Otherwise, on $\partial D$ the condition
+for membership in $B$ is
+\[
+ u\cdot\frac{a}{|a|}\geq\frac{1+|a|^2-r^2}{2|a|}>0.
+\]
+Thus $J=B\cap\partial D$ is empty, a point, or a closed arc of angle less
+than $\pi$. Suppose $S=A\cap\partial D\subset J$ is disconnected. Choose
+$p,q\in S$ and a point $x$ on the intervening short arc
+$\Gamma\subset J$ with $x\notin A$. A Jordan-region parametrization supplies
+a simple crosscut $\gamma$ from $p$ to $q$ whose other points are in
+$\interior A$. In particular those points are in $\interior D$, so
+$L=\Gamma\cup\gamma$ is a Jordan curve contained in $B\cap D$.
+
+Let $F$ be the closed Jordan region bounded by $L$. Since $B,D$ are convex,
+$F\subset\conv L\subset B\cap D$. Some other tile $U$ contains $x$.
+Near $x$, $L$ is just an outer circular subarc; its bounded side is the
+disk side, since $F\subset D$. Interior points of the Jordan region $U$
+accumulate at $x$, so $\interior U$ meets $\interior F$.
+
+The connected set $\interior U$ cannot meet $\Gamma\subset\partial D$,
+nor $\gamma$: apart from its endpoints the latter is in $\interior A$,
+and its endpoints are on $\partial D$. Disjoint tile interiors therefore
+give $\interior U\cap L=\varnothing$. Jordan separation forces
+$\interior U\subset\interior F$. Taking closures yields $U\subset F\subset B$.
+
+The disk $B$ has radius $r$, also the minimal enclosing radius of $U$.
+It is therefore the unique minimal enclosing disk of both $A$ and $U$.
+Its center $a$ belongs to both tile interiors by hypothesis, a contradiction.
+This proves connectedness. Closedness and the arc description follow from
+compactness and $S\subset J$.
+\end{proof}
+
+This lemma is restricted to an interior circumcenter. It is not a proof that
+the same argument works for every Jordan prototile, nor a refutation of KLV.
+
+\section{The required rotational reductions}
 
 \paragraph{Central tile and full orbits.}
 Every other tile omits $O$: otherwise its interior would accumulate at $O$
@@ -68,17 +116,7 @@ tile fixed by a nonidentity power of $R$ would contain $O$ by Brouwer's fixed
 point theorem applied on that Jordan disk. Thus every noncentral orbit has
 size $m$.
 
-Connectedness of $S_C$ and its rotation invariance force $S_C$ to be empty
-or the whole circle. The latter would force the Jordan region $C\subset D$
-to equal $D$ by Jordan separation, contradicting the other tiles. Consequently
-$C$ is contained in a disk of radius $r<1$ about $O$, and
-\[
- P(\conv C)\leq2\pi r<2\pi.
-\]
-The perimeter inequality follows, for example, by integrating convex-body
-widths (the Cauchy perimeter formula); $\conv C$ has nonempty interior.
-
-There is also an elementary proof of $S_C=\varnothing$ independent of KLV.
+Here is an elementary proof of $S_C=\varnothing$ independent of KLV.
 If $u\in C$ with $|u|=1$, then $R^ju\in C$ and
 $\sum_{j=0}^{m-1}R^ju=0$. For a congruence $f(x)=Qx+t$ from $C$ to any
 other tile, disk containment gives
@@ -89,13 +127,38 @@ Thus $t=f(O)=0$, putting $O$ in that other tile's interior, a contradiction.
 This proves the strict central containment without boundary regularity or
 outer-trace connectedness.
 
+Put $r=\max_{x\in C}|x|<1$ and choose $u\in C$ with $|u|=r$. For any
+disk $\overline B(a,t)$ containing $C$, averaging the squared distances to
+the orbit of $u$ gives $t^2\geq r^2+|a|^2$. Thus the smallest enclosing
+disk of $C$ is precisely $\overline B(O,r)$, whose center is in
+$\interior C$. Every congruent tile inherits an interior circumcenter.
+Lemma~\ref{lem:circumtrace} therefore proves outer-trace connectedness in
+this class. Also
+\[
+ P(\conv C)\leq2\pi r<2\pi,
+\]
+by convex-perimeter monotonicity, for example the Cauchy width formula.
+
+\paragraph{Transported traces: local proofs of the other two facts.}
+For a congruence $\phi_i:T_i\to U$, put $B_i=\phi_i(D)$ and
+$A_i=\phi_i(T_i\cap\partial D)=U\cap\partial B_i$.
+Here $U\subset B_i$, so $A_i\subset\partial\conv U$.
+The nondegenerate $A_i$ are complete circular arcs by the lemma.
+If $B_i=B_j$, then $A_i=A_j$ by their exact set-intersection descriptions.
+If their boundary circles differ, a common point interior to either arc
+would make that arc cross outside the other disk at a transverse intersection.
+Tangency of distinct equal-radius circles is external and leaves only one
+point in the disk intersection, impossible since $U$ has interior.
+Thus in the distinct-circle case all arc intersections are endpoints.
+No area equality or compatibility of the chosen congruences is used.
+
 \paragraph{A centered matching between different outer orbits.}
 The positive-length outer traces cover the circle except for finitely many
 endpoints and have disjoint relative interiors. For the latter assertion,
 at an interior point of an outer circular subarc a Jordan tile locally occupies
 the disk side of that arc; two such tiles would overlap in their interiors.
 Their total length is therefore $2\pi$. Transport all of them to $C$.
-The three KLV facts and $P(\conv C)<2\pi$ force a coincidence.
+The three locally proved trace facts and $P(\conv C)<2\pi$ force a coincidence.
 
 For an outer representative $T$, choose $f:C\to T$ and, for $T_j=R^jT$,
 choose $f_j=R^jfR^{-j}$. If $\Gamma=f^{-1}(S_T)$, its transported orbit
@@ -222,8 +285,9 @@ Subadditivity of Lebesgue measure would give
  \leq5\left(\frac\pi2-1\right)<\pi,
 \]
 where the strict inequality is equivalent to $\pi<10/3$, for example a
-consequence of $\pi<22/7$. This proves Theorem~\ref{thm:exclusion}, subject
-to the stated proof-review status and external premises.
+consequence of $\pi<22/7$. This completes the draft proof of
+Theorem~\ref{thm:exclusion}. There is no additional KLV outer-trace premise;
+the independent-review status stated at the start still applies.
 
 Importantly, this uses subadditivity, not $\area(T)=\pi/5$. Arbitrary Jordan
 curves may have positive area; disjoint interiors alone do not justify adding
