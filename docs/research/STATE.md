@@ -13,9 +13,16 @@ approach is scientifically or end-to-end validated.
 broad Jordan-region disk target, separate center predicates and three finite
 computational variants. Read-only code inspection traced the current graph,
 regularity and engine restrictions; it did not reveal a new demonstrated solver
-bug or establish complete validation. The next selected node is `MATH-001`,
-starting with a current primary-source map of constructions and obstructions.
+bug or establish complete validation.
 See [the study](studies/SPEC-001-problem-domain.md) for scope and remaining review.
+
+The first `MATH-001` pass produced [a literature map](LITERATURE_FRONTIER.md).
+It identified constructive control families and restricted classifications,
+but did not settle the current general Stein question or audit the local
+stronger theorems. `VALID-001` is selected next. The optional
+[external RSS-ORB audit](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready
+for submission by the owner; it has no returned answer and blocks no independent
+local validation. No solver or search-performance evidence changed.
 
 ## What the history supports
 

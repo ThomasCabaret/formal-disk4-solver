@@ -16,6 +16,11 @@ The current mathematical and computational domains are defined in
 predicate and stronger `STEIN` target must not be inferred from graph or UI
 categories.
 
+Published constructions and classifications are indexed in
+[LITERATURE_FRONTIER.md](LITERATURE_FRONTIER.md). Optional, self-contained
+external audit tasks live under `contracts/`; their status is tracked through
+the parent study and agenda, separately from validated mathematical results.
+
 ## Root question and research tree
 
 ```text

@@ -25,6 +25,24 @@ internal audit claim, not a new independent certification.
 Proof status and implementation status are independent. A correct theorem can
 be misdetected in code; passing tests cannot establish a theorem.
 
+## Published landmarks identified by MATH-001
+
+These are statement-level source checks, not independent proof certifications.
+Precise hypotheses and versions are in [the literature map](LITERATURE_FRONTIER.md).
+
+| ID | Source and recorded role | Status |
+| --- | --- | --- |
+| `HW-CONSTR` | Haddley–Worsley, sections 3–6: constructive disk families; their full-classification conjectures remain separate. | Source constructions located; witnesses not yet replayed here. |
+| `KLV-3` | Kurusa–Lángi–Vígh, Theorem 1.1: classification with at most three Jordan tiles in the circular disk. | Published statement checked; proof not independently audited here. |
+| `NV-3` | Nagy–Vígh, Theorem 1.2: normal three-tile classification with explicit target and tile regularity. | Hypotheses checked; no promotion to an unrestricted theorem. |
+| `BL-3` | Basit–Lángi, Theorem 1: two/three-tile classifications of regular polygons. | Statement checked; different target boundary. |
+
+For `RSS-OVERLAP`/`RSS-ORB`, the cited KLV labels were matched to primary-source
+statements. The additional local inference is still pending audit under
+`MATH-002`; [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
+is ready for optional external review. No reply or independent acceptance has
+been recorded, and the statuses below are unchanged.
+
 ## Priority 1: claims with direct implementation dependencies
 
 | ID | Claim recorded by the source | Exact scope to preserve | Source and label | Implementation evidence | Review status |

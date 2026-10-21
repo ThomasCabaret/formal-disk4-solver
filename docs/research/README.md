@@ -108,8 +108,10 @@ or full graph-generator coverage without verifying the specific mode.
 ## Current continuation
 
 The initial inventory is complete; research continues through the live agenda.
-`SPEC-001` supplied the working problem contract, and `MATH-001` is selected
-for the next bounded iteration. Historical TODO lists do not select that work.
+`SPEC-001` supplied the working problem contract; `MATH-001` supplied a first
+[literature map](LITERATURE_FRONTIER.md). `VALID-001` is the next local iteration,
+with a mathematical audit available as an optional external contract.
+Historical TODO lists do not select that work.
 Proof audits, search experiments and algorithm choices must each satisfy the
 method above; completing the inventory did not validate the stored mathematics
 or select a winning search method.

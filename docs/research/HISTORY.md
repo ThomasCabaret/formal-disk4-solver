@@ -81,3 +81,30 @@ bounded literature-frontier investigation under MATH-001.**
 - Next: `MATH-001`, with a primary-source claim/hypothesis table as the bounded
   first deliverable. `VALID-001` remains the preemption path if a concrete
   soundness blocker is discovered. No solver change or research run was made.
+
+## 2026-10-21 — Literature map and optional external mathematical audits
+
+**Decision `D-007`: export precise natural subproblems as optional external
+LLM contracts, while continuing independent local work.**
+
+- Owner preference: another available LLM can address bounded proofs,
+  counterexamples or calculations without consuming the current agent quota.
+- Method: write self-contained contracts with parent, hypotheses, requested
+  result and acceptance checks. Preparation is distinct from submission and
+  validation; returned model output remains a candidate until checked.
+- First contract: `EXT-MATH-001`, the rotational Stein boundary-orbit argument
+  already used to constrain graph generation. No external transmission occurred.
+
+**Decision `D-008`: close the first MATH-001 literature pass and select
+known-witness validation as the independent local continuation.**
+
+- Artifact: [literature map](LITERATURE_FRONTIER.md) and
+  [study](studies/MATH-001-literature-frontier.md). Four primary papers supplied
+  constructions and restricted classifications; no full contemporary frontier
+  or independent proof audit was claimed.
+- `MATH-002` records the consequential `RSS-ORB` audit for external or local
+  work. Its dependencies matter because the generator excludes whole domains.
+- `VALID-001` is selected next: reconstruct one known 12-tile disk witness and
+  trace complete assembly checks. This can proceed without the optional audit
+  answer and provides ground truth before another algorithm comparison.
+- No solver changes, discovery runs, new filters or learning work occurred.
