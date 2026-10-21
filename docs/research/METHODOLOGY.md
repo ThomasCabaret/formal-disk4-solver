@@ -210,6 +210,31 @@ Keep public, reproducible rationale: premises, sources, alternatives considered,
 tests performed, outcomes and the decision made. Do not record unverifiable
 claims as established facts, and do not treat agreement between models as proof.
 
+### Optional external LLM contracts
+
+The owner can submit well-defined subproblems to another LLM without consuming
+this project's agent quota. Use this option when a natural research dependency
+has a precise, self-contained statement; do not manufacture extra subgoals just
+to delegate work. Mathematical proof audits, counterexample searches and finite
+calculations are suitable when their assumptions and checks can be specified.
+
+Write a compact Markdown contract under `docs/research/contracts/` with a stable
+ID and parent study/node. Include the complete problem, definitions, assumptions,
+source references, requested output (proof, counterexample or explicit gap),
+verification/acceptance criteria, and its effect on the parent decision. Supply
+all essential content in the contract so the recipient need not read the repo.
+Mark it `ready for external review`; do not claim it was sent or accepted merely
+because the file exists. Mention its path and purpose in the user-facing report.
+The owner handles transmission; creating a contract does not authorize sending
+repository contents or messages to an external service.
+
+An external answer is a candidate result until its arguments/calculations have
+been checked here. Preserve the returned answer or an exact reference, record
+gaps and the validation outcome in the parent study, then update the agenda and
+registry only as warranted. Failure or no reply leaves the question open and
+available to resume locally. Continue independent useful work while a contract
+is outstanding; external review is never an automatic blocker or proof oracle.
+
 ## Completion standard for one research turn
 
 A research turn is complete when it leaves:
@@ -221,5 +246,6 @@ A research turn is complete when it leaves:
 5. an explicit next decision or stopping condition.
 
 If the work is incomplete, leave the study resumable: exact stopping point,
-remaining uncertainty and next bounded action. Do not commit, delete historical
-data or launch an unbounded run without the user's authorization.
+remaining uncertainty and next bounded action. Make local commits according to
+the version-control policy above. Deleting historical data or launching an
+unbounded run still requires the user's authorization.
