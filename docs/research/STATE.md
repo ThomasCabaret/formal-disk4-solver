@@ -7,6 +7,16 @@ subtests); no research experiment or performance benchmark was rerun.
 “Present”, “previously tested” and a passing regression suite do not mean an
 approach is scientifically or end-to-end validated.
 
+## Research restart progress
+
+`SPEC-001` delivered [a working problem specification](PROBLEM_SPEC.md): the
+broad Jordan-region disk target, separate center predicates and three finite
+computational variants. Read-only code inspection traced the current graph,
+regularity and engine restrictions; it did not reveal a new demonstrated solver
+bug or establish complete validation. The next selected node is `MATH-001`,
+starting with a current primary-source map of constructions and obstructions.
+See [the study](studies/SPEC-001-problem-domain.md) for scope and remaining review.
+
 ## What the history supports
 
 - The owner reports rediscovery of known nontrivial 12-tile disk tilings under

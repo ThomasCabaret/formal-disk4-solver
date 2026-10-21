@@ -6,10 +6,13 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 ## Current selection
 
 - Active study: none.
-- Default next node: `SPEC-001`.
-- Reason: a finite computational problem and a broad mathematical existence
-  question are still conflated in parts of the historical project. This blocks
-  meaningful complexity claims, coverage arguments and fair algorithm designs.
+- Default next node: `MATH-001`.
+- Reason: `SPEC-001` now separates the working disk target, Stein, and three
+  computational variants. The next discriminator is the current published
+  frontier: identify what is known, under which hypotheses, before choosing a
+  proof audit or another algorithm experiment.
+- Latest completed iteration: [SPEC-001](studies/SPEC-001-problem-domain.md),
+  yielding [the working problem specification](PROBLEM_SPEC.md).
 - Override condition: a newly identified soundness failure in a direct-use
   theorem or positive control takes priority.
 
@@ -38,9 +41,9 @@ R0  Nontrivial monohedral tilings of the disk
 | ID | Status | Parent | Question and deliverable | Dependencies / resumption trigger |
 | --- | --- | --- | --- | --- |
 | `R0` | active | — | Find or understand nontrivial monohedral disk tilings; permit mathematical, constructive and computational outcomes. | Root objective. |
-| `SPEC-001` | selected | `R0` | State the unrestricted mathematical problem and two or three finite encodings, including nontriviality, reflections, regularity, contacts, embedding and certificate semantics. | None. Needed before rigorous complexity or coverage claims. |
+| `SPEC-001` | supported-in-scope | `R0` | [Working specification](PROBLEM_SPEC.md) and [study](studies/SPEC-001-problem-domain.md): broad Jordan-region target, center predicates, F1/F2/F3 and result semantics. | Delivered as a research contract; independent mathematical review remains pending. Revise if a later target needs different hypotheses. |
 | `VALID-001` | proposed | `R0` | Identify reproducible known witnesses without injecting them into discovery; test representation, formal acceptance, geometry and assembly separately. | Can begin after the hypothesis envelope from `SPEC-001` is stable enough. Preempts other work if a soundness bug appears. |
-| `MATH-001` | proposed | `R0` | Primary-source survey plus independent audit of the highest-consequence existing claims; identify genuinely disk-specific reductions and constructive families. | Scope supplied by `SPEC-001`; direct-use proof audit can start earlier if validation exposes it as a blocker. |
+| `MATH-001` | selected | `R0` | First iteration: primary-source claim/hypothesis map for `NT_center` and `STEIN`, including constructions and obstructions. Then select one high-consequence proof audit. | Working scope supplied by `SPEC-001`; begin with a bounded literature check, not a solver change. |
 | `APPLIED-001` | proposed | `MATH-001` | For one audited result, implement or evaluate the premise detector and measure sound selectivity/cost. | Requires an audited theorem and a trusted positive-control pack. |
 | `ALG-001` | proposed | `R0` | Clean-room comparison of formal-contour, incremental obligation, placement-first and constructive/constraint formulations. Deliver state, coverage and certificate analysis, not a large implementation. | Requires finite variants from `SPEC-001`; should use bottlenecks established by `VALID-001`. |
 | `ALG-002` | proposed | `ALG-001` | Implement the smallest discriminator for the most promising alternative and compare it on identical controls. | Requires `ALG-001` selection and `VALID-001`. |

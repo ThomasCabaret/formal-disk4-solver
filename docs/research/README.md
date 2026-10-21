@@ -6,6 +6,10 @@ already achieves it. Continue with the [operating method](METHODOLOGY.md), the
 [mathematical-results registry](MATHEMATICAL_RESULTS.md), and then
 [STATE.md](STATE.md) for the implementation landscape.
 
+The [working problem specification](PROBLEM_SPEC.md) defines the default
+nontriviality predicate, the separate Stein target and bounded computational
+variants. It was produced by [SPEC-001](studies/SPEC-001-problem-domain.md).
+
 ## Objective and scope
 
 Find and understand nontrivial monohedral tilings of the Euclidean disk: copies
@@ -101,9 +105,11 @@ Store generated artifacts in a dedicated `output/<study>/` directory, and keep
 enough provenance to distinguish runs. Do not assume checkpoint compatibility
 or full graph-generator coverage without verifying the specific mode.
 
-## Immediate boundary of this restart
+## Current continuation
 
-This restart organizes the project only. It does not launch searches, certify
-the stored mathematics, select a winning algorithm, resume learning, finish the
-V2 refactor, or delete historical work. The next research question is to be
-chosen explicitly after this inventory, not inherited from an old TODO list.
+The initial inventory is complete; research continues through the live agenda.
+`SPEC-001` supplied the working problem contract, and `MATH-001` is selected
+for the next bounded iteration. Historical TODO lists do not select that work.
+Proof audits, search experiments and algorithm choices must each satisfy the
+method above; completing the inventory did not validate the stored mathematics
+or select a winning search method.

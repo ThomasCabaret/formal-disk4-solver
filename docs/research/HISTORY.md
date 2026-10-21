@@ -60,3 +60,24 @@ historical experimental snapshot instead of deleting or partially restoring it.*
 - Consequence: the code remains available as a tested research artifact while
   `SPEC-001` and the research methodology, not old engineering checklists,
   continue to determine future work.
+
+## 2026-10-21 — First research iteration: problem specification
+
+**Decision `D-006`: adopt SPEC-001's working domain contract and select a
+bounded literature-frontier investigation under MATH-001.**
+
+- Artifact: [PROBLEM_SPEC.md](PROBLEM_SPEC.md), with
+  [study record](studies/SPEC-001-problem-domain.md).
+- Result: separated `NT_center` (some tile omits the center) from `STEIN`
+  (the center is interior to one tile), and bounded formal feasibility, exact
+  semialgebraic templates and numerical realization. Known positive existence
+  for the first predicate is not itself the remaining discovery question.
+- Read-only audit: the present simple planar 3-connected graph generator and
+  finite regular boundary representation are explicit restrictions, with no
+  general completeness theorem supplied by this iteration.
+- Alternatives: immediately extend Contact V2, rerun searches, or audit an
+  isolated lemma. First identify the present published frontier and choose
+  which proof/constructive question would actually advance `R0`.
+- Next: `MATH-001`, with a primary-source claim/hypothesis table as the bounded
+  first deliverable. `VALID-001` remains the preemption path if a concrete
+  soundness blocker is discovered. No solver change or research run was made.

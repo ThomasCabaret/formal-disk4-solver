@@ -11,6 +11,11 @@ and the [mathematical-results registry](MATHEMATICAL_RESULTS.md) before treating
 a filter as a theorem. The [state inventory](STATE.md) records which
 implementations currently exist.
 
+The current mathematical and computational domains are defined in
+[PROBLEM_SPEC.md](PROBLEM_SPEC.md), from `SPEC-001`. Its default `NT_center`
+predicate and stronger `STEIN` target must not be inferred from graph or UI
+categories.
+
 ## Root question and research tree
 
 ```text
