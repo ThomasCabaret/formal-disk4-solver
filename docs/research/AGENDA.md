@@ -6,10 +6,11 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 ## Current selection
 
 - Active study: none.
-- Default next node: `VALID-001`.
-- Reason: the first literature pass located constructive source families;
-  reconstruct one explicit 12-tile disk witness and establish which complete
-  geometry/assembly checks pass before benchmarking another search.
+- Default next node: none selected; discuss the next target with the owner.
+- Reason: the owner requests a plain-language explanation of a target's value
+  before starting it and emphasizes original mathematical research. The
+  proposed 12-tile acceptance control has not been started and is not a default
+  prerequisite for new mathematics.
 - Latest completed iteration: [MATH-001](studies/MATH-001-literature-frontier.md),
   yielding [the literature map](LITERATURE_FRONTIER.md).
 - Optional external audit: [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
@@ -31,6 +32,8 @@ R0  Nontrivial monohedral tilings of the disk
 |   +-- MATH-002 Audit rotational Stein boundary-orbit necessity (RSS-ORB)
 |   `-- APPLIED-001 Promote one audited high-leverage result into a tested reduction
 |
++-- MATH-003  Original mathematics: test the minimal two-orbit Stein architecture
+|
 +-- ALG-001   Compare fundamentally different search representations
 |   `-- ALG-002 Test one minimal alternative against the trusted control pack
 |
@@ -45,9 +48,10 @@ R0  Nontrivial monohedral tilings of the disk
 | --- | --- | --- | --- | --- |
 | `R0` | active | — | Find or understand nontrivial monohedral disk tilings; permit mathematical, constructive and computational outcomes. | Root objective. |
 | `SPEC-001` | supported-in-scope | `R0` | [Working specification](PROBLEM_SPEC.md) and [study](studies/SPEC-001-problem-domain.md): broad Jordan-region target, center predicates, F1/F2/F3 and result semantics. | Delivered as a research contract; independent mathematical review remains pending. Revise if a later target needs different hypotheses. |
-| `VALID-001` | selected | `R0` | First iteration: reconstruct one known 12-tile disk witness, recording prototype, congruences, contacts and coverage checks independently of discovery. | `SPEC-001` scope and `MATH-001` constructive sources are available. Stop with an inspectable witness and check matrix, or a precisely located validation gap. |
+| `VALID-001` | proposed | `R0` | Acceptance control: supply an already known tile AND its known placements, then test the existing representation and disk/assembly checks. This is software validation, not a new packing algorithm. | Useful before trusting that software's discovery outputs; not required before independent mathematics. Not started; its priority is under discussion. |
 | `MATH-001` | supported-in-scope | `R0` | First [literature pass](LITERATURE_FRONTIER.md) and [study](studies/MATH-001-literature-frontier.md) completed: four primary sources and explicit search limitations. | Proof audits and a comprehensive literature frontier remain open; no complete classification asserted. |
 | `MATH-002` | proposed | `MATH-001` | Audit `RSS-OVERLAP`/`RSS-ORB`: do the precise Jordan/rotation hypotheses force two boundary-reaching orbits and centered matching? | [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready for optional external review; can also be pursued locally. Only conclusions relying on this theorem await its validation; independent work continues. |
+| `MATH-003` | proposed | `R0` | Original-mathematics candidate: can a rotational Stein tiling have exactly two moving tile orbits (`N=2m+1`, `m>=2`), or can a new obstruction exclude all or some of them? | Natural unresolved target in `rotational_stein_structural_note.tex`. Any argument using its orbit/dihedral reductions must audit those premises; no new proof or novelty certification is claimed. Discuss scope/value before starting. |
 | `APPLIED-001` | proposed | `MATH-001` | For one audited result, implement or evaluate the premise detector and measure sound selectivity/cost. | Requires an audited theorem and a trusted positive-control pack. |
 | `ALG-001` | proposed | `R0` | Clean-room comparison of formal-contour, incremental obligation, placement-first and constructive/constraint formulations. Deliver state, coverage and certificate analysis, not a large implementation. | Requires finite variants from `SPEC-001`; should use bottlenecks established by `VALID-001`. |
 | `ALG-002` | proposed | `ALG-001` | Implement the smallest discriminator for the most promising alternative and compare it on identical controls. | Requires `ALG-001` selection and `VALID-001`. |

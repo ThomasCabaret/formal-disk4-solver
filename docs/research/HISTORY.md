@@ -108,3 +108,21 @@ known-witness validation as the independent local continuation.**
   trace complete assembly checks. This can proceed without the optional audit
   answer and provides ground truth before another algorithm comparison.
 - No solver changes, discovery runs, new filters or learning work occurred.
+
+## 2026-10-21 — Original mathematics and explicit target discussion
+
+**Decision `D-009`: make original mathematical creation an explicit expected
+outcome, and revisit the proposed validation priority before starting it.**
+
+- Owner clarification: literature and audits support creating new mathematics;
+  the programme must attempt new theorems, constructions and reductions.
+- Every proposed study must explain in plain French its actual operations,
+  output and benefit to the disk objective. The owner requests discussion of
+  the next target before work begins.
+- `VALID-001` returns to proposed: its intended work was acceptance testing of
+  a known shape with known placements, not discovering an arrangement or
+  improving search. No such study or run was started.
+- `MATH-003` records a proposed original question on the minimal two-orbit
+  Stein architecture already isolated in the local note. It is not selected,
+  proved, or certified new in the literature. No new research study begins in
+  this documentation/discussion turn.

@@ -24,6 +24,40 @@ cycle. A mathematical result may preempt an algorithm study; a validation bug
 may suspend mathematical interpretation; a complexity result may redirect the
 entire computational programme.
 
+## Original research is the objective
+
+Agents are expected to create mathematics: propose and attempt proofs of new
+theorems, constructions, necessary conditions and algorithmic reductions that
+advance the disk-tiling problem. Literature review and proof audits support
+that work; they are not the programme's endpoint. Once enough background is
+available to formulate a precise question, pursue the original question instead
+of repeatedly postponing it for further surveys or housekeeping.
+
+For each proposed result, distinguish the new claim from known premises, search
+for counterexamples, record proof gaps and check possible prior art. Attribute
+LLM-generated work and keep it available for review. A result can be new to this
+project before its literature novelty or proof has been independently checked;
+record those statuses separately. A failed proof attempt should leave its
+obstruction or remaining subproblem explicit.
+
+Program validation is required when drawing conclusions from program outputs.
+It is not a prerequisite for independent mathematical research. A validation
+task must name the particular research decision it enables; it does not become
+the default merely because a known example can be reconstructed.
+
+## Explain the next study before starting
+
+Describe each proposed target in plain French: what question will be answered,
+whether the work is new mathematics, algorithm design or program validation,
+what will actually be done, and how either outcome changes the disk-tiling
+research. State the assumptions and the smallest useful deliverable. An ID or
+technical phrase such as "reconstruct a witness" is not an explanation.
+
+When the owner asks to discuss a target before work begins, leave it proposed
+and allow that discussion before starting it. An ordinary request to continue
+research still authorizes a clearly announced bounded iteration; do not add a
+routine approval barrier to every action.
+
 ## Repository record
 
 The maintained research memory is split by purpose:

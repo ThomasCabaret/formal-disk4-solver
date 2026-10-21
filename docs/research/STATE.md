@@ -19,7 +19,9 @@ See [the study](studies/SPEC-001-problem-domain.md) for scope and remaining revi
 The first `MATH-001` pass produced [a literature map](LITERATURE_FRONTIER.md).
 It identified constructive control families and restricted classifications,
 but did not settle the current general Stein question or audit the local
-stronger theorems. `VALID-001` is selected next. The optional
+stronger theorems. The next target is under discussion with the owner;
+`VALID-001` was proposed but has not started. Original mathematical creation
+is an explicit objective; `MATH-003` records one proposed direction. The optional
 [external RSS-ORB audit](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready
 for submission by the owner; it has no returned answer and blocks no independent
 local validation. No solver or search-performance evidence changed.

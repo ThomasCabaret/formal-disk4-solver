@@ -9,6 +9,11 @@ families, disk-specific reductions and algorithm design are all valid routes
 to that objective. The formal-contour approach is one investigated route, not
 a requirement imposed on future research.
 
+Producing **original mathematics** is a central expected outcome: new theorems,
+constructions, obstructions and algorithmic reductions. Reading existing work
+establishes context and checks novelty; research must also attempt new results.
+LLM-originated proofs belong in this programme and require explicit review.
+
 **Start here:** [research charter and method](docs/research/README.md), then the
 [research operating method](docs/research/METHODOLOGY.md),
 [live agenda](docs/research/AGENDA.md),

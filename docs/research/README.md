@@ -18,6 +18,13 @@ interior overlaps or gaps. Known nontrivial examples are controls, not the final
 discovery target. Rediscovering them is useful for validation but is not itself
 a new mathematical result. Sector/pizza tilings are elementary controls.
 
+Producing original mathematics is a central project objective and an expected
+part of an agent's work: formulate and attempt to prove new theorems, develop
+new constructions and derive new obstructions or algorithmic reductions.
+Literature review supplies context and a novelty check; absence of a published
+answer is a reason to investigate, not to stop at a bibliography. Preserve
+LLM-generated arguments with their assumptions, gaps and review status.
+
 The exact meaning of **nontrivial** must be specified for each investigation.
 Do not identify it solely with a contact-graph shape or a dashboard category.
 Likewise record tile connectedness, boundary regularity, permitted reflections,
@@ -109,8 +116,10 @@ or full graph-generator coverage without verifying the specific mode.
 
 The initial inventory is complete; research continues through the live agenda.
 `SPEC-001` supplied the working problem contract; `MATH-001` supplied a first
-[literature map](LITERATURE_FRONTIER.md). `VALID-001` is the next local iteration,
-with a mathematical audit available as an optional external contract.
+[literature map](LITERATURE_FRONTIER.md). The next study is currently under
+discussion with the owner; no new research run or proof study is active.
+The proposed known-witness validation and original-mathematics targets are
+listed in the agenda, with an audit available as an optional external contract.
 Historical TODO lists do not select that work.
 Proof audits, search experiments and algorithm choices must each satisfy the
 method above; completing the inventory did not validate the stored mathematics
