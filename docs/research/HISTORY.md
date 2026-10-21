@@ -283,3 +283,42 @@ as explicitly scoped drafts. Next study the surviving direct-match branch.**
 - The methodology now explicitly asks every research report to finish with
   the next bounded action and its parent benefit, as requested by the owner.
   No solver code, runs, histories or checkpoints changed; no push.
+
+## 2026-10-21 — Prioritize contour tractability and alternative formulations
+
+**Decision `D-015`: park the orbit-proof continuation; prioritize CPLX-001,
+complete the first CPLX-002 structural diagnostic, and select CPLX-003's
+compact decorated-interval contract. ALG-001 is the second strategic priority.**
+
+- The owner challenged continued local orbit pruning and explicitly authorized
+  this reprioritization and first investigation. Path:
+  `R0 -> CPLX-001 -> CPLX-002`; result returned to `CPLX-001`. The next sibling
+  is `CPLX-003`. No active solver run was stopped or replaced.
+- Code tracing found constant-free signed cyclic-factor equations at fixed
+  incidence, with separate circle/free metadata and later decorated constraints.
+  Contact V2 already includes corners and metric propagation; its full state is
+  not misclassified as a plain word equation. Fixed graph is not fixed incidence.
+- [Proof note](../contour_word_structure.tex) derives bare existence from
+  positive linear feasibility via a common involution-fixed block. This simple
+  construction is not claimed novel. It does not replace the supported-family
+  solver: its extra identifications can make the circle/angle constraints fail.
+- A signed positional double cover reduces prescribed-integer-word-length
+  consistency to two unsigned interval-orbit counts; the published AHT theorem
+  supplies a polynomial bound for that subtask. Unknown physical lengths,
+  decorated constraints and recovery of geometry-relevant families remain open.
+  No AHT implementation, general tiling hardness or practical speedup is claimed.
+- [Probe](../../scripts/research/probe_contour_words.py): 164 small fixed-length
+  systems matched exhaustive binary-involution search. Thirty exact LP-derived
+  unknown-length witnesses were checked by substitution; 134 LPs were infeasible.
+  On four actual small compiler cases all bare witnesses passed; the two disk
+  witnesses failed decoration while ordinary families on the same placements
+  passed profile filters. The two free cases built profiles only, not geometry.
+- Fifteen targeted existing tests passed. No full regression/geometry audit or
+  discovery run was performed. The generated JSON is under `output/CPLX-002/`
+  and excluded from commits. No production solver code, environment, learned
+  policy, existing history or checkpoint changed.
+- Next: make the fixed-length interval/type/corner contract precise and find
+  a small discriminator before any kernel rewrite. Alternative discovery
+  formulations remain selected second; the orbit drafts and their unaccepted
+  status are preserved with a resumption trigger. The research agenda, not an
+  old implementation checklist or a generic hardness citation, selects work.

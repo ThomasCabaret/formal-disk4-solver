@@ -1,5 +1,11 @@
 # MATH-004 — Boundary constraints with more than two moving orbits
 
+Priority update, 2026-10-21: the owner parked the proposed three-orbit
+continuation in favor of `CPLX-001`/`CPLX-002` (contour tractability) and
+`ALG-001` (alternative discovery formulations). Preserve these proof drafts;
+resume this branch on a new priority decision or if a specific result is needed
+by those studies. The former next-action text below is historical, not default.
+
 ## Identity
 
 - Node / parent: `MATH-004` / `APP-IMP`.

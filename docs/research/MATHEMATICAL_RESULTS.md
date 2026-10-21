@@ -94,6 +94,26 @@ with multiple arc classes or an inner tile partition remain open. Independent
 review is deferred by the owner, not completed or required before conditional
 mathematical exploration; no production rejection may assume acceptance.
 
+## CPLX-002 — formulation reductions, not a tiling complexity classification
+
+Source: [contour_word_structure.tex](../contour_word_structure.tex), with
+[study and implementation trace](studies/CPLX-002-contour-word-structure.md).
+New deductions are proof drafts, not independently accepted or enabled in
+production. The elementary periodic construction is not claimed as novel.
+
+| ID | Statement / precise scope | Evidence and limitations |
+| --- | --- | --- |
+| `CWS-BARE` | A finite constant-free non-erasing word system with reversal-complement involution has a solution iff its unsigned occurrence matrix has a positive real null vector. Thus bare existence is polynomial rational linear feasibility. | `prop:bare`: clear denominators and use `X_i=(a*bar(a))^n_i`. No group cancellation, constant strings, fixed exact word lengths, curve types, angle constraints or geometry. Binary-exponent witness is small; expanded output can be exponential. No production substitution. |
+| `CWS-CHARGE` | That particular universal periodic witness has zero value for every additive observable negated by the anti-involution, so cannot satisfy a positive such observable on an outer factor. | `prop:charge`; explains why cheap bare satisfiability does not solve the circle-decorated system. Does not exclude all periodic contours or show every formal solution is degenerate. |
+| `CWS-COVER` | For prescribed positive integer word lengths, bare signed consistency is equivalent to `c_cover=2*c`, where `c` counts unsigned positional orbits and `c_cover` counts their signed double cover. | `prop:cover`; using AHT gives a polynomial test in syntax size and `log(sum L_i)`. Local lift proof is a draft; 164 explicit small checks matched brute force. Unknown lengths, typed geometry and useful family extraction remain outside scope; no AHT implementation. |
+| `AHT-ORBIT` | Integer interval-pairing orbits can be counted in time polynomial in pairing count and binary interval-size encoding. | Published [Agol–Hass–Thurston v2, Theorem 12](https://arxiv.org/html/math/0205057v2), statement and algorithm consulted; not independently audited end to end. Invoked only for interval counting, not knot-genus hardness or tiling tractability. |
+
+The full decorated subclass is not thereby in P, NP-hard, PSPACE-complete or
+classified as decidable without bounds. General word-equation results with
+constants/rational constraints do not transfer without a matching reduction.
+The diagnostic includes four actual compiler cases and two ordinary positive
+profile controls, not a discovery-performance benchmark or geometry validation.
+
 ## Priority 1: claims with direct implementation dependencies
 
 | ID | Claim recorded by the source | Exact scope to preserve | Source and label | Implementation evidence | Review status |

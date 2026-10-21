@@ -36,6 +36,15 @@ The capacity bound does not use the connected-trace draft; the stronger
 boundary consequences explicitly do. No unconditional general Stein exclusion
 or automatic symmetry extension to inner tiles is asserted.
 
+Current owner priority has moved back to formulation tractability:
+[CPLX-002](studies/CPLX-002-contour-word-structure.md) traces the actual
+constant-free word input and gives [scoped reductions](../contour_word_structure.tex).
+Bare existence has a positive-LP construction; prescribed integer word lengths
+have a signed interval-cover consistency test using published orbit counting.
+Neither supplies the decorated families needed for geometric discovery. Next
+is `CPLX-003`, a precise compact interval/type/corner contract. Orbit continuation
+is parked; genuinely alternative discovery formulations remain second priority.
+
 ## Stable map of research areas (not the live question tree)
 
 The authoritative root-to-approach-to-study hierarchy is in
@@ -208,3 +217,22 @@ hypothesis detector.
 
 These are branches, not an automatically authorized implementation backlog.
 Each next step starts with one study record and one falsifiable question.
+
+## Formulation-complexity boundary from CPLX-002
+
+```text
+Fixed graph
+  -> still choose charts, parity, endpoint incidence and weak order
+Fixed incidence -> constant-free signed word equations
+  +-> bare non-erasing existence -> CWS-BARE (positive LP, proof draft)
+  +-> prescribed integer word lengths -> CWS-COVER (signed interval orbits)
+  `-> geometry-relevant identifications + corner/circle/metric constraints
+       -> actual unresolved tractability target, CPLX-003
+```
+
+The easy existential witness can identify too many factors and fail disk
+decoration. It is not a complete family description and must not replace the
+word engine silently. Conversely an explicit word or family expansion may be
+huge even when a compressed representation is small. Fixed-length orbit counts
+alone do not reconstruct all geometry-relevant curve classes. No result here
+decides the unknown-length decorated problem or the unrestricted tiling problem.

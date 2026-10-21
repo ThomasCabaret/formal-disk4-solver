@@ -1,0 +1,215 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,amsthm}
+\usepackage[a4paper,margin=27mm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}[proposition]{Corollary}
+\newcommand{\rev}{\operatorname{rev}}
+\title{Which part of contour word solving is intrinsically difficult?}
+\author{CPLX-002 --- LLM-generated research note and proof drafts}
+\date{21 October 2026}
+\begin{document}
+\maketitle
+
+\noindent\textbf{Status.} The elementary reductions below are proof drafts,
+not independently accepted results or enabled solver replacements. They classify
+specific finite algebraic tasks, not the existence of disk tilings. Their
+elementary periodic construction is not claimed as a new literature theorem.
+The interval-orbit algorithm cited below is published; its application to our
+signed position constraints is derived here. No end-to-end speedup is claimed.
+
+\section{Extracted input, and a crucial distinction}
+
+At fixed finite incidence and weak contour order, the compiler in
+\texttt{words/compile.py} creates one variable $X_i$ per atomic prototype
+interval. The prototype is the cyclic sequence $X_0\cdots X_{p-1}$.
+An interface equates two oriented cyclic factors, possibly on separate direct
+and mirror sheets. Each is a proper factor without repeating an atomic
+variable on that side. Across all equations a variable may appear many times;
+this is not a guarantee of a globally quadratic system. Reflections introduce
+variables $M_i$, and optional intrinsic symmetry introduces a sector variable
+and a power equation. None is a \emph{constant letter}.
+
+An occurrence $X^{-1}$ means an anti-involution $\mu$: reverse the sequence
+and exchange every letter with its opposite. There is \emph{no free-group
+cancellation} $a\bar a=1$. For instance, $a\bar a$ is a nonempty word fixed
+by $\mu$. This is also how \texttt{words/algebra.py} and the palindrome branch
+operate. In particular, the input is not an arbitrary word equation with
+prescribed constant strings or arbitrary regular constraints.
+
+The compiler stores outer-arc words as metadata; their curvature, endpoint and
+angle requirements are not constant letters in the bare word equation.
+Contact V2 also propagates explicit corners and metric constraints before the
+leaf solver. Neither that decorated partial state nor the full geometric
+problem is classified by the bare-word statements below.
+
+\section{Constant-free existence is linear feasibility}
+
+Let $E$ be a finite system of equations between words in variables
+$X_1,\ldots,X_p$ and their $\mu$-images, with no constant letters. All
+variable images must be nonempty finite words in an alphabet containing at
+least one opposite pair $a,\bar a$, $\bar a\ne a$.
+For each equation make one integer row by counting variable occurrences on
+the left minus the right, ignoring inverse flags; let $A$ be the resulting
+matrix.
+
+\begin{proposition}[Bare existence]\label{prop:bare}
+The following are equivalent:
+\begin{enumerate}
+\item $E$ has a non-erasing solution over a free monoid with this anti-involution.
+\item $A n=0$ has a strictly positive integer solution.
+\item $A x=0$ has a strictly positive real solution.
+\end{enumerate}
+This bare decision problem is in polynomial time in the explicit equation
+input size. A witness may require exponentially many letters when expanded;
+a witness encoded by binary exponents has polynomial-size description.
+\end{proposition}
+
+\begin{proof}
+Word lengths prove (1)$\Rightarrow$(2), and (2)$\Rightarrow$(3) is immediate.
+For (3)$\Rightarrow$(2), scale a positive real solution so every coordinate
+is at least one. The nonempty rational polyhedron $A x=0$, $x_i\geq1$
+has a rational point. Clearing denominators gives positive integers $n_i$.
+
+Put $w=a\bar a$, so $\mu(w)=w$, and assign $X_i=w^{n_i}$. Both $X_i$
+and $\mu(X_i)$ become the same power of $w$. Each equation becomes equality
+of powers whose exponents differ by one row of $A n=0$. This proves (1).
+
+Rational linear feasibility is polynomial-time decidable. Standard rational
+polyhedron bounds give a feasible rational vector of polynomial encoding
+length; clearing its denominators still has polynomial encoding length.
+The assignment $X_i=(a\bar a)^{n_i}$ therefore gives a succinct witness.
+This is not a claim that the repository's simplex implementation has a
+polynomial worst-case pivot count.
+\end{proof}
+
+Additional homogeneous rational constraints on the lengths can be included in
+the same argument when they are invariant under positive scaling. Mirror-pair
+length equalities are an example. Fixed constants, prescribed noncommuting
+letter types, exact prescribed odd word lengths, reduced words, fixed alphabet
+restrictions excluding $a\bar a$, and point/curve decorations are not silently
+included. In particular $X=\mu(X)$ has a nonempty solution but has none of
+\emph{exactly one letter} over the stated fixed-point-free alphabet.
+
+As a succinctness control, the constant-free system
+$X_i=X_{i+1}X_{i+2}$ ($0\leq i\leq n-2$), $X_{n-1}=X_n$, has minimum
+positive lengths growing as Fibonacci numbers. Its size is linear in the
+number of variable occurrences, up to identifier encoding. All equation sides
+are proper factors of the same cyclic order $X_0\cdots X_n$ when $n\geq3$.
+This shows exponential \emph{expanded output} even in that syntactic factor
+class; it is not a proof that this family comes from valid embedded tile maps,
+nor a hardness result for tiling or for succinct existence.
+
+\section{Why the cheap witness does not solve the disk problem}
+
+\begin{proposition}[Loss of a signed additive observable]\label{prop:charge}
+Let $\chi$ be any additive real-valued observable on terminal words with
+$\chi(\mu U)=-\chi(U)$. The witness in Proposition \ref{prop:bare} assigns
+zero $\chi$ to every variable and every compiled word.
+It cannot satisfy a requirement $\chi(U)>0$ on an outer factor.
+\end{proposition}
+
+\begin{proof}
+$\chi(a\bar a)=\chi(a)-\chi(a)=0$. Additivity proves the assertion.
+\end{proof}
+
+An oriented circular-radius measure in the finite decorated-curve model is
+such an observable: a nondegenerate positively traversed exterior circle arc
+has positive measure, and reversing traversal negates it. This is a typed
+geometric constraint, not a bare constant-free equation. We do not identify
+word length with physical arclength, nor assert that all adjacent opposite
+curve-template occurrences geometrically retrace one another.
+
+Even linear observables do not capture every consequence. The classical
+commutation fact $XY=YX$ implies $X=u^s$, $Y=u^t$ for a nonempty $u$ and
+positive integers $s,t$. A short proof removes a shorter common prefix and
+inducts on $|X|+|Y|$. For any positive additive metric $\ell$ and additive
+observable $\chi$, this forces
+\[
+ \chi(X)\ell(Y)=\chi(Y)\ell(X).
+\]
+Length balance and the signed additive row of $XY=YX$ alone do not express
+that consequence: both rows are identities. For example equal positive
+metric lengths and different prescribed $\chi$ are incompatible with
+commutation. This is an explanatory algebraic example, not an asserted
+compiler-generated disk obstruction or a new commutation theorem.
+
+\section{Fixed word lengths admit a compressed positional test}
+
+Now prescribe positive \emph{integer word lengths} $L_i$ in binary and let
+$N=\sum_i L_i$. These are not unknown physical arclengths. Store the letter
+positions of each variable in one contiguous block of $[1,N]$.
+Each aligned part of an equation gives a bijection between two integer
+subintervals, order-preserving or order-reversing, and a sign
+$\epsilon\in\{0,1\}$ meaning that the corresponding letters agree or are
+opposites. Merge the factor boundaries on the two equation sides; this creates
+only a linear number of such pairings in the explicit equation size, without
+expanding the $L_i$ positions. Unequal total side lengths reject immediately.
+
+Let $c$ count orbits of these pairings with their signs forgotten. Form a
+double cover with positions $(p,b)$, $1\leq p\leq N$, $b\in\{0,1\}$,
+and lift every relation $p\sim q$ of sign $\epsilon$ to
+\[
+ (p,b)\sim(q,b\mathbin{\oplus}\epsilon),\qquad b=0,1.
+\]
+Lay the sheets in successive blocks of $[1,2N]$, giving another collection
+of integer interval pairings; let $\widetilde c$ be its orbit count.
+
+\begin{proposition}[Signed double-cover criterion]\label{prop:cover}
+The prescribed-length constant-free system is satisfiable if and only if
+\[
+ \widetilde c=2c.
+\]
+Using the published Agol--Hass--Thurston interval orbit-counting theorem
+\cite[Theorem 12]{AHT}, the test takes polynomial time in the explicit
+equation size and $\log N$.
+\end{proposition}
+
+\begin{proof}
+For each unsigned orbit the double cover has two components unless a closed
+path has odd total sign. Such an odd path joins $(p,0)$ to $(p,1)$ and makes
+the cover connected over that orbit. It would require one letter to equal its
+opposite, forbidden by the alphabet involution. Thus $\widetilde c=2c$
+holds exactly when every orbit is sign-consistent. In that case choose $a$
+on one lifted component of each orbit and $\bar a$ on its mate; this assigns
+consistent letters and solves all equations. Necessity is the same argument
+applied to any word solution. Both orbit counts are AHT instances of polynomial
+description size, proving the bound.
+\end{proof}
+
+This tests consistency, not preservation of every useful distinct curve class,
+geometric coordinates, corner angles, circular signs or unknown-length choices.
+The number of orbits alone is insufficient input for the geometry engine.
+Recovering a geometry-compatible succinct representation remains an obligation;
+the theorem does not license guessing one length vector and declaring all
+others exhausted. No AHT implementation or practical speedup is supplied here.
+
+\section{Consequences for the research choice}
+
+The current word layer is not justified as a necessary NP-hard bare feasibility
+test merely because it traverses many Nielsen branches. Its main role is to
+produce factor-identification families for the decorated/geometric stages.
+Those families cannot be replaced by the single periodic witness without
+discarding possible geometric solutions. The useful next question is whether
+the identifications and their circle/corner constraints can be propagated in
+a succinct interval representation before enumerating full word families.
+
+General word-equation complexity \cite{Jez,DJP} does not classify this decorated
+subclass. The bare result above also does not classify it. A fixed graph leaves
+incidence choices, refinement size and metric/geometry choices unresolved.
+The next iteration must target that remaining problem, not claim that an LP
+now solves monohedral disk tilings.
+
+\begin{thebibliography}{3}
+\bibitem{Jez} A. Je\.{z}, \emph{Word equations in linear space},
+\href{https://arxiv.org/abs/1702.00736}{arXiv:1702.00736v2}.
+\bibitem{DJP} V. Diekert, A. Je\.{z}, W. Plandowski,
+\emph{Finding All Solutions of Equations in Free Groups and Monoids with Involution},
+\href{https://arxiv.org/abs/1405.5133}{arXiv:1405.5133v2}.
+\bibitem{AHT} I. Agol, J. Hass, W. P. Thurston,
+\emph{The Computational Complexity of Knot Genus and Spanning Area},
+\href{https://arxiv.org/html/math/0205057v2}{arXiv:math/0205057v2}, Section 4,
+Theorem 12. Only interval orbit counting is invoked, not knot-genus hardness.
+\end{thebibliography}
+\end{document}

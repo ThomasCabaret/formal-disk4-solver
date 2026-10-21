@@ -87,8 +87,31 @@ it cannot introduce a new placement solver as an unstated prerequisite.
 
 `MATH-003` (two moving orbits in a rotational Stein tiling) was subsequently
 selected by the owner and delivered a [proof draft](studies/MATH-003-two-orbit-stein.md),
-not an accepted theorem or production gate. Its proposed exclusion returns to
-`APP-IMP` with independent review as the next bounded action. Larger orbit
-counts and other approaches have not been automatically selected.
+not an accepted theorem or production gate. The owner subsequently deferred
+independent review and selected a many-orbit generalization (`MATH-004`), then
+parked that continuation to prioritize formulation tractability. These changes
+do not promote any proof to independent acceptance.
 `EXT-MATH-001` can review an existing lemma and `EXT-MATH-002` the new argument;
 both are ready, not submitted, and do not determine other research priorities.
+
+## Current strategic priorities
+
+1. **Contour tractability (`CPLX-001`).** At fixed graph, separate incidence
+   choices, bare signed words, decorated families and geometric realization.
+   Seek exploitable structural restrictions or an appropriately scoped hardness
+   reduction, with practical consequences. General word-equation complexity is
+   not automatically the complexity of this subclass.
+2. **Alternative unknown-tile discovery formulations (`ALG-001`).** Compare
+   representations that do not require explicit contour-family enumeration.
+   Do not assume they are easier, require known prototype shapes, or implement
+   a large replacement engine before a meaningful small discriminator.
+
+[CPLX-002](studies/CPLX-002-contour-word-structure.md) supplied the first
+diagnostic: bare constant-free existence admits a positive-LP construction,
+but that collapsed witness can fail disk decoration; a signed interval-cover
+test addresses prescribed integer word lengths without listing all positions.
+`CPLX-003` next asks what useful circle/corner constraints admit a compact
+representation. Unknown metric choices and realizability remain unresolved.
+No complexity theorem has condemned the whole programme or established a
+practical scalable solver. A worst-case hardness result would still leave
+parameterized, restricted-class and large practical improvements possible.

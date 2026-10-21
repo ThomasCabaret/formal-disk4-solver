@@ -126,9 +126,14 @@ The initial inventory is complete; research continues through the live agenda.
 [MATH-003 iteration](studies/MATH-003-two-orbit-stein.md) delivered a proposed
 two-orbit Stein exclusion. The owner then deferred independent review and
 selected generalization: [MATH-004](studies/MATH-004-multiple-orbit-boundary.md)
-delivered many-orbit boundary and mirror-capacity drafts. Next is the surviving
-orientation-preserving matching branch, not a code change. Earlier proof
-dependencies remain unaccepted and explicitly conditional where used.
+delivered many-orbit boundary and mirror-capacity drafts. Their continuation
+is now parked at the owner's request. The priority is structural tractability
+of the contour formulation (`CPLX-001`), with alternative unknown-tile discovery
+formulations (`ALG-001`) second. [CPLX-002](studies/CPLX-002-contour-word-structure.md)
+distinguished easy bare word existence from geometry-relevant family search;
+next is a compact signed-interval constraint contract (`CPLX-003`), not an
+immediate kernel rewrite. Earlier proof dependencies remain unaccepted and
+explicitly conditional where used.
 No research computation is running from those studies.
 The known-shape/placement replay proposal is withdrawn. Original-mathematics
 targets are traced in the agenda, with existing-lemma and new-proof audits

@@ -76,9 +76,35 @@ full nonexistence theorem.
 The exact obstruction to copying the old global argument is now explicit:
 an outer-shell symmetry may preserve the remaining region without preserving
 its inner tile partition. The orientation-preserving centered-match branch
-survives, particularly with three moving orbits. That is the next proposed
-mathematical target. No code, discovery run, checkpoint or performance evidence
+survives, particularly with three moving orbits. That continuation is now parked
+after the owner's formulation-complexity recadrage. No production code, discovery run, checkpoint or performance evidence
 changed; all statements remain proof drafts, and novelty is not certified.
+
+### Current priority: contour tractability, CPLX-002
+
+The owner prioritized the actual complexity of contour solving and a second
+track comparing alternative discovery formulations. The first
+[CPLX-002 study](studies/CPLX-002-contour-word-structure.md) traces the bare
+compiler input as constant-free signed word equations. It proposes an elementary
+positive-LP existence reduction and a fixed-integer-length signed interval-cover
+test. These are precise subproblems, not classifications of the full decorated
+or geometric problem. New mathematical deductions remain proof drafts.
+
+The isolated probe matched its explicit signed-cover test with exhaustive
+one-opposite-pair word search on 164 small systems. All four actual small compiler
+controls had direct periodic word witnesses; both disk ones failed angular
+decoration, while ordinary families on those same placements passed profile
+filters. The two free-exterior probes built formal profiles only. No geometry
+was run. Fifteen targeted existing tests passed; there was no full regression
+run or claim that the historical solver is now validated.
+
+This changes the explanation being investigated: large family enumeration is
+not necessary just to answer bare word satisfiability; preserving identifications
+that may satisfy circle/corner geometry is the actual unresolved task.
+`CPLX-003` will define that compact-constraint task before any new kernel. No
+production solver code, learned policy, active search, checkpoint or environment
+was changed. The small generated JSON under `output/CPLX-002/` is uncommitted.
+No end-to-end speedup or impossibility/hardness theorem was obtained.
 
 ## What the history supports
 
