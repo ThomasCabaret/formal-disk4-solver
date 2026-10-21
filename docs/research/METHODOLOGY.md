@@ -118,13 +118,26 @@ covered. A timeout normally produces `inconclusive`, not `rejected-in-scope`.
 
 ## Choosing the next target autonomously
 
+Start from the unresolved mathematical parent and the priorities in
+[ROADMAP.md](ROADMAP.md): attempt impossibility/classification first, then
+existence arguments (including nonconstructive ones), while extracting useful
+structural consequences. Algorithm work must address the remaining degrees of
+freedom. These priorities may change for a stated mathematical reason; a failed
+bounded proof attempt is not evidence that no proof exists or that a tiling does.
+
+Require a path from each task to a parent decision: what changes if it succeeds,
+fails, or is inconclusive? Do not choose a task because a module, known example
+or generic validation principle makes it easy to propose. A software check can
+preempt work only when it affects evidence actually used by that work; it does
+not take priority over independent mathematics merely because code exists.
+
 When asked to “continue the research” without a more specific target:
 
 1. Read the six maintained files listed above and inspect active study records.
 2. Resume an `active` or `selected` node if its assumptions remain valid and a
    bounded next step exists. Otherwise choose among `proposed` nodes.
 3. Prefer, in order:
-   - a validity blocker whose failure would invalidate downstream conclusions;
+   - a concrete validity blocker in evidence actually needed by the selected question;
    - a high-leverage result that removes or changes a whole search dimension;
    - a small study with high information value between competing approaches;
    - work directly retaining disk-specific structure;

@@ -97,3 +97,8 @@ underlying tiling equations.
   was injected into discovery during this study.
 - `AGENDA.md`, `HISTORY.md`, `STATE.md` and the backbone were updated. No existing
   theorem's proof-review status was promoted in `MATHEMATICAL_RESULTS.md`.
+
+Subsequent correction (`D-010`): the known-shape/placement validation proposal
+mentioned above was withdrawn. Read [ROADMAP.md](../ROADMAP.md) and the current
+agenda for priorities; this historical return-to-parent section does not select
+a new implementation task.

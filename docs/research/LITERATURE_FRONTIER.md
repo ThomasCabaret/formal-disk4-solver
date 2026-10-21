@@ -60,11 +60,12 @@ states this question and provides its proposed argument. It is ready for the
 owner to submit to another LLM; no external answer has been received and no
 proof status has been promoted. Code is unchanged.
 
-Local work can meanwhile advance `VALID-001`: reconstruct one source-defined
-12-tile disk witness, then check the prototype, congruences, contacts and disk
-coverage separately. Constructive replay is an acceptance control, not an
-agnostic discovery experiment. This supplies a concrete baseline for later
-mathematical reductions or algorithm comparisons without waiting for the audit.
+The initial proposal to continue with known-shape/placement replay under
+`VALID-001` was subsequently withdrawn: no useful dependency on the actual
+contour pipeline was identified. See [ROADMAP.md](ROADMAP.md) and decision
+`D-010` in [HISTORY.md](HISTORY.md). The literature pass does not select an
+implementation project; the next step must follow the chosen mathematical
+question and its remaining uncertainty.
 
 ## Search boundary and chronology
 

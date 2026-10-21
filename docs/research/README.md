@@ -9,6 +9,8 @@ already achieves it. Continue with the [operating method](METHODOLOGY.md), the
 The [working problem specification](PROBLEM_SPEC.md) defines the default
 nontriviality predicate, the separate Stein target and bounded computational
 variants. It was produced by [SPEC-001](studies/SPEC-001-problem-domain.md).
+The [research roadmap](ROADMAP.md) connects mathematical goals, proof attempts,
+structural reductions and any subsequent algorithm work.
 
 ## Objective and scope
 
@@ -118,8 +120,9 @@ The initial inventory is complete; research continues through the live agenda.
 `SPEC-001` supplied the working problem contract; `MATH-001` supplied a first
 [literature map](LITERATURE_FRONTIER.md). The next study is currently under
 discussion with the owner; no new research run or proof study is active.
-The proposed known-witness validation and original-mathematics targets are
-listed in the agenda, with an audit available as an optional external contract.
+The known-shape/placement replay proposal is withdrawn. Original-mathematics
+targets remain proposed in the agenda, with an existing-lemma audit available
+as an optional external contract.
 Historical TODO lists do not select that work.
 Proof audits, search experiments and algorithm choices must each satisfy the
 method above; completing the inventory did not validate the stored mathematics

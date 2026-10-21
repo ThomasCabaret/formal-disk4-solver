@@ -113,3 +113,8 @@ comprehensive citation-index review was performed.
   contact and full-disk checks. No wait for the external contract is needed.
 - `AGENDA.md`, `HISTORY.md`, `STATE.md` and the mathematical registry were
   updated with this evidence and the outstanding review boundary.
+
+Subsequent correction (`D-010`): the proposed `VALID-001` continuation above was
+withdrawn before work began. Its connection to the actual contour pipeline was
+not established. The source observations stand; the next-task recommendation
+is superseded by [ROADMAP.md](../ROADMAP.md) and the current agenda.

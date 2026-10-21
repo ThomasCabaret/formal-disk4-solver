@@ -217,7 +217,7 @@ These are read-only observations, not new bug diagnoses or proof audits.
 | [`GraphLabSearchRequest`](../../src/formal_disk4/graph_lab/search_request.py) separates boundary/region/policy choices but couples several symmetry and crown options | Some mathematically meaningful combinations are not exposed by this interface. An unsupported combination is not an impossibility result. |
 | [`ContactArrangementEnumerator`](../../src/formal_disk4/search/placement_adapter.py) and its evaluator reject unsupported imposed actions/prototype rotation | Contact V2 coverage must be stated per engine. |
 | The word solver leaves specified residual systems unsupported; Contact V2 has no demonstrated finite closure for arbitrary derived cuts | Fixed graph plus completed direct-incidence traversal does not give unrestricted geometric exhaustion. |
-| [`NumericalContourSolver`](../../src/formal_disk4/geometry/solver.py) explicitly realizes one contour, with assembly handled elsewhere | `geometry found` must not alone be read as validated disk coverage. The complete validation path remains to be traced in `VALID-001`. |
+| [`NumericalContourSolver`](../../src/formal_disk4/geometry/solver.py) realizes one contour, with placements derived elsewhere from the formal correspondences | The realization must fulfill the formal gluing contract. A concrete inconsistency would require auditing that chain; this does not imply a separate placement-search project. |
 
 The 3-connectivity restriction is not necessary for *all* monohedral disk
 tilings: two half-disks give a valid tiling whose augmented simple contact
@@ -259,7 +259,8 @@ normal, regular and symmetric cases. Deliver a short claim/source/hypothesis
 table and choose one consequential proof to audit next. Do not describe an
 old paper's open question as still open without checking later work.
 
-`VALID-001` remains available for reconstructing one known nontrivial 12-tile
-disk witness and tracing its complete assembly checks before another search
-benchmark. No claim that either the present algorithm or a new representation
-is the winner follows from this specification.
+The subsequent known-shape/placement replay proposal `VALID-001` was withdrawn
+under decision `D-010`; it is not a prerequisite supplied by this specification.
+Future studies follow the mathematical priorities in [ROADMAP.md](ROADMAP.md).
+No claim that either the present algorithm or a new representation is the winner
+follows from this specification.

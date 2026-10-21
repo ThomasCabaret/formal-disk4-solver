@@ -126,3 +126,26 @@ outcome, and revisit the proposed validation priority before starting it.**
   Stein architecture already isolated in the local note. It is not selected,
   proved, or certified new in the literature. No new research study begins in
   this documentation/discussion turn.
+
+## 2026-10-21 — Withdraw the misplaced validation task and plan from the root
+
+**Decision `D-010`: withdraw VALID-001 as described, and require a mathematical
+roadmap before selecting further implementation work.**
+
+- The owner pointed out that the existing algorithm searches formal contours
+  and their constraints, realizes a prototype, and derives placements from the
+  formal correspondences. The proposed known-shape/known-placement exercise
+  had no demonstrated place in that research path. It is withdrawn, not simply
+  postponed. No exercise or new placement engine was implemented.
+- [ROADMAP.md](ROADMAP.md) now gives the intended priorities: seek
+  impossibility/classification arguments, then existence arguments, extract
+  necessary conditions, and select algorithms in response to the remaining
+  freedoms. A failed proof attempt does not settle existence either way.
+- Every child must identify its parent question and explain how each possible
+  outcome changes a parent decision. Generic validation/housekeeping cannot
+  substitute for that connection.
+- Known nontrivial examples prevent an indiscriminate impossibility target.
+  Stein and classification beyond precisely defined known constructions are
+  distinct candidate parent questions; neither has been silently selected.
+- This turn corrects the roadmap and records the rejection. No new mathematical
+  proof study, solver development, search run or theorem result is claimed.
