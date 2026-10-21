@@ -34,8 +34,10 @@ a particular implementation or solving tetrads for their own sake.
   justified, but do not force compatibility with every old experiment. Explicitly
   describe unsupported domains rather than silently falling back to another mode.
 - Preserve uncommitted work, mathematical sources, run data and checkpoints.
-  Do not delete, reset, move large trees, stop runs or commit without appropriate
-  user authorization. This repository currently contains unfinished work.
+  Do not delete, reset, move large trees or stop runs without appropriate user
+  authorization. Local atomic commits are authorized as the normal way to
+  preserve completed coherent work; never push them. Only the project owner
+  pushes to a remote. Keep unrelated or unfinished work out of those commits.
 - Put editable research notes under `docs/research/`, existing mathematical TeX
   sources under `docs/`, and generated results under `output/`. Do not commit
   large training histories or generated experiment data by default.

@@ -42,6 +42,19 @@ The maintained research memory is split by purpose:
 Do not use an old implementation checklist as the live agenda. Do not put bulk
 outputs into a study note. Do not make `STATE.md` a chronological log.
 
+## Version-control policy
+
+Use local Git commits as atomic research checkpoints. Commit a coherent change
+once its scope, evidence and limitations have been recorded; separate unrelated
+work and do not disguise an experimental snapshot as a validated baseline.
+Generated run histories and bulky outputs remain uncommitted by default.
+
+Never push from an agent session. Do not invoke `git push`, alter a remote, or
+publish a branch or tag. The project owner alone decides when local commits are
+ready to be pushed. This standing policy authorizes well-scoped local commits;
+it does not authorize deleting, resetting, overwriting or absorbing unrelated
+unfinished work.
+
 ## Research-node schema
 
 Every agenda node has a stable identifier such as `MATH-003` or `ALG-002` and:
