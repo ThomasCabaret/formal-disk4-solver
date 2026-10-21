@@ -149,3 +149,33 @@ roadmap before selecting further implementation work.**
   distinct candidate parent questions; neither has been silently selected.
 - This turn corrects the roadmap and records the rejection. No new mathematical
   proof study, solver development, search run or theorem result is claimed.
+
+## 2026-10-21 — Make progressive refinement the mandatory research procedure
+
+**Decision `D-011`: replace D-010's sequential priority wording with a visible,
+revisable approach tree and a mandatory relevance/return-to-parent protocol.**
+
+- Owner clarification: begin macroscopically, then refine. Impossibility,
+  nonconstructive existence, constructions and algorithms may coexist as
+  alternatives; new approaches can arise at any depth. A mathematical pruning
+  subgoal can belong to an algorithmic approach, and its result must be returned
+  there. No fixed discipline order is imposed.
+- `AGENDA.md` is the sole live hierarchy. `APP-*` entries organize approaches,
+  not new active studies. The contour pipeline is one candidate under search,
+  not the inevitable destination of all research. `BACKBONE.md` remains a
+  dependency/area map, not a second competing agenda.
+- Mandatory preflight: register the root-to-node path and parent relation;
+  explain the actual parent decision, success/negative/inconclusive consequences,
+  sibling alternatives, scope and stopping point before substantive work.
+  Merely labeling a task "useful validation" or attaching it to `R0` fails this
+  gate. This is the specific safeguard against repeating `VALID-001`.
+- On completion or interruption, propagate only warranted consequences, return
+  to the parent and explicitly choose continuation, another approach or
+  suspension. A failed child does not automatically close its parent or siblings.
+  Preserve old branches and record any changed parent links and rationale.
+- Reparenting: `MATH-003`, formerly directly under `R0`, is a restricted-case
+  candidate under `APP-IMP`; `ALG-001`, formerly under `R0`, supports approach
+  selection under `APP-SEARCH`. Their scientific statuses are unchanged.
+- The study template and agent entry instructions now carry these requirements.
+  Routine steps within one study need no extra node. No new proof, experiment,
+  solver change or research target selection occurred in this governance turn.

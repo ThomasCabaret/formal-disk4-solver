@@ -22,8 +22,13 @@ but did not settle the current general Stein question or audit the local
 stronger theorems. The next target is under discussion with the owner;
 `VALID-001` was withdrawn without starting it: its usefulness to the actual
 formal-contour pipeline had not been established. [ROADMAP.md](ROADMAP.md)
-sets mathematical priorities and requires a concrete parent decision before
-choosing an implementation task. Original mathematical creation
+describes competing approaches, not compulsory sequential phases. The live
+agenda now exposes impossibility/classification, nonconstructive existence,
+constructions and computational discovery, with the formal-contour route as one
+algorithmic candidate. The methodology requires a root-to-node path, alternatives
+and outcome-to-parent consequences before substantive work, then an explicit
+return to the parent. This changes research governance, not scientific evidence.
+Original mathematical creation
 is an explicit objective; `MATH-003` records one proposed direction. The optional
 [external RSS-ORB audit](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready
 for submission by the owner; it has no returned answer and does not determine

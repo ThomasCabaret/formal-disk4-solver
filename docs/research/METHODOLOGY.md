@@ -24,6 +24,70 @@ cycle. A mathematical result may preempt an algorithm study; a validation bug
 may suspend mathematical interpretation; a complexity result may redirect the
 entire computational programme.
 
+## Mandatory macro-to-micro refinement
+
+Research is a revisable tree of questions and approaches, not a queue of local
+tasks or a fixed sequence of disciplines. [AGENDA.md](AGENDA.md) is its single
+live reference. [BACKBONE.md](BACKBONE.md) maps dependencies and software; its
+pipeline is not the research agenda. Track labels describe the kind of work,
+not which parents a node is allowed to have.
+
+At the root, impossibility/classification, nonconstructive existence,
+constructive mathematics and computational discovery are possible approaches.
+They can coexist without all being staffed or started. No approach is required
+to fail before another can be considered. At any depth, evidence or a new idea
+can motivate another approach to the same parent question.
+
+For example, this is a possible refinement, **not a selected work plan**:
+
+```text
+Disk-tiling question under explicit hypotheses
++-- Impossibility / classification argument
++-- Nonconstructive existence argument
++-- Explicit construction
+`-- Computational discovery
+    +-- Formal-contour approach (one candidate, not the default truth)
+    |   +-- Mathematical subquestion: can a necessary condition prune this state?
+    |   |   `-- Proof / counterexample / precise unresolved gap
+    |   `-- Algorithm question: how to exploit the remaining degrees of freedom?
+    `-- Alternative representation, if its rationale merits investigation
+```
+
+The following rules apply before **every substantive investigation**, including
+proofs, literature searches, debugging, benchmarks and implementation:
+
+1. **Locate it.** Give a root-to-node path, a stable node ID and one owning
+   parent. Register a new node before pursuing it, not after producing code.
+2. **Name the relation.** Is it an alternative approach, a supporting subgoal,
+   a restricted case, or a validation dependency? State the precise hypotheses.
+   A restricted case is not an equivalent reformulation unless that is proved.
+3. **Explain the leverage.** Name the unresolved parent decision and what
+   success, a negative result, or an inconclusive outcome would change. Merely
+   attaching a task to `R0`, citing a known example or saying "validation is
+   useful" is insufficient. Identify the actual claim or interface needed.
+4. **Choose deliberately.** Compare the available sibling approaches briefly:
+   evidence, missing premises, expected contribution and cost. Bound the next
+   probe and give a stopping/return condition. Do not keep refining a branch
+   simply because work on it has already begun.
+5. **Announce before acting.** Explain that path, actual work and parent benefit
+   in plain French to the owner; record them in the study template. If the
+   benefit cannot be explained, do not start. If an unexpected useful branch
+   arises during work, register and justify the change before pursuing it.
+6. **Return upward.** At completion, interruption or the agreed stopping point,
+   report the scoped result to the parent, reconsider the sibling options and
+   record the next decision. A successful local task is not a reason to keep
+   descending indefinitely or to declare its parent solved.
+
+This is a relevance gate, not a promise that a chosen hypothesis will succeed,
+nor a requirement to ask permission for every bounded autonomous iteration.
+Do not invent intermediate nodes just to manufacture a plausible-looking path.
+The tree may be revised when the problem or approaches are better understood;
+keep stable IDs and record the reason and old/new parent links in `HISTORY.md`.
+Use cross-dependencies when a result serves several branches rather than
+duplicating it. Preserve abandoned attempts and their resumption conditions.
+Routine steps inside an already registered study need no separate node or
+document; create one only for a distinct question or competing approach.
+
 ## Original research is the objective
 
 Agents are expected to create mathematics: propose and attempt proofs of new
@@ -93,13 +157,16 @@ unfinished work.
 
 Every agenda node has a stable identifier such as `MATH-003` or `ALG-002` and:
 
-- one parent question, except `R0`;
+- one owning parent question, except `R0`, and a visible root-to-node path;
+- its role: approach or concrete study; its parent relation: alternative,
+  supporting subgoal, restricted case or validation dependency;
 - a precise question and relevance to `R0`;
 - explicit hypotheses/domain;
-- dependencies and downstream questions;
+- dependencies and downstream questions, including cross-branch uses;
+- the parent decision changed by each possible outcome and the selection reason;
 - a status;
 - a stop, falsification or completion condition;
-- links to its study records and outputs.
+- links to its study records and outputs (approach nodes need no empty study).
 
 Allowed statuses are:
 
@@ -118,12 +185,12 @@ covered. A timeout normally produces `inconclusive`, not `rejected-in-scope`.
 
 ## Choosing the next target autonomously
 
-Start from the unresolved mathematical parent and the priorities in
-[ROADMAP.md](ROADMAP.md): attempt impossibility/classification first, then
-existence arguments (including nonconstructive ones), while extracting useful
-structural consequences. Algorithm work must address the remaining degrees of
-freedom. These priorities may change for a stated mathematical reason; a failed
-bounded proof attempt is not evidence that no proof exists or that a tiling does.
+Start from the root objective, the current unresolved parent and the approach
+portfolio in [ROADMAP.md](ROADMAP.md). Review the ancestors and sibling options
+before resuming the deepest open task. Impossibility, existence, construction
+and algorithms are alternatives that can inform one another, not compulsory
+successive phases. Select a bounded question for its present leverage; a failed
+proof attempt is not evidence that no proof exists or that a tiling does.
 
 Require a path from each task to a parent decision: what changes if it succeeds,
 fails, or is inconclusive? Do not choose a task because a module, known example
@@ -134,8 +201,10 @@ not take priority over independent mathematics merely because code exists.
 When asked to “continue the research” without a more specific target:
 
 1. Read the six maintained files listed above and inspect active study records.
-2. Resume an `active` or `selected` node if its assumptions remain valid and a
-   bounded next step exists. Otherwise choose among `proposed` nodes.
+2. Reassess the current branch from its parent. Resume an `active` or `selected`
+   node if its assumptions and priority remain justified and a bounded next
+   step exists. Otherwise consider siblings, a justified new approach, or a
+   higher-level unresolved question. Record any change of direction.
 3. Prefer, in order:
    - a concrete validity blocker in evidence actually needed by the selected question;
    - a high-leverage result that removes or changes a whole search dimension;
@@ -144,8 +213,8 @@ When asked to “continue the research” without a more specific target:
    - local performance work only after correctness and relevance are secure.
 4. Penalize vague scope, unavailable ground truth, high cost without an early
    discriminator, and work whose only benefit is polishing a parked approach.
-5. State the selected node, hypothesis, smallest discriminating deliverable and
-   stopping condition before substantial work.
+5. Apply the six macro-to-micro rules above: announce the path, parent benefit,
+   selected hypothesis, smallest discriminating deliverable and stopping point.
 6. Create or update its study record. Perform one coherent bounded iteration,
    not an open-ended collection of improvements.
 
@@ -196,13 +265,32 @@ Every closed child must say how it changes its parent:
 - exposes a new child question;
 - or changes nothing and should not be pursued further.
 
-Update `AGENDA.md` accordingly. Do not leave a solved subquestion detached from
-the general question that motivated it.
+Update `AGENDA.md` accordingly and choose explicitly: continue this approach,
+return to a higher question, try a sibling/new approach, or suspend with a
+resumption trigger. Do not leave a solved subquestion detached from the general
+question that motivated it. Propagate consequences up the ancestors only as far
+as warranted by the result and its hypotheses.
 
 ## Branching, preemption and resumption
 
 Open a child node only when its answer can change the parent decision. Record the
 parent ID in the study note. Do not expand every interesting aside into a branch.
+
+An approach can have alternative children (different ways to attack it) and
+supporting children (lemmas, constructions or tests it needs). Record which
+relation holds: failure of one alternative does not close its siblings; proving
+one necessary condition does not establish existence; failure of a supporting
+lemma invalidates only arguments actually relying on it. A proof restricted to
+a class closes that class, not the unrestricted root question. Budget exhaustion
+closes an iteration as inconclusive, not the mathematical question.
+
+Opening a mathematical child of an algorithm node, or an algorithmic child to
+exploit a theorem, is normal. Record the usable result and return to the parent
+when that dependency is settled. Before spending another iteration on the same
+obstacle, reconsider its leverage and the available alternatives. An unresolved
+child need not block independent work elsewhere; an external contract likewise
+does not freeze the research tree. Conceptual parallel branches do not authorize
+unrequested parallel processes, external submissions or long-running jobs.
 
 Preempt active work when:
 
@@ -286,10 +374,10 @@ is outstanding; external review is never an automatic blocker or proof oracle.
 
 A research turn is complete when it leaves:
 
-1. a clear question and scope;
+1. a clear question, scope and root-to-node path;
 2. an inspectable artifact, proof audit or reproducible experiment;
 3. an evidence-qualified conclusion;
-4. the resulting agenda/parent update;
+4. the resulting agenda/parent update, with consequences for sibling approaches;
 5. an explicit next decision or stopping condition.
 
 If the work is incomplete, leave the study resumable: exact stopping point,

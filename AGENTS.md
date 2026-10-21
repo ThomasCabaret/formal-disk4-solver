@@ -8,6 +8,13 @@ research, follow `.agents/skills/disk-tiling-research/SKILL.md`.
 The central objective is nontrivial monohedral tilings of the disk, not improving
 a particular implementation or solving tetrads for their own sake.
 
+- Work macro-to-micro: before substantive work, place it in the live tree in
+  `docs/research/AGENDA.md` and explain the path from the root, the parent
+  decision it serves, alternatives, and what each possible outcome changes.
+  No orphan tasks, including validation, implementation and literature work.
+  New approaches may branch at any depth; do not impose a fixed sequence of
+  proof attempts and algorithms. On stopping, return results to the parent and
+  explicitly choose continuation, a sibling, a new branch or suspension.
 - Treat mathematics, constructive examples, disk-specific reductions and search
   algorithms as distinct but interacting research tracks. Do not assume the
   present formal-contour pipeline is the only acceptable approach.

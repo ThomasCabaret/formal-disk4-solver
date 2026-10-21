@@ -6,6 +6,9 @@ placeholders rather than filling them with vague text.
 ## Identity
 
 - Node / parent node:
+- Root-to-node path (matching `AGENDA.md`):
+- Parent relation: alternative approach, supporting subgoal, restricted case,
+  or validation dependency:
 - Track: `MATH | ALG | APPLIED | VALID | COMPLEXITY`
 - Status: `proposed | selected | active | blocked | supported-in-scope | rejected-in-scope | inconclusive | parked | superseded`
 - Owner / date opened / last updated:
@@ -23,9 +26,11 @@ placeholders rather than filling them with vague text.
 ## Decision context
 
 - Why this node was selected now:
-- Alternatives considered:
+- Parent decision this study can change (not merely its general relevance):
+- Sibling/alternative approaches considered and why this probe has priority:
 - Dependencies and downstream decisions:
 - What outcome would falsify, support or leave the hypothesis inconclusive:
+- Consequence for the parent in each of those three cases:
 
 ## Evidence plan
 
@@ -33,6 +38,7 @@ placeholders rather than filling them with vague text.
 - Baseline and positive/negative controls:
 - Method:
 - Budget and stopping condition:
+- When to return to the parent rather than deepen this branch:
 - Risks to soundness, coverage or interpretation:
 
 ## Reproduction
@@ -59,5 +65,7 @@ placeholders rather than filling them with vague text.
 
 - Effect on the parent question:
 - Children opened or closed:
+- Continuation decision: same branch, higher question, sibling/new approach,
+  or suspension; rationale and affected hypotheses:
 - Next bounded action, resumption trigger, or reason to stop:
 - `AGENDA.md` and `HISTORY.md` entries updated:

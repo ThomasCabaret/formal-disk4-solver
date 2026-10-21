@@ -21,13 +21,20 @@ Published constructions and classifications are indexed in
 external audit tasks live under `contracts/`; their status is tracked through
 the parent study and agenda, separately from validated mathematical results.
 
-## Root question and research tree
+## Stable map of research areas (not the live question tree)
+
+The authoritative root-to-approach-to-study hierarchy is in
+[AGENDA.md](AGENDA.md). The sketch below is a map of interacting subject areas,
+not a second agenda, a mandatory order, or a separation that forbids mathematical
+children of algorithmic questions. New approaches may branch at any depth under
+the [refinement protocol](METHODOLOGY.md#mandatory-macro-to-micro-refinement).
 
 ```text
 Nontrivial monohedral tilings of a Euclidean disk
 |
 +-- A. Pure mathematics
-|   +-- existence / impossibility under explicit hypotheses
+|   +-- impossibility / classification under explicit hypotheses
+|   +-- nonconstructive existence
 |   +-- constructive families
 |   `-- disk-specific structural reductions
 |

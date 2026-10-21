@@ -9,8 +9,12 @@ already achieves it. Continue with the [operating method](METHODOLOGY.md), the
 The [working problem specification](PROBLEM_SPEC.md) defines the default
 nontriviality predicate, the separate Stein target and bounded computational
 variants. It was produced by [SPEC-001](studies/SPEC-001-problem-domain.md).
-The [research roadmap](ROADMAP.md) connects mathematical goals, proof attempts,
-structural reductions and any subsequent algorithm work.
+The [research roadmap](ROADMAP.md) connects mathematical goals, competing proof
+and algorithmic approaches, and structural reductions. The [live tree](AGENDA.md)
+is the single reference for their hierarchy. Before substantive work, follow
+the [macro-to-micro gate](METHODOLOGY.md#mandatory-macro-to-micro-refinement):
+locate the task, explain its parent benefit and alternatives, bound the work,
+then return its result to the parent. Do not start an orphan implementation task.
 
 ## Objective and scope
 
