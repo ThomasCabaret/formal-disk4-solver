@@ -1,0 +1,1222 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,mathtools,amsthm}
+\usepackage{booktabs,longtable,array,tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{cleveref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!45!black,
+  citecolor=blue!45!black,
+  urlcolor=blue!45!black,
+  pdftitle={A Constraint-Driven Enumerator for Topological Contact Types of Monohedral Patches},
+  pdfauthor={Algorithmic design note}
+}
+
+\definecolor{aalbg}{RGB}{247,247,247}
+\definecolor{aalrule}{RGB}{210,210,210}
+\definecolor{aalkw}{RGB}{40,65,125}
+\definecolor{aalcomment}{RGB}{70,110,70}
+
+\lstdefinelanguage{AAL}{
+  morekeywords={PROCEDURE,FUNCTION,INPUT,OUTPUT,REQUIRE,ENSURE,STATE,IF,THEN,ELSE,ENDIF,FOR,EACH,IN,DO,ENDDO,WHILE,ENDWHILE,REPEAT,UNTIL,RETURN,YIELD,FAIL,CHOOSE,LET,ADD,REMOVE,MARK,QUEUE,PUSH,POP,CALL,ASSERT,CONTINUE,SWITCH,CASE,DEFAULT,ENDSWITCH},
+  sensitive=true,
+  morecomment=[l]{//},
+  morestring=[b]"
+}
+
+\lstset{
+  language=AAL,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\bfseries\color{aalkw},
+  commentstyle=\itshape\color{aalcomment},
+  backgroundcolor=\color{aalbg},
+  frame=single,
+  rulecolor=\color{aalrule},
+  framesep=6pt,
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  showstringspaces=false,
+  aboveskip=0.8em,
+  belowskip=0.8em
+}
+
+\newtheorem{definition}{Definition}[section]
+\newtheorem{invariant}[definition]{Invariant}
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{remark}[definition]{Remark}
+
+\newcommand{\Aut}{\operatorname{Aut}}
+\newcommand{\Sat}{\operatorname{Sat}}
+\newcommand{\Can}{\operatorname{Can}}
+\newcommand{\Len}{\mathsf{Len}}
+\newcommand{\Word}{\mathsf{Word}}
+\newcommand{\Geom}{\mathsf{Geom}}
+\newcommand{\Topo}{\mathsf{Topo}}
+\newcommand{\Orient}{\mathsf{Orient}}
+\newcommand{\Map}{\mathsf{Map}}
+\newcommand{\Cuts}{\mathsf{Cuts}}
+\newcommand{\Todo}{\mathsf{Todo}}
+\newcommand{\Fail}{\mathsf{FAIL}}
+\newcommand{\Unknown}{\mathsf{UNKNOWN}}
+\newcommand{\Satval}{\mathsf{SAT}}
+
+\title{\textbf{A Constraint-Driven Enumerator for Topological Contact Types of Monohedral Patches}\\
+\large Abstract algorithmic specification, solver architecture, and tetrad specialization}
+\author{Design note}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document specifies an exhaustive enumerator for topological contact types of finite monohedral patches.  The motivating instance is a four-tile tetrad whose tile-contact graph is $K_4$, but the architecture is deliberately formulated for other finite patches, including monohedral decompositions of a disc and bounded local patches of a plane tiling.
+
+The central design choice is to \emph{avoid} enumerating, in advance, all tile reflection patterns, all weak orders of boundary events, or all weak orders of segment lengths.  Instead, the search builds a partial incidence structure and repeatedly saturates it under topological, orientation, interval-map, word, metric, symmetry, and optional geometric consequences.  A decision is made only when propagation cannot determine a required relation.  Boundary refinement is driven lazily by contact mappings and by word equations; a Levi-type factorization rule turns competing cuts in a common word into the three exhaustive cases ``left'', ``equal'', or ``right''.  Length comparisons are therefore generated only when they are demanded by a mapping or a word overlap.
+
+The recommended architecture is a DPLL(T)-like branch--propagate--canonicalize search over a finite cell-complex skeleton, with theory modules for boundary words, positive linear lengths, orientation parity, rigid-motion consistency, and optional geometry.  Canonical augmentation and stabilizer-orbit branching eliminate symmetric subtrees during generation rather than after it.  A staged alternative and a bounded SMT alternative are also specified for validation and cross-checking.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Purpose and scope}
+
+The target object is not primarily a geometric realization.  It is a \emph{contact type}: a finite combinatorial description of how congruent copies of one prototile meet, together with the induced correspondences on the common abstract boundary of the prototile.  Geometry is a later (but optionally incremental) realization problem.
+
+For a patch with tile copies $T_1,\dots,T_n$ congruent to a prototype $T$, choose placements
+\[
+  g_i:T\longrightarrow T_i.
+\]
+If $T_i$ and $T_j$ share a nondegenerate boundary arc, the physical identity map along that arc induces a partial self-map of the prototype boundary,
+\[
+  f_{ij}=g_j^{-1}\circ g_i,
+\]
+defined on the corresponding source subarc.  The family of such partial maps, after taking the common refinement of all relevant endpoints and their images/preimages, is the main object to classify.
+
+The architecture must support at least the following use cases.
+\begin{enumerate}[label=(U\arabic*)]
+  \item A fixed finite contact graph, such as $K_4$ for tetrads.
+  \item A family of possible contact graphs subject to degree or connectivity conditions.
+  \item A finite monohedral decomposition of a prescribed topological region, for example a disc.
+  \item A bounded local patch of an infinite tiling, with an open frontier.
+  \item Direct and reflected copies of the prototile, without committing to reflection choices earlier than necessary.
+  \item Degenerate weak orders in which marked prototype-boundary points coincide.
+  \item A later geometry module ranging from ``arbitrary Jordan prototile'' to polygonal, smooth, algebraic, or otherwise parameterized prototiles.
+\end{enumerate}
+
+\paragraph{Non-goal.}
+The core enumerator must not contain tetrad-specific facts such as ``the primal complex is a triangular prism''.  Such facts are deductions produced by the topology front-end from a problem specification.  The tetrad specialization is described separately in \cref{sec:tetrad}.
+
+\section{Literature-derived design principles}
+
+The architecture combines several ideas that are standard separately but are not usually combined in exactly this finite-patch form.
+
+\subsection{Incidence symbols: classify adjacency before shape}
+
+Gr\"unbaum and Shephard's isohedral classifications encode a marked tile boundary and the adjacencies between boundary pieces before geometric realization; the method was explicitly developed as an algorithmic codification of ``type'' \cite{GS1977,GS1979}.  The transferable principle is:
+\begin{quote}
+Represent the contact relation as a finite symbolic incidence object, quotient its notational symmetries, impose local consistency, and only then ask for a geometric realization.
+\end{quote}
+
+\subsection{Delaney--Dress symbols: chamber systems, isomorphism, and minimal images}
+
+Delaney--Dress theory encodes tilings by a finite chamber system with involutive adjacency operators and local parameters.  Delgado-Friedrichs gives concrete algorithms for isomorphism and for a unique minimal image of a finite Delaney symbol \cite{Delgado2003}.  The transferable principles are:
+\begin{enumerate}
+  \item build an object closed under its primitive adjacency operations rather than listing independent local choices;
+  \item canonicalize during enumeration;
+  \item collapse equivalent symbolic descriptions to a unique representative when the chosen equivalence relation permits it.
+\end{enumerate}
+Huson's enumeration of tile-$k$-transitive tilings supplies an additional structural idea: generate more complex topologies recursively by split/glue operations instead of enumerating all cell structures from scratch \cite{Huson1993}.
+
+\subsection{Coarse topological decomposition types}
+
+For monohedral decompositions of a disc into few topological discs, the literature first classifies coarse topological intersection patterns, and only then uses geometry \cite{BasitLangi2024,KurusaLangiVigh2020}.  In the present architecture this corresponds to a \emph{topology front-end} that enumerates or deduces a finite 2-dimensional cell complex before the prototype-boundary equations are solved.
+
+\subsection{Combinatorics on words: Levi refinement}
+
+The additional ingredient proposed here is to make the boundary-word solver an active part of enumeration rather than a downstream consumer.  A basic form of Levi's lemma for words says that if
+\[
+  UV=XY,
+\]
+then the two cuts after $U$ and after $X$ are comparable.  Exactly one of the following three cases holds:
+\begin{align*}
+  U=X,&\qquad V=Y,\\
+  X=UR,&\qquad V=RY\quad(R\neq\varepsilon),\\
+  U=XR,&\qquad Y=RV\quad(R\neq\varepsilon).
+\end{align*}
+Thus a ``new point'' created by one mapping inside a segment already cut by another mapping is not an ad hoc event: it is the new factor $R$ produced by a canonical word-refinement rule.  Standard references for word equations and Levi-type arguments include \cite{Lothaire1983}.
+
+\section{Mathematical object being enumerated}
+
+\subsection{Patch cell complex}
+
+A \emph{patch complex} $C$ is a finite 2-dimensional cell complex embedded in a prescribed topological surface-with-boundary or considered up to combinatorial embedding.  Its 2-cells are partitioned into:
+\begin{itemize}
+  \item tile faces $T_1,\ldots,T_n$;
+  \item optional exterior or frontier faces used to encode the boundary of a finite patch.
+\end{itemize}
+A 1-cell is a connected contact component or an exposed boundary component.  A 0-cell is a junction of 1-cells.  The complex carries a rotation system (cyclic link) at every 0-cell.
+
+The contact graph is a quotient of this richer complex: tile faces are graph vertices, and a tile--tile 1-cell induces a graph edge.  The contact graph alone does not, in general, determine the patch complex.
+
+\subsection{Prototype boundary and charts}
+
+Assume first that the prototile is a topological disc, so its boundary is an oriented abstract circle $B\cong S^1$.  Each tile occurrence $T_i$ has a boundary chart
+\[
+  \chi_i:B\longrightarrow \partial T_i.
+\]
+The orientation parity of $\chi_i$ is not chosen globally at initialization; it is represented by a Boolean variable $r_i\in\mathbb Z_2$ and propagated from mapping constraints.  One tile may be gauge-fixed by setting $r_1=0$.
+
+Every incidence $(i,v)$ of a physical patch vertex $v$ on tile $T_i$ pulls back to a marked point
+\[
+  p_{i,v}=\chi_i^{-1}(v)\in B.
+\]
+Different incidences may map to the same point of $B$; this is exactly a weak-order degeneracy.
+
+\subsection{Contacts as partial self-maps of the prototype boundary}
+
+For each connected tile--tile contact component $e=(i,j)$, let $I_{i,e}\subset B$ and $I_{j,e}\subset B$ be its two prototype occurrences.  The physical gluing induces
+\[
+  f_e:I_{i,e}\longrightarrow I_{j,e}.
+\]
+The map is a homeomorphism of closed intervals and, once the parity variables are fixed, has a fixed monotonicity sign.  Its inverse is the map for the opposite direction.
+
+The complete boundary-incidence type is obtained by refining $B$ until every relevant map is cellular: marked points map to marked points and atomic open intervals map to atomic open intervals (possibly after further word-theoretic decomposition, depending on the selected output granularity).
+
+\begin{definition}[Boundary-incidence type]
+Fix a problem specification and its allowed equivalences.  A boundary-incidence type is the equivalence class of the following finite data:
+\begin{enumerate}
+  \item a patch cell complex $C$ with labelled tile orbits;
+  \item a finite weak cyclic order of marked prototype-boundary points;
+  \item the incidence map $(i,v)\mapsto p_{i,v}$;
+  \item the cellular partial maps induced by all tile--tile contacts, including their orientation signs;
+  \item the formal boundary-word equalities generated by those maps;
+  \item any metric or geometric predicates declared to be part of the definition of an admissible type.
+\end{enumerate}
+Two records are equivalent only under the equivalence group explicitly declared in the problem specification.
+\end{definition}
+
+\section{Problem specification interface}
+\label{sec:spec}
+
+The enumerator is parameterized by a record $\mathcal P$ rather than by tetrad-specific code.
+
+\begin{longtable}{p{0.26\textwidth}p{0.68\textwidth}}
+\toprule
+Field & Meaning \\
+\midrule
+\endhead
+\texttt{AmbientTopology} & Surface or patch topology, Euler characteristic, number/type of exterior boundary components, or ``open local patch''. \\
+\texttt{TileOrbitSpec} & Number of tile copies (if fixed), monohedral orbit constraints, allowed direct/reflective congruences, optional tile colors/orbits. \\
+\texttt{ContactGraphSpec} & A fixed contact graph, a graph family, or constraints such as degree/connectivity. \\
+\texttt{ContactComponentSpec} & Allowed number of connected components for each pairwise intersection; whether point contacts are allowed; whether contact arcs must be nondegenerate. \\
+\texttt{JunctionSpec} & Allowed links around physical vertices: maximum valence, manifold conditions, allowed multi-tile coincidences, boundary junction rules. \\
+\texttt{RegionSpec} & Whether the union must be a disc, annulus, polygon, circle, etc.; whether holes are forbidden. \\
+\texttt{EquivalenceSpec} & Tile relabelings, prototype cyclic rotation, prototype reversal, global Euclidean congruence, patch isotopy, and any additional quotient. \\
+\texttt{BoundaryAlgebraSpec} & Free-word model, oriented letters, curve-germ labels, allowed empty factors (normally forbidden for atomic nondegenerate intervals), optional periodicity rules. \\
+\texttt{MetricSpec} & Whether arclength is used; positivity; equal-contact-length constraints; optional perimeter/area constraints. \\
+\texttt{GeometryPlugin} & Optional hierarchy of realization predicates, from parity/group equations to full Euclidean realization. \\
+\texttt{Bounds} & Bounds on number of tiles, cells, marked points, refinement depth, or solver resources; may be absent if finiteness is known. \\
+\bottomrule
+\end{longtable}
+
+\section{Search state}
+\label{sec:state}
+
+A search node is a persistent state
+\[
+S=(C,B,\mathcal I,\mathcal F,\mathcal O,\mathcal L,\mathcal W,\mathcal G,\Gamma,\mathcal Q,\mathcal R),
+\]
+with the following components.
+
+\begin{description}[leftmargin=3.6cm,style=nextline]
+  \item[$C$ -- patch complex] Complete or partial 2-complex, including rotation systems, face labels, contact components, and open frontier data.
+  \item[$B$ -- boundary partition] A cyclic list of \emph{cut classes}.  Each class is one marked position on the prototype boundary and may contain several direct or derived incidences.  Consecutive distinct classes define positive atomic boundary intervals.
+  \item[$\mathcal I$ -- incidences] Map from physical corner incidences and derived symbolic points to cut classes in $B$.
+  \item[$\mathcal F$ -- partial maps] Contact-induced partial interval maps, with source/range intervals, endpoint images known so far, and monotonicity variables or signs.
+  \item[$\mathcal O$ -- orientation system] Parity constraints on tile chart orientations.  Implemented conceptually as a disjoint-set structure with $\mathbb Z_2$ potentials.
+  \item[$\mathcal L$ -- length theory] Positive variables for atomic intervals and normalized linear forms for all composite intervals, with equalities and strict/non-strict inequalities.
+  \item[$\mathcal W$ -- word theory] A directed acyclic representation of boundary factors and equations between factors, including reversal; split facts such as $X=UV$ are first-class constraints.
+  \item[$\mathcal G$ -- geometry theory] Optional partial placement/rigid-motion constraints and plugin-specific realization information.
+  \item[$\Gamma$ -- symmetry state] Current stabilizer subgroup of the problem automorphism group and a canonical-label representation of $S$.
+  \item[$\mathcal Q$ -- obligation queue] Unresolved decisions and propagation events: unmapped cuts, ambiguous cut positions, unresolved factorizations, topology completions, etc.
+  \item[$\mathcal R$ -- reasons] Dependency graph recording which decisions imply each propagated fact, for conflict explanation and learned nogoods.
+\end{description}
+
+\begin{invariant}[Saturated-state invariant]
+Every state that is eligible for branching is a fixed point of all enabled deterministic propagators, has passed all enabled feasibility checks, and is canonical with respect to the selected generation rule.
+\end{invariant}
+
+\begin{invariant}[No premature weak order]
+The state never stores a complete weak order of all conceivable segment lengths.  It stores only comparisons that have been proved or explicitly branched on because a contact map or word equation required them.
+\end{invariant}
+
+\begin{invariant}[No premature reflection pattern]
+Tile reflection variables are symbolic parity variables.  They are branched on only if the final type definition distinguishes alternatives that remain genuinely unconstrained after all contact relations have been installed.
+\end{invariant}
+
+\section{Overall architecture}
+\label{sec:architecture}
+
+The recommended enumerator is a branch--propagate--canonicalize engine with multiple cooperating theories.  It is analogous in architecture to DPLL(T), but its branch objects are topological/incidence decisions rather than propositional variables.
+
+\begin{lstlisting}[caption={Top-level enumeration.},label={alg:top}]
+PROCEDURE ENUMERATE-CONTACT-TYPES(Problem P)
+    FOR EACH canonical coarse complex C IN ENUMERATE-COMPLEXES(P) DO
+        S <- INITIAL-STATE(P, C)
+        S <- SATURATE-AND-CANONICALIZE(S)
+        IF S != FAIL THEN
+            SEARCH(S)
+        ENDIF
+    ENDDO
+ENDPROCEDURE
+
+PROCEDURE SEARCH(State S)
+    S <- SATURATE-AND-CANONICALIZE(S)
+    IF S == FAIL THEN RETURN ENDIF
+
+    IF COMPLETE(S) THEN
+        YIELD TYPE-RECORD(S)
+        RETURN
+    ENDIF
+
+    D <- SELECT-DECISION(S)
+    A <- CURRENT-STABILIZER(S)
+
+    FOR EACH value v IN ORBIT-REPRESENTATIVES(D.values, A) DO
+        S1 <- APPLY-DECISION(S, D, v)
+        SEARCH(S1)
+    ENDDO
+ENDPROCEDURE
+\end{lstlisting}
+
+The key difference from a ``graph, then all reflections, then all weak orders'' pipeline is that \texttt{SEARCH} does not know a predetermined coordinate system for the search space.  The next branching variable is generated by the current constraint state.
+
+\section{Stage 0: enumerate or deduce the coarse patch complex}
+\label{sec:topology}
+
+\subsection{Representation}
+
+Use a dart/half-edge combinatorial map.  Every 1-cell has two oriented darts unless it lies on an open frontier.  Permutations or involutions encode:
+\begin{itemize}
+  \item reversal across an edge;
+  \item cyclic successor around a face;
+  \item cyclic successor in a vertex link.
+\end{itemize}
+This representation makes planarity/surface checks, dualization, and canonical labeling standard graph problems.
+
+\subsection{Generation strategies}
+
+Two front-ends should be supported.
+
+\paragraph{Topology front-end A: constrained map enumeration.}
+Enumerate rotation systems/cell complexes directly, pruning by:
+\begin{itemize}
+  \item Euler characteristic;
+  \item prescribed number of boundary components;
+  \item connectedness of the patch and of specified intersections;
+  \item allowed vertex links;
+  \item contact graph constraints;
+  \item lower/upper bounds on face degrees;
+  \item forbidden holes or self-incidences;
+  \item canonical augmentation under tile relabelings.
+\end{itemize}
+
+\paragraph{Topology front-end B: split/glue generation.}
+When a natural minimal chamber system is known, generate cell complexes by split/glue moves inspired by Huson's Delaney--Dress enumeration \cite{Huson1993}.  This may be much smaller than blind map enumeration for families organized by tile-transitivity or symmetry.
+
+\begin{lstlisting}[caption={Coarse complex enumeration contract.}]
+FUNCTION ENUMERATE-COMPLEXES(Problem P)
+    // Must be complete modulo P.EquivalenceSpec at the coarse-complex level.
+    // May use direct map generation, split/glue generation, or both.
+
+    INITIALIZE a canonical augmentation search over partial cell complexes
+    REPEAT
+        extend one unresolved face/edge/vertex incidence
+        PROPAGATE Euler, link, connectivity, and contact-graph constraints
+        DISCARD noncanonical or impossible partial complexes
+    UNTIL every admissible complete complex has been emitted exactly once
+
+    RETURN stream of canonical complexes
+ENDFUNCTION
+\end{lstlisting}
+
+\section{Stage 1: initialize the prototype boundary without choosing reflections}
+
+Given $C$, create one abstract prototype boundary circle $B$ and one orientation variable $r_i$ per tile copy.  Gauge-fix one variable, e.g. $r_1=0$.  Do not enumerate the remaining $2^{n-1}$ values.
+
+Each physical tile face has a cyclic list of incident patch vertices.  Pull these incidences back symbolically to $B$, but do not globally interleave the lists.  Initially one may represent each tile list as a cyclic chain whose interleaving with the others is unresolved.
+
+This is the first major compression relative to a weak-order enumerator: the prototype order is constructed only when a mapping requires two incidences from different tile copies to be compared.
+
+\subsection{Orientation constraints}
+
+If a local contact-map decision determines that the traversal of a source interval and a target interval must have relative sign $\sigma_e\in\mathbb Z_2$, impose
+\[
+  r_i\oplus r_j=\sigma_e.
+\]
+Use a parity union--find.  A cycle whose XOR sum is inconsistent is rejected immediately.  If all $r_i$ become determined from one gauge choice, no reflection branching occurs at all.
+
+\begin{lstlisting}[caption={Orientation propagation.}]
+PROCEDURE ADD-ORIENTATION-RELATION(S, tile i, tile j, bit sigma, reason R)
+    result <- PARITY-DSU.UNION(i, j, sigma)
+    IF result == CONTRADICTION THEN
+        FAIL-WITH-REASON(S, R plus parity cycle certificate)
+    ENDIF
+ENDPROCEDURE
+\end{lstlisting}
+
+\section{Stage 2: contacts are obligations, not precomputed mappings}
+
+For each physical contact component $e=(i,j)$, create a bidirectional map obligation.  The source/range physical endpoints are known in $C$, but their positions on the common prototype circle may be only partially ordered.
+
+The map obligation stores:
+\[
+  (e,\;I_{i,e},\;I_{j,e},\;\text{orientation},\;\text{known endpoint images},\;\text{pending marked source points}).
+\]
+Every time a new marked prototype point is created, all contact maps whose source interval contains it are notified.  The point is then mapped, possibly causing a further refinement.
+
+No semantic distinction is made between ``direct'' points and later points $E,F,\ldots$ after initialization.  Provenance is retained for reporting, but the solver treats all cuts uniformly.
+
+\section{Stage 3: lazy endpoint placement}
+\label{sec:endpoint-placement}
+
+This stage formalizes the user's motivating operation.  Suppose a source marked point $p$ lies at intrinsic arclength $L$ from the chosen source endpoint of a contact interval.  On the target, the relevant direction traverses atomic intervals with positive lengths
+\[
+  a_1,a_2,\ldots,a_m,
+\]
+and prefix sums
+\[
+  s_0=0,\qquad s_k=a_1+\cdots+a_k.
+\]
+The image $q=f(p)$ has only the following combinatorial possibilities:
+\begin{enumerate}
+  \item $L=s_k$: $q$ is an existing target cut;
+  \item $s_{k-1}<L<s_k$: $q$ is a new cut strictly inside target atom $k$.
+\end{enumerate}
+All other cases are impossible.  If the target traversal is reversed, use prefix sums measured from the opposite endpoint.
+
+Crucially, the algorithm does \emph{not} pre-enumerate a weak order of $L,s_1,\ldots,s_m$.  The linear solver is asked which of these finitely many placement cases are feasible under the current cone of length constraints.
+
+\begin{lstlisting}[caption={Lazy mapping of one marked point.},label={alg:map-point}]
+FUNCTION CANDIDATE-IMAGES(S, contact map f, marked point p)
+    L <- SOURCE-OFFSET-LINEAR-FORM(S, f, p)
+    [a1,...,am] <- TARGET-ATOMS-IN-MAP-DIRECTION(S, f)
+    s0 <- 0
+    candidates <- empty
+
+    FOR k <- 1 TO m DO
+        sk <- s(k-1) + ak
+
+        IF LENGTH-THEORY-CONSISTENT(S, L == sk) THEN
+            ADD candidate EXISTING-CUT(k) TO candidates
+        ENDIF
+
+        IF LENGTH-THEORY-CONSISTENT(S, s(k-1) < L AND L < sk) THEN
+            ADD candidate INTERIOR-OF-ATOM(k) TO candidates
+        ENDIF
+    ENDDO
+
+    RETURN candidates
+ENDFUNCTION
+
+PROCEDURE APPLY-IMAGE-CANDIDATE(S, f, p, candidate c)
+    IF c == EXISTING-CUT(k) THEN
+        q <- corresponding target cut
+        ADD equation f(p) = q
+        ADD length equation L = sk
+    ELSE IF c == INTERIOR-OF-ATOM(k) THEN
+        CREATE new cut q in target atom k
+        SPLIT target atom X into U followed by V
+        ADD word equation X = U V
+        ADD length equations |U| = L - s(k-1), |V| = sk - L
+        ADD strict constraints |U| > 0, |V| > 0
+        ADD equation f(p) = q
+    ENDIF
+
+    QUEUE all maps and word equations affected by q
+ENDPROCEDURE
+\end{lstlisting}
+
+If \texttt{CANDIDATE-IMAGES} returns zero cases, the branch is impossible.  If it returns one, placement is propagated with no search branch.  Only if it returns two or more cases is a decision created.
+
+\section{Stage 4: boundary word algebra integrated into enumeration}
+\label{sec:word}
+
+\subsection{Representation}
+
+Each atomic open interval of $B$ has a nonempty oriented word variable $X$.  A composite boundary interval is represented by a rope/straight-line DAG rather than copied as a flat string.  The elementary constructors are:
+\[
+  X,\qquad UV,\qquad \operatorname{rev}(U).
+\]
+A contact map adds an equation
+\[
+  W(I)=W(J)\quad\text{or}\quad W(I)=\operatorname{rev}(W(J)),
+\]
+depending on orientation conventions.
+
+The early word engine is not required to solve arbitrary Makanin word equations.  Its purpose is to normalize, split, cancel, and expose exactly the cut-order decisions that interact with the topological search.
+
+\subsection{Deterministic word rules}
+
+Apply the following rules to a fixed point.
+\begin{enumerate}[label=(W\arabic*)]
+  \item Normalize reversal:
+  \[
+    \operatorname{rev}(UV)=\operatorname{rev}(V)\operatorname{rev}(U),
+    \qquad \operatorname{rev}(\operatorname{rev}(U))=U.
+  \]
+  \item Signed union: equations $X=Y$ or $X=\operatorname{rev}(Y)$ between atomic variables are stored in an orientation-aware union--find.
+  \item Cancel identical known prefixes and suffixes from equations.
+  \item Every split $X=UV$ creates the length equation $|X|=|U|+|V|$ and positivity $|U|,|V|>0$.
+  \item Any word equality whose length homomorphism contradicts $\mathcal L$ is rejected immediately.
+  \item If one atomic variable is forced equal to a proper factorization containing an equivalent copy of itself, use positivity to detect the immediate impossible cases such as $X=XU$ with $|U|>0$.
+\end{enumerate}
+
+\subsection{Levi refinement rule}
+
+The essential branching rule is the following.  Suppose the current state contains two factorizations of the same word:
+\[
+  X=UV=PQ.
+\]
+The two internal cuts must be ordered.  Query the length theory on $|U|$ and $|P|$; if it cannot prove the relation, create a three-way decision containing only the feasible cases.
+
+\begin{lstlisting}[caption={Levi refinement of competing cuts.},label={alg:levi}]
+PROCEDURE REFINE-TWO-FACTORIZATIONS(S, X = U V, X = P Q)
+    cases <- empty
+
+    IF LENGTH-THEORY-CONSISTENT(S, |U| == |P|) THEN
+        ADD EQUAL TO cases
+    ENDIF
+    IF LENGTH-THEORY-CONSISTENT(S, |U| < |P|) THEN
+        ADD U-BEFORE-P TO cases
+    ENDIF
+    IF LENGTH-THEORY-CONSISTENT(S, |P| < |U|) THEN
+        ADD P-BEFORE-U TO cases
+    ENDIF
+
+    IF cases is empty THEN FAIL ENDIF
+    IF cases has more than one element THEN
+        CREATE decision LEVI-ORDER(U,P) with values cases
+        RETURN
+    ENDIF
+
+    APPLY the unique case
+ENDPROCEDURE
+
+PROCEDURE APPLY-LEVI-CASE(S, X=UV, X=PQ, case c)
+    SWITCH c
+        CASE EQUAL:
+            ADD word equations U=P and V=Q
+            ADD length equation |U|=|P|
+
+        CASE U-BEFORE-P:
+            CREATE nonempty factor R
+            ADD word equations P=U R and V=R Q
+            ADD |R|=|P|-|U| and |R|>0
+            INSERT the corresponding new cut in B
+
+        CASE P-BEFORE-U:
+            CREATE nonempty factor R
+            ADD word equations U=P R and Q=R V
+            ADD |R|=|U|-|P| and |R|>0
+            INSERT the corresponding new cut in B
+    ENDSWITCH
+ENDPROCEDURE
+\end{lstlisting}
+
+This is the formal version of introducing a point $E$ when one mapped segment ends inside another.  It replaces a global enumeration of weak length orders by a sequence of local, logically necessary cut comparisons.
+
+\subsection{Optional stronger word propagation}
+
+The following are optional later layers, not prerequisites for a correct first implementation.
+\begin{itemize}
+  \item Periodicity propagation (Fine--Wilf/Lyndon--Sch\"utzenberger style) when the same factors overlap under several equations.
+  \item A full word-equation solver on the residual normalized system at leaf states.
+  \item Straight-line-program compression to share repeated factors and avoid quadratic copying.
+  \item Hash-consing of normalized equations for memoization across canonical states.
+\end{itemize}
+
+\section{Stage 5: positive length theory}
+\label{sec:length}
+
+\subsection{Variables and constraints}
+
+Assign a positive real variable $\ell_a>0$ to every atomic interval $a$ of the current boundary partition.  Composite interval lengths are linear forms.  Constraints arise from:
+\begin{itemize}
+  \item paired contact intervals having equal arclength;
+  \item word splits $X=UV$;
+  \item endpoint-placement choices;
+  \item equal perimeters (automatically represented when all copies use one prototype boundary);
+  \item optional problem-specific metric facts.
+\end{itemize}
+The feasible set is a relatively open polyhedral cone.  Normalize scale, e.g. by $\sum_a \ell_a=1$, when invoking an LP oracle.
+
+\subsection{Incremental interface}
+
+The length module must expose more than a terminal \texttt{SAT/UNSAT} call.
+
+\begin{lstlisting}[caption={Length-theory abstract interface.}]
+FUNCTION LEN.ADD-EQUALITY(linear form A, linear form B, reason R)
+FUNCTION LEN.ADD-STRICT-ORDER(A, B, reason R)        // A < B
+FUNCTION LEN.ADD-NONSTRICT-ORDER(A, B, reason R)     // A <= B
+FUNCTION LEN.CONSISTENT(extra constraints) -> Boolean
+FUNCTION LEN.PROVE(A < B)  -> {TRUE, FALSE, UNKNOWN}
+FUNCTION LEN.PROVE(A = B)  -> {TRUE, FALSE, UNKNOWN}
+FUNCTION LEN.UNSAT-CORE()   -> set of reasons
+FUNCTION LEN.WITNESS()      -> positive rational/real point if requested
+\end{lstlisting}
+
+Use exact rational arithmetic where practical, or an incremental exact/verified LP backend for final certification.  Farkas certificates are useful because a failed metric branch can be converted to a small reusable nogood.
+
+\subsection{Never branch on irrelevant comparisons}
+
+A comparison $A\lessgtr B$ is introduced only if at least one of the following requires it:
+\begin{enumerate}
+  \item locating a mapped endpoint among target prefix sums;
+  \item refining two word factorizations;
+  \item deciding whether two marked cuts coincide;
+  \item satisfying a geometry plugin predicate whose combinatorial outcome depends on the comparison.
+\end{enumerate}
+This ``lazy order'' rule is a core design requirement.
+
+\section{Stage 6: saturation engine}
+\label{sec:saturation}
+
+Every decision is followed by a deterministic fixed-point computation.  Propagators are event-driven; each constraint registers watchers on the objects that can affect it.
+
+\begin{lstlisting}[caption={Event-driven saturation.},label={alg:saturate}]
+FUNCTION SATURATE(State S)
+    INITIALIZE event queue with all facts added since last fixed point
+
+    WHILE queue not empty DO
+        event <- POP(queue)
+
+        CALL TOPOLOGY-PROPAGATOR(S, event)
+        IF contradiction THEN RETURN FAIL ENDIF
+
+        CALL ORIENTATION-PROPAGATOR(S, event)
+        IF contradiction THEN RETURN FAIL ENDIF
+
+        CALL MAP-CLOSURE-PROPAGATOR(S, event)
+        IF contradiction THEN RETURN FAIL ENDIF
+
+        CALL WORD-PROPAGATOR(S, event)
+        IF contradiction THEN RETURN FAIL ENDIF
+
+        CALL LENGTH-PROPAGATOR(S, event)
+        IF contradiction THEN RETURN FAIL ENDIF
+
+        IF GEOMETRY-TRIGGERED(S, event) THEN
+            CALL GEOMETRY-PROPAGATOR(S, event)
+            IF contradiction THEN RETURN FAIL ENDIF
+        ENDIF
+
+        QUEUE every newly implied fact with its reason
+    ENDWHILE
+
+    IF PERIODIC-EXPENSIVE-CHECK-DUE(S) THEN
+        CALL exact length feasibility
+        CALL selected geometry feasibility level
+        IF any check contradicts THEN RETURN FAIL ENDIF
+    ENDIF
+
+    RETURN S
+ENDFUNCTION
+\end{lstlisting}
+
+\subsection{Map-closure rules}
+
+The map propagator enforces at least:
+\begin{enumerate}[label=(M\arabic*)]
+  \item inverse consistency: $f(p)=q\Rightarrow f^{-1}(q)=p$;
+  \item monotonicity/betweenness on every contact interval;
+  \item endpoint compatibility with physical contact endpoints;
+  \item map composition whenever two maps are simultaneously defined on a marked point;
+  \item notification of every map when a new marked cut enters its source domain;
+  \item synchronous refinement of source/range word factorizations.
+\end{enumerate}
+
+If global tile charts $g_i$ or their symbolic relative motions are represented, composition is not a new independent degree of freedom:
+\[
+  f_{jk}\circ f_{ij}=f_{ik}
+\]
+where defined.  Such identities are propagated rather than checked only at the end.
+
+\section{Stage 7: optional geometric theory in increasing strength}
+\label{sec:geometry}
+
+Geometry should be a plugin with multiple levels.  The search should call the cheapest level that can reject a branch and delay expensive realization until necessary.
+
+\begin{longtable}{p{0.12\textwidth}p{0.82\textwidth}}
+\toprule
+Level & Predicates \\
+\midrule
+\endhead
+G0 & Orientation parity and abstract group/cocycle consistency of tile placements. \\
+G1 & Intrinsic arclength constraints and contact-interval congruence; this overlaps with $\mathcal L$. \\
+G2 & Endpoint/rigid-motion consistency for a finite parameterization (polygonal vertices, spline control points, algebraic arcs, etc.). \\
+G3 & Local junction geometry: angles, tangency, curvature sign, circle membership, or other problem-specific conditions. \\
+G4 & Non-overlap and complete Euclidean realization of the whole patch, using exact predicates, interval arithmetic, SMT over reals, CAD, or a custom solver. \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Scheduling rule.}
+G0 and G1 are eager.  G2 is invoked when enough endpoints are constrained to make it informative.  G3/G4 are normally leaf or near-leaf checks unless profiling demonstrates strong early rejection.
+
+\paragraph{Generic-prototile caveat.}
+For arbitrary Jordan boundaries, a segment being mapped to itself by a nontrivial relative isometry is not automatically impossible; it is a \emph{symmetry obligation} on that boundary factor.  The geometry module should record such obligations rather than reject them without an explicit ``generic asymmetric prototile'' assumption.
+
+\section{Stage 8: symmetry, canonical augmentation, and memoization}
+\label{sec:symmetry}
+
+Post-hoc division by $|G|$ is not an adequate search strategy.  Let $G_0$ be the equivalence group induced by the problem specification, typically generated by some combination of:
+\begin{itemize}
+  \item automorphisms of the coarse patch complex;
+  \item permitted tile relabelings;
+  \item cyclic change of origin on the prototype boundary;
+  \item prototype reversal/global mirror;
+  \item color/orbit-preserving permutations.
+\end{itemize}
+
+Encode the current state as a colored finite graph whose vertices represent cells, cuts, word factors, map incidences, and selected relation nodes.  Edge colors encode relation type and orientation.  A graph canonical-labeling engine supplies a canonical code and the current stabilizer $G_S\leq G_0$.
+
+\subsection{Orbit branching}
+
+For a decision $D$ with values $V$, branch only on representatives of the $G_S$-orbits of $V$.
+
+\subsection{Canonical augmentation}
+
+Prefer canonical augmentation to ``generate then hash''.  A child $S'$ is accepted only if the augmentation used to obtain it belongs to the canonical parent relation of $S'$.  This is the standard orderly-generation idea adapted to the present state graph.
+
+\subsection{Memoization}
+
+After saturation and canonicalization, use the canonical state code as a transposition key.  If the same state is reached by a different history, reuse:
+\begin{itemize}
+  \item its known impossibility certificate;
+  \item its count of completions, when counting only;
+  \item its normalized residual word system;
+  \item geometry solver results that depend only on the canonical state.
+\end{itemize}
+
+This is particularly important because different sequences of Levi refinements can converge to the same common boundary refinement.
+
+\section{Stage 9: conflict learning and nonchronological backtracking}
+\label{sec:learning}
+
+The search can be made substantially more robust by recording reasons for propagated facts.  A contradiction usually depends on a small set of earlier decisions rather than on the full state.
+
+Decision literals may include statements such as:
+\begin{itemize}
+  \item ``$f(p)$ coincides with cut $q$'';
+  \item ``$f(p)$ lies strictly inside atom $a$'';
+  \item ``cut $u$ precedes cut $v$'';
+  \item ``$|U|<|P|$'';
+  \item ``relative orientation of tiles $i,j$ is reversed'';
+  \item ``these physical junction incidences are identified on the prototype''.
+\end{itemize}
+
+When a theory returns an unsatisfiable core, record the conjunction of responsible literals as a forbidden nogood.  Canonicalize the nogood under $G_0$ so that symmetric versions are rejected automatically.  Backjump to the highest decision level appearing in the learned nogood.
+
+\begin{lstlisting}[caption={Conflict-learning wrapper.}]
+PROCEDURE FAIL-WITH-REASON(S, conflict reasons R)
+    core <- MINIMIZE-CONFLICT-IF-CHEAP(R)
+    nogood <- CANONICALIZE-NOGOOD(core, ProblemAutomorphisms)
+    ADD nogood to global learned database
+    BACKJUMP to highest relevant decision level
+ENDPROCEDURE
+\end{lstlisting}
+
+This component is not required for correctness but is likely important when length/word/geometry contradictions recur across many superficially different interleavings.
+
+\section{Decision selection}
+\label{sec:branching}
+
+The next branch should be chosen dynamically.  A practical priority order is:
+\begin{enumerate}
+  \item a forced topological completion with only a few legal values;
+  \item an unmapped marked point for which the contact target has the smallest number of feasible image cells;
+  \item a competing pair of word cuts with the fewest feasible Levi cases;
+  \item an unresolved equality/coincidence of cuts required by a local link;
+  \item an orientation parity only if it remains genuinely free;
+  \item a metric comparison only when demanded by one of the above;
+  \item a geometry-specific discrete choice;
+  \item continuous geometric realization last.
+\end{enumerate}
+
+Use an MRV-like score:
+\[
+  \operatorname{score}(D)
+  =\frac{\#\operatorname{feasibleValues}(D)}
+  {1+\operatorname{expectedPropagation}(D)},
+\]
+with empirical weights.  Branch on the smallest score.  The score affects performance only, not completeness.
+
+\begin{lstlisting}[caption={Decision selection contract.}]
+FUNCTION SELECT-DECISION(S)
+    candidates <- all unresolved obligations currently required for completion
+
+    FOR EACH D IN candidates DO
+        values <- FEASIBLE-VALUES-USING-CHEAP-THEORIES(S, D)
+        values <- ORBIT-REPRESENTATIVES(values, CURRENT-STABILIZER(S))
+        IF values is empty THEN RETURN immediate contradiction ENDIF
+        IF values has one element THEN PROPAGATE it and restart saturation ENDIF
+        assign heuristic score to D
+    ENDDO
+
+    RETURN candidate with minimum score
+ENDFUNCTION
+\end{lstlisting}
+
+\section{Completion criterion and emitted record}
+
+A state is complete at a selected solver level if and only if:
+\begin{enumerate}
+  \item the patch complex is complete;
+  \item every physical direct incidence is assigned to a prototype cut;
+  \item every contact map is cellular on the current boundary partition;
+  \item the marked-point set is closed under all enabled contact maps and inverses;
+  \item all word factorization obligations are resolved to the requested granularity;
+  \item the orientation parity system is consistent;
+  \item the positive length theory is feasible;
+  \item the chosen geometry level is feasible;
+  \item the state is the canonical representative of its equivalence class.
+\end{enumerate}
+
+The emitted \texttt{TypeRecord} should contain, in canonical form:
+\begin{itemize}
+  \item coarse patch cell complex;
+  \item prototype weak cyclic order and cut blocks;
+  \item contact maps on refined intervals;
+  \item reflection/orientation parity solution space;
+  \item normalized word-equation DAG;
+  \item normalized polyhedral length cone;
+  \item residual geometry obligations and, if requested, witnesses;
+  \item provenance/certificates sufficient to replay why the record is admissible.
+\end{itemize}
+
+\section{Three complete enumeration organizations}
+\label{sec:variants}
+
+There is no single universally best order.  Three variants are worth implementing because they cross-check one another.
+
+\subsection{Variant A: orbit-saturated constraint search (recommended)}
+
+This is the architecture of \cref{alg:top}.  It interleaves mapping, word, length, symmetry, and optional geometry constraints.
+
+\paragraph{Advantages.}
+\begin{itemize}
+  \item Avoids the enormous Cartesian product of reflection patterns, global weak point orders, and global weak length orders.
+  \item Discovers only those cuts that a current mapping/equation actually requires.
+  \item Can reject partial states early and learn reusable conflicts.
+  \item Naturally supports unknown or variable numbers of derived points.
+\end{itemize}
+
+\paragraph{Disadvantages.}
+\begin{itemize}
+  \item Most complex implementation.
+  \item Requires careful proof that all propagators are consequence-only and that every branch rule is exhaustive.
+  \item Performance depends on good canonicalization and persistent state representations.
+\end{itemize}
+
+\subsection{Variant B: staged symbolic enumeration}
+
+This is closer to the original tetrad prototype and is easier to audit.
+
+\begin{lstlisting}[caption={Staged baseline algorithm.}]
+PROCEDURE STAGED-ENUMERATION(P)
+    FOR EACH coarse complex C modulo topology symmetries DO
+        FOR EACH orientation-parity solution class R DO
+            FOR EACH weak cyclic interleaving O of direct incidences DO
+                BUILD direct contact maps
+                IF local order/monotonicity inconsistent THEN CONTINUE ENDIF
+                IF positive length cone empty THEN CONTINUE ENDIF
+
+                CLOSE derived cuts under maps and Levi word refinement
+                IF closure inconsistent THEN CONTINUE ENDIF
+
+                CANONICALIZE complete symbolic state
+                IF duplicate THEN CONTINUE ENDIF
+
+                RUN residual word solver
+                RUN geometry solver
+                YIELD if admissible
+            ENDDO
+        ENDDO
+    ENDDO
+ENDPROCEDURE
+\end{lstlisting}
+
+\paragraph{Use.}
+Keep this version as a reference implementation and test oracle for small instances.  It is not the preferred large-scale enumerator.
+
+\subsection{Variant C: bounded SAT/SMT model enumeration}
+
+If one has a proven bound $N$ on the number of marked prototype cuts (or uses iterative deepening), encode the entire problem for at most $N$ cuts in SAT/SMT:
+\begin{itemize}
+  \item integer/rank variables for weak cyclic order;
+  \item Boolean incidence and equality variables;
+  \item parity variables for reflections;
+  \item linear real/rational variables for lengths;
+  \item finite-domain variables for contact-map images;
+  \item optional word-factorization variables;
+  \item symmetry-breaking predicates or canonical model constraints.
+\end{itemize}
+Enumerate models with blocking clauses; after each model, canonicalize and block its whole equivalence orbit if the solver lacks native symmetry handling.
+
+\paragraph{Advantages.}
+Excellent independent checker; exact arithmetic and unsat cores are available; easy to vary constraints.
+
+\paragraph{Disadvantages.}
+Requires a bound on refinement size; weak-order encodings can become large; generic word equations are awkward; enumeration may repeatedly rediscover isomorphic models without strong symmetry breaking.
+
+\subsection{Recommended portfolio}
+
+Use Variant A for production, Variant B for small exhaustive regression tests, and Variant C for bounded cross-validation.  Agreement of all three on small instances is a powerful correctness test.
+
+\section{Finiteness and unbounded refinement}
+\label{sec:finiteness}
+
+The core architecture must not silently assume that closure under partial boundary maps is finite.
+
+\subsection{If a finite bound is proved}
+If the problem class admits a theorem
+\[
+  |\Cuts|\le N(\mathcal P),
+\]
+then the search is a finite exact enumerator.
+
+\subsection{If no finite bound is known}
+Use iterative deepening on the number of distinct cuts or factor nodes:
+\[
+  N=N_0,N_0+1,\ldots
+\]
+A branch that requires a $(N+1)$st cut is not declared impossible; it is returned as a \emph{frontier obligation}.  Persist canonical frontier states.  When $N$ increases, resume from these states rather than restarting the entire search.
+
+If a canonical state recurs under a refinement pattern that strictly increases a repeated factor chain, invoke a specialized periodicity/dynamical analysis rather than expanding indefinitely.  The possible outcomes are:
+\begin{itemize}
+  \item proof of impossibility;
+  \item proof that the orbit closes finitely;
+  \item proof/description of an infinite symbolic refinement family;
+  \item unresolved case passed to a stronger solver.
+\end{itemize}
+
+\section{Tetrad specialization: $K_4$ with connected nondegenerate contacts}
+\label{sec:tetrad}
+
+This section shows how the generic architecture specializes to the motivating problem.  The deductions here are \emph{problem-specific inputs or topology-front-end consequences}, not core assumptions.
+
+\subsection{Coarse complex}
+
+Assume:
+\begin{enumerate}
+  \item four topological-disc tiles;
+  \item every tile pair shares one connected nondegenerate contact arc, so the contact graph is $K_4$;
+  \item the union is a topological disc (no hole);
+  \item the generic regime has only trivalent junctions and exactly three exposed boundary arcs.
+\end{enumerate}
+There are five faces after adjoining the exterior, and nine 1-cells (six internal contacts plus three exterior arcs).  Euler's relation on the sphere gives
+\[
+  V-E+F=2
+  \quad\Longrightarrow\quad
+  V-9+5=2
+  \quad\Longrightarrow\quad
+  V=6.
+\]
+With trivalent vertices, $2E=3V=18$.  The primal 1-skeleton is the triangular prism, and the dual is $K_5$ minus one edge.  One tile face is internal and three meet the exterior.
+
+The topology front-end should derive this and emit one canonical prism complex (plus explicitly requested degenerate coarse complexes, if the problem definition includes them).
+
+\subsection{Initialization}
+
+The four tile faces have, generically, boundary degrees $3,4,4,4$, so there are fifteen direct physical vertex incidences pulled back to the prototype boundary.  Do not enumerate their global weak cyclic interleavings.
+
+Create four orientation parity variables $r_1,\ldots,r_4$, gauge-fix $r_1=0$, and create six contact-map obligations.  Let the map/word/length propagators determine relative parities as soon as each contact's traversal orientation is fixed.
+
+\subsection{Search evolution}
+
+A typical branch proceeds as follows.
+\begin{enumerate}
+  \item Select the most constrained currently unmapped marked cut $p$ on one contact.
+  \item Compute its source offset $L$ as a linear form in current atomic lengths.
+  \item Traverse the target contact atoms and ask the length theory which endpoint/interior placements are possible.
+  \item Apply one orbit-representative placement.
+  \item If an interior cut $E$ is created, split the target word and lengths.
+  \item Notify every other contact map containing $E$ in its source domain.
+  \item Apply inverse/composition/monotonicity propagation.
+  \item Reconcile all competing word factorizations by Levi refinement.
+  \item Run the positive-length feasibility check.
+  \item Canonicalize under the current prism automorphism stabilizer and global prototype reversal.
+  \item Repeat until closure.
+\end{enumerate}
+
+Thus reflection, mapping order, weak point order, and weak length order are not separate nested loops.  They are coupled consequences of the same local decisions.
+
+\subsection{Output for the tetrad word solver}
+
+A final tetrad type should be passed to a deeper solver as a compact canonical system rather than as a raw history.  At minimum:
+\[
+  \left(C_{\mathrm{prism}},\;B,\;\{f_{ij}\}_{1\le i<j\le4},\;\mathcal W,\;\mathcal L,\;\mathcal G\right).
+\]
+If the integrated word propagation has already fully cellularized every contact, the downstream word solver starts from a much smaller normalized residual system.
+
+\section{Generic adaptation: monohedral disc decompositions and local tiling patches}
+
+\subsection{Monohedral decomposition of a disc}
+
+For a $k$-tile monohedral decomposition of a disc:
+\begin{itemize}
+  \item set \texttt{AmbientTopology} to a disc and add one exterior face;
+  \item do not fix the contact graph unless the problem demands it;
+  \item let the topology front-end enumerate admissible cell complexes and coarse intersection types;
+  \item use the same prototype-boundary solver for all tile faces;
+  \item if the outer region is a Euclidean circle, add a geometry plugin constraint saying every exposed patch-boundary arc lies on one common circle.
+\end{itemize}
+The coarse topological types used in results such as \cite{BasitLangi2024} become front-end strata; the boundary-incidence enumerator refines each stratum further.
+
+\subsection{Bounded local patch of an infinite tiling}
+
+Represent the frontier by open half-edges or a distinguished outside face with ``unknown continuation'' flags.  Completion means closure only for maps whose relevant source/range is entirely inside the requested patch radius.  The equivalence group may fix a distinguished central tile or central flag.  This gives a generic local-patch classifier without requiring global periodicity.
+
+\subsection{Multiple prototile orbits}
+
+Replace one prototype boundary $B$ by $B_1,\ldots,B_m$, one per prototile orbit.  Contact maps become partial maps between the corresponding prototype boundaries.  All algorithms remain unchanged except that word variables and orientation parity are typed by prototile orbit.
+
+\section{Soundness and completeness obligations}
+
+A production implementation should be accompanied by a proof structured around the following obligations.
+
+\begin{proposition}[Soundness schema]
+Assume every propagator adds only logical consequences of the current state, every rejection is certified by an unsatisfiable theory constraint, and every emitted state satisfies the completion criterion.  Then every emitted \texttt{TypeRecord} is formally admissible at the enabled solver levels.
+\end{proposition}
+
+\begin{proposition}[Completeness schema]
+Assume:
+\begin{enumerate}
+  \item the topology front-end emits one representative of every admissible coarse complex;
+  \item every decision generator lists all feasible combinatorial cases;
+  \item Levi refinement uses the exhaustive three-way prefix relation;
+  \item endpoint placement lists every equality/interior prefix-sum case;
+  \item orientation variables are either propagated or eventually branched exhaustively;
+  \item canonical augmentation removes only states equivalent under \texttt{EquivalenceSpec};
+  \item refinement is finitely bounded, or iterative deepening is continued without truncation.
+\end{enumerate}
+Then every admissible boundary-incidence type is emitted at least once; canonical augmentation makes it exactly once.
+\end{proposition}
+
+\paragraph{Testing implication.}
+The staged and bounded-SMT variants should be used to verify these assumptions on small instances.  Property-based tests should randomly generate complete formal types, erase some facts, and check that saturation/search can reconstruct an equivalent canonical type.
+
+\section{Implementation-oriented module contracts}
+\label{sec:modules}
+
+Although this document is not source code, the following module separation should be preserved in an implementation.
+
+\begin{longtable}{p{0.23\textwidth}p{0.69\textwidth}}
+\toprule
+Module & Required responsibility \\
+\midrule
+\endhead
+\texttt{TopologyEngine} & Enumerate/canonicalize cell complexes; Euler/link/connectivity checks; produce automorphism group. \\
+\texttt{BoundaryOrder} & Persistent cyclic cut structure with weak equality blocks; insertion, merge, order queries, canonical serialization. \\
+\texttt{MapEngine} & Contact interval maps; inverse/composition/monotonicity; endpoint notification and closure. \\
+\texttt{ParityEngine} & Orientation/reflection DSU with XOR potentials and contradiction certificates. \\
+\texttt{WordEngine} & Rope/SLP factors, signed equality, split equations, Levi refinement obligations, cancellation, optional periodicity. \\
+\texttt{LengthEngine} & Incremental positive linear arithmetic, comparison queries, witnesses, unsat cores. \\
+\texttt{GeometryPlugin} & Problem-specific realization levels G0--G4 with incremental propagation and certificates where possible. \\
+\texttt{Canonicalizer} & Colored-state graph, canonical label, stabilizer, canonical augmentation test, canonical nogoods. \\
+\texttt{SearchKernel} & Persistent states, decision stack, propagation queue, MRV selection, backjumping, memoization, output stream. \\
+\texttt{CertificateLog} & Replayable reasons for propagation/rejection; useful for debugging and mathematical verification. \\
+\bottomrule
+\end{longtable}
+
+\section{Recommended development sequence}
+
+A practical implementation should be built in the following order.
+
+\begin{enumerate}[label=\textbf{D\arabic*.}]
+  \item Implement the coarse combinatorial-map representation and exact canonical labeling for small finite patches.
+  \item Implement the persistent prototype boundary, incidence assignments, and parity DSU.
+  \item Implement positive length linear forms and a reliable incremental feasibility oracle.
+  \item Implement contact-map endpoint placement as in \cref{alg:map-point}.
+  \item Implement word factors and Levi refinement as in \cref{alg:levi}.
+  \item Implement event-driven saturation and make the tetrad $K_4$ prism a full regression test.
+  \item Add canonical augmentation and stabilizer-orbit branching.  Compare counts with the older staged enumerator on bounded instances.
+  \item Add memoization and conflict learning.
+  \item Add a residual full word solver only after profiling the normalized leaf systems.
+  \item Add geometry levels G2--G4 as plugins, beginning with the target prototile classes of greatest interest.
+  \item Add a second application (for example a $k\le3$ disc decomposition) before optimizing tetrad-specific performance; this tests that no hidden tetrad assumption has leaked into the core.
+\end{enumerate}
+
+\section{Why this ordering should be substantially smaller than global weak-order enumeration}
+
+The original nested-loop conception has a search space roughly of the form
+\[
+  \{\text{coarse graphs}\}
+  \times
+  \{\text{reflection patterns}\}
+  \times
+  \{\text{weak cyclic orders}\}
+  \times
+  \{\text{weak length orders}\}
+  \times\cdots.
+\]
+Most combinations are inconsistent for reasons that become visible only after several coordinates have been chosen.
+
+The recommended search replaces this Cartesian product by a sequence of \emph{obligations}.  A mapping endpoint asks only where one particular offset lands.  A word equality asks only how two particular cuts compare.  Orientation is represented by parity equations.  The current automorphism stabilizer removes equivalent choices before they become branches.  Consequently the actual search tree is generated by logical necessity rather than by an a priori coordinate system.
+
+The expected gains come from five distinct mechanisms:
+\begin{enumerate}
+  \item \textbf{lazy weak orders}: comparisons are introduced only on demand;
+  \item \textbf{saturation}: one local mapping decision can force many other maps/cuts immediately;
+  \item \textbf{word/length co-propagation}: Levi refinement converts overlap into a small exhaustive case split, and the length cone rejects impossible cases before deeper word solving;
+  \item \textbf{canonical augmentation}: symmetric subtrees are never entered;
+  \item \textbf{learned nogoods}: repeated contradictions are recognized across different histories and symmetries.
+\end{enumerate}
+
+None of these changes the mathematical definition of a type.  They change only the coordinate system used to enumerate the types.
+
+\section{Open design questions worth resolving experimentally}
+
+The following choices are deliberately left as replaceable strategies rather than ambiguities in the mathematical state.
+
+\begin{enumerate}
+  \item \textbf{Canonicalizer technology.}  A nauty/Traces-style colored graph canonicalizer is the natural baseline; custom canonical forms may be faster for the cyclic boundary plus small patch complex.
+  \item \textbf{Length backend.}  Incremental simplex over rationals, floating LP with exact replay, or an SMT linear-arithmetic backend.  Correctness should ultimately be exact.
+  \item \textbf{Word backend depth.}  Measure how often Levi refinement plus length propagation already closes the residual systems before implementing a general word-equation algorithm.
+  \item \textbf{Geometry scheduling.}  Profile rejection rates of G2/G3 checks at different search depths; invoke them early only when rejection-per-cost is favorable.
+  \item \textbf{Conflict learning granularity.}  Start with theory unsat cores; add clause minimization only if repeated conflicts dominate.
+  \item \textbf{Finiteness.}  For each problem family, seek a theorem bounding the common boundary refinement.  Until then, keep the core iterative-deepening capable.
+\end{enumerate}
+
+\section{Compact reference algorithm}
+
+The following is the intended end-state of the implementation in one place.
+
+\begin{lstlisting}[caption={Compact production algorithm.}]
+PROCEDURE CLASSIFY(P)
+    FOR EACH C IN canonical ENUMERATE-COMPLEXES(P) DO
+        S <- INITIALIZE(C, P)
+        // Reflection bits are symbolic parity variables here.
+        SOLVE(S)
+    ENDDO
+ENDPROCEDURE
+
+PROCEDURE SOLVE(S)
+    REPEAT
+        S <- event-driven SATURATE topology, parity, maps, words, lengths
+        IF S == FAIL THEN LEARN-NOGOOD; RETURN ENDIF
+
+        IF geometry checkpoint is informative THEN
+            PROPAGATE selected geometry level
+            IF contradiction THEN LEARN-NOGOOD; RETURN ENDIF
+        ENDIF
+
+        CANONICALIZE S
+        IF S is not canonical augmentation THEN RETURN ENDIF
+        IF canonical transposition already solved THEN REUSE; RETURN ENDIF
+
+        IF COMPLETE(S) THEN
+            IF final enabled solvers return SAT THEN
+                YIELD canonical TypeRecord(S)
+            ENDIF
+            RETURN
+        ENDIF
+
+        D <- most constrained unresolved obligation
+        V <- feasible values of D after cheap theory queries
+        V <- representatives of V under stabilizer Aut(S)
+
+        IF |V| == 0 THEN LEARN-NOGOOD; RETURN ENDIF
+        IF |V| == 1 THEN
+            APPLY the sole value to S
+            CONTINUE
+        ENDIF
+
+        FOR EACH v IN V DO
+            SOLVE(APPLY-DECISION(copy-on-write S, D, v))
+        ENDDO
+        RETURN
+    UNTIL false
+ENDPROCEDURE
+\end{lstlisting}
+
+\paragraph{Interpretation.}
+A reflection is just a parity fact until it must be decided.  A weak order is just a sequence of local cut comparisons until enough comparisons determine it.  A new point $E$ is just the factor introduced by a contact-map placement or Levi refinement.  A length order is never generated globally.  The word solver is not a separate terminal black box: its cheap, structurally decisive part participates in every saturation cycle.  Geometry is organized identically, but its expensive levels are delayed until their pruning value justifies the cost.
+
+\section{Conclusion}
+
+For the intended class of problems, the natural unit of search is not ``a global weak order plus a reflection pattern''.  It is a \emph{saturated partial incidence symbol on a common prototype boundary}.  The search should alternate:
+\[
+  \boxed{\text{one local decision}
+  \;\longrightarrow\;
+  \text{topological/word/metric/geometric saturation}
+  \;\longrightarrow\;
+  \text{canonicalization}}
+\]
+until either a contradiction or a closed canonical type is obtained.
+
+This architecture retains the original insight--classify contact topology and boundary self-mappings before full geometry--but changes the enumeration coordinate system in the direction suggested by incidence-symbol and Delaney--Dress methods.  The additional word-theoretic refinement layer makes the ``indirect point'' phenomenon first-class and should allow a large fraction of the formal solver work to occur while the search tree is still shallow.
+
+\begin{thebibliography}{99}
+
+\bibitem{GS1977}
+B. Gr\"unbaum and G. C. Shephard,
+\newblock The eighty-one types of isohedral tilings in the plane,
+\newblock \emph{Mathematical Proceedings of the Cambridge Philosophical Society} 82 (1977), 177--196.
+\newblock DOI: \href{https://doi.org/10.1017/S0305004100053810}{10.1017/S0305004100053810}.
+
+\bibitem{GS1979}
+B. Gr\"unbaum and G. C. Shephard,
+\newblock Incidence symbols and their applications,
+\newblock in \emph{Relations Between Combinatorics and Other Parts of Mathematics}, Proceedings of Symposia in Pure Mathematics 34, American Mathematical Society, 1979.
+
+\bibitem{Delgado2003}
+O. Delgado-Friedrichs,
+\newblock Data structures and algorithms for tilings I,
+\newblock \emph{Theoretical Computer Science} 303 (2003), 431--445.
+\newblock DOI: \href{https://doi.org/10.1016/S0304-3975(02)00500-5}{10.1016/S0304-3975(02)00500-5}.
+
+\bibitem{Huson1993}
+D. H. Huson,
+\newblock The generation and classification of tile-$k$-transitive tilings of the Euclidean plane, the sphere and the hyperbolic plane,
+\newblock \emph{Geometriae Dedicata} 47 (1993), 269--296.
+
+\bibitem{DressHuson1987}
+A. W. M. Dress and D. H. Huson,
+\newblock On tilings of the plane,
+\newblock \emph{Geometriae Dedicata} 24 (1987), 269--296.
+
+\bibitem{BasitLangi2024}
+B. Basit and Z. L\'angi,
+\newblock On monohedral tilings of a regular polygon,
+\newblock \emph{Aequationes Mathematicae} 98 (2024), 535--555.
+\newblock DOI: \href{https://doi.org/10.1007/s00010-023-00973-y}{10.1007/s00010-023-00973-y}.
+
+\bibitem{KurusaLangiVigh2020}
+\'A. Kurusa, Z. L\'angi, and V. V\'igh,
+\newblock Tiling a circular disc with congruent pieces,
+\newblock \emph{Mediterranean Journal of Mathematics} 17 (2020), Article 156.
+\newblock DOI: \href{https://doi.org/10.1007/s00009-020-01595-3}{10.1007/s00009-020-01595-3}.
+
+\bibitem{Lothaire1983}
+M. Lothaire,
+\newblock \emph{Combinatorics on Words},
+\newblock Encyclopedia of Mathematics and its Applications 17, Addison-Wesley, 1983.
+
+\end{thebibliography}
+
+\end{document}

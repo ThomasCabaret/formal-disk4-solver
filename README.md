@@ -1,6 +1,42 @@
 # Formal Contour Solver
 
-Version 1.0.0 reorganizes the project around explicit **case identifiers**.  A
+## Research project: nontrivial monohedral tilings of the disk
+
+The primary objective is to discover and understand **nontrivial tilings of a
+Euclidean disk by congruent tiles**. This repository is a research workbench,
+not a completed general-purpose solver. Mathematical proofs, constructive
+families, disk-specific reductions and algorithm design are all valid routes
+to that objective. The formal-contour approach is one investigated route, not
+a requirement imposed on future research.
+
+**Start here:** [research charter and method](docs/research/README.md), then the
+[research operating method](docs/research/METHODOLOGY.md),
+[live agenda](docs/research/AGENDA.md),
+[research backbone](docs/research/BACKBONE.md),
+[mathematical-results registry](docs/research/MATHEMATICAL_RESULTS.md), and
+[current approaches and evidence](docs/research/STATE.md). Agents should read
+[AGENTS.md](AGENTS.md) before working. These documents define the research
+direction; older technical roadmaps are historical context, not automatic tasks.
+
+Previous experiments reportedly recovered known nontrivial 12-tile disk tilings
+under imposed symmetry. General enumeration remained expensive, and learned
+ordering did not demonstrate the hoped-for improvement. The newer contact-based
+backtracking is still experimental. No current engine is established as an
+efficient search over arbitrary large instances.
+
+Tetrads, free-boundary patches and known square/triangle/hexagon arrangements
+are **diagnostic subproblems**, not the project's destination. Failure on them
+calls for solver investigation; success does not establish disk performance.
+Conversely, disk-specific mathematics could make a restricted disk search
+easier than a relaxed patch search. That possibility remains a research question.
+
+The overview above was updated on 2026-10-21 without rerunning experiments.
+Existing launch instructions below document available workflows, not a renewed
+validation of every mode. No historical runs should be deleted as part of setup.
+
+## Existing software and case workflows
+
+The historical case organization uses explicit **case identifiers**. A
 case owns its planar map, search configuration, geometry configuration,
 visualizer configuration, output directory and checkpoints.
 
@@ -25,9 +61,9 @@ setup.bat
 run_tests.bat
 ```
 
-## Maintained exploratory workflow
+## Existing web exploratory workflow
 
-The maintained interactive search surface is the unified web Graph Lab:
+The most developed interactive surface is the unified web Graph Lab:
 
 ```powershell
 $env:PYTHONPATH="$PWD\src"
@@ -37,7 +73,7 @@ py.exe -m formal_disk4.graph_lab.app `
 ```
 
 It starts the structural search, dashboard, and geometry queue together. The
-stable default uses the stochastic structural prior without instantiating or
+default uses the stochastic structural prior without instantiating or
 training neural models. Experimental learned ordering remains available with
 `--policy learned`.
 

@@ -1,5 +1,15 @@
 # Documentation
 
+Start with the [research charter](research/README.md),
+[operating method](research/METHODOLOGY.md),
+[live agenda](research/AGENDA.md),
+[research backbone](research/BACKBONE.md),
+[mathematical-results registry](research/MATHEMATICAL_RESULTS.md), and
+[approach inventory](research/STATE.md), updated 2026-10-21. They define the
+current objective, dependency map and evidence standard. Technical notes below
+describe existing components; historical roadmaps are not automatically the
+next research plan.
+
 `docs/` is the single documentation source tree for the project.
 
 - Markdown and text files document the maintained architecture, APIs, output
