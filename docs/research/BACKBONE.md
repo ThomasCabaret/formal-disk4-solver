@@ -126,6 +126,36 @@ SMT, placement-first) should be separable from the exact theory engines in
 stages 1–6. Second, no stage may translate `unsupported`, a resource limit, or
 numerical failure into `unsatisfiable`.
 
+## Existing constraint engines
+
+Capability index checked at `a80a11c` (2026-10-21), not an independent correctness
+audit. Consult this before proposing another length reduction or joint solver.
+Use **file plus symbol**, not line numbers alone, and inspect the callers for
+the selected mode. These engines coexist; they are not all stages of every run.
+The broader stage table above and [STATE.md](STATE.md) remain the project map.
+
+| Existing capability | Definition / call path | Boundary to preserve |
+| --- | --- | --- |
+| Interface length projection and positivity | [`weak_orders.py`](../../src/formal_disk4/enumeration/weak_orders.py), `_resolved_length_rows`; [`length_lp.py`](../../src/formal_disk4/constraints/length_lp.py), `LengthFeasibilityOracle`; used by the weak-order enumerator. | Already forms homogeneous equal-length rows. This oracle directly rejects exact same-sign contradictions; numerical LP failure remains unknown. Length feasibility is not full word or geometry feasibility. |
+| Joint cyclic weak-order / length guidance | [`joint_weak_length.py`](../../src/formal_disk4/enumeration/joint_weak_length.py), `CyclicJointWeakLengthOracle`; `WeakOrderEnumerator._joint_cyclic_oracle` in `weak_orders.py`. | Solves coordinate/order and interface-length constraints under the supported direct cyclic action, not all topology or arbitrary symmetry constraints. |
+| Preword metric and turning relaxations | [`linear_invariants.py`](../../src/formal_disk4/preword/linear_invariants.py), `PrewordLinearInvariantFilter._analyze_metric` and `_analyze_point_turns`; configured in [`pipeline/runner.py`](../../src/formal_disk4/pipeline/runner.py). | Already combines lengths, positive/negative radius-R arc measures, curve turns and point constraints. Global disk identities have free-boundary and regularity guards; these are necessary constraints, not complete word solving. |
+| Incremental metric/word propagation (Contact V2) | [`contact_words.py`](../../src/formal_disk4/search/contact_words.py), `ContactWordTheory.check`, `ForcedLengthComparison`; called by [`contact_types.py`](../../src/formal_disk4/search/contact_types.py), with [`linear.py`](../../src/formal_disk4/search/linear.py), `LinearTheory`. | Uses affine lengths to force Levi comparisons, propagates factors/corners and optionally explores residual comparisons. Already more than a final length filter; not a complete compact solution of the decorated problem. |
+| Mirror-compatible terminal refinement | [`words/compile.py`](../../src/formal_disk4/words/compile.py), `refine_mirror_compatible_terminal_environment`; invoked by `pipeline/runner.py`. | For a concrete family specialization, exact positive rational weights are scaled to integer subdivisions. This already constructs common refinements, not merely tests unit-atom lengths. |
+| Terminal metric and joint angular solving | [`profiles/decorations.py`](../../src/formal_disk4/profiles/decorations.py), `_terminal_lengths`, `_build_joint_angular_feasibility`, called by `build_decorations`. | Carries word identifications and length-sector constraints into lengths, angles and curve turns, with circular turn/length coupling. Does not itself establish numerical realization or disk coverage. |
+
+Related controls (presence only, not rerun by this index update):
+[`test_joint_weak_length.py`](../../tests/test_joint_weak_length.py),
+[`test_preword_linear.py`](../../tests/test_preword_linear.py),
+[`test_contact_search.py`](../../tests/test_contact_search.py),
+[`test_mirror_refinement.py`](../../tests/test_mirror_refinement.py),
+[`test_joint_angular.py`](../../tests/test_joint_angular.py).
+Detailed Contact V2 limitations remain in [its status note](../CONTACT_SEARCH_V2.md).
+
+In particular, `CWS-BARE` in CPLX-002 is a scoped theoretical interpretation of
+bare constant-free existence, **not** the introduction of linear length solving
+to this project or a measured speedup. Any proposed compact decorated solver
+must identify what the engines above cannot already propagate or represent.
+
 ## Existing traversal strategies
 
 | Strategy | Where it branches | Reused kernel | Present status |

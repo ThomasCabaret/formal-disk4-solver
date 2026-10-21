@@ -16,6 +16,8 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 - Next bounded action: formulate fixed-length signed interval constraints with
   arc type/sign and corner information. Determine which checks and useful
   alternatives admit a compact representation before implementing a new kernel.
+  First identify the precise difference from the existing engines in
+  [BACKBONE.md](BACKBONE.md#existing-constraint-engines); another length LP is not new.
   Preserve the distinction between fixed graph and fixed incidence, and between
   integer word lengths and physical arclengths. No large rewrite or long run.
 - Second priority: `ALG-001`, compare genuinely different unknown-tile discovery

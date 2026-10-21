@@ -90,6 +90,10 @@ positive-LP existence reduction and a fixed-integer-length signed interval-cover
 test. These are precise subproblems, not classifications of the full decorated
 or geometric problem. New mathematical deductions remain proof drafts.
 
+The positive-length projection is already implemented in several engines; see
+the [capability index](BACKBONE.md#existing-constraint-engines). CPLX-002's bare
+existence interpretation is not a new solver capability or a demonstrated gain.
+
 The isolated probe matched its explicit signed-cover test with exhaustive
 one-opposite-pair word search on 164 small systems. All four actual small compiler
 controls had direct periodic word witnesses; both disk ones failed angular

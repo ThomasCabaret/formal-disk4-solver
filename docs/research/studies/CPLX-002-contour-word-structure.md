@@ -67,6 +67,19 @@
 
 ## Results
 
+### Existing-work correction (2026-10-21)
+
+The owner challenged the claimed leverage of the length reduction. Read-only
+inspection at `a80a11c` confirmed that positive length LPs, joint cyclic
+order/length guidance, incremental metric/word propagation, mirror refinement
+and joint terminal decoration already exist; see the
+[capability index](../BACKBONE.md#existing-constraint-engines). The earlier trace
+mentioned parts of this but did not adequately compare their actual scope.
+`CWS-BARE` is a theoretical clarification of the stripped decision problem,
+not a new implemented capability or an identified practical improvement. The
+probe remains diagnostic evidence only. Any CPLX-003 proposal must establish
+its precise difference from those engines before claiming computational leverage.
+
 Proof/diagnostic source: [contour_word_structure.tex](../../contour_word_structure.tex).
 Reproducible small probe:
 [probe_contour_words.py](../../../scripts/research/probe_contour_words.py).

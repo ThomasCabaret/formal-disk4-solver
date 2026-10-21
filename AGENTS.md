@@ -8,6 +8,11 @@ research, follow `.agents/skills/disk-tiling-research/SKILL.md`.
 The central objective is nontrivial monohedral tilings of the disk, not improving
 a particular implementation or solving tetrads for their own sake.
 
+Before calling an idea new to the project or claiming computational leverage,
+apply the existing-work comparison in `docs/research/METHODOLOGY.md`: compare
+the relevant results, use `docs/research/BACKBONE.md` to inspect related code
+where applicable, and state the precise difference.
+
 - Work macro-to-micro: before substantive work, place it in the live tree in
   `docs/research/AGENDA.md` and explain the path from the root, the parent
   decision it serves, alternatives, and what each possible outcome changes.

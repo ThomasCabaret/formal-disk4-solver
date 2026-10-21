@@ -122,6 +122,31 @@ and allow that discussion before starting it. An ordinary request to continue
 research still authorizes a clearly announced bounded iteration; do not add a
 routine approval barrier to every action.
 
+## Mandatory comparison with existing work
+
+Before selecting or presenting a reduction, filter or algorithmic improvement,
+read the relevant entries in [BACKBONE.md](BACKBONE.md#existing-constraint-engines),
+[MATHEMATICAL_RESULTS.md](MATHEMATICAL_RESULTS.md) and [STATE.md](STATE.md).
+Follow the index into the actual definitions and their callers in the relevant
+engines; a missing keyword or an old diagram is not evidence of absence. After
+a context interruption or uncertainty, reread those entries rather than rely
+on conversational memory. This is a targeted check, not a full repository audit.
+
+Record a short **existing work / proposed difference / remaining obstacle**
+comparison in the study, with source symbols and the revision inspected. Compare
+hypotheses, information retained, when constraints act, and what is decided,
+enumerated or left unknown. For independent mathematics, compare the relevant
+claims and sources; a code audit is needed only when claiming implementation
+novelty, a missing capability or computational leverage.
+
+If no substantive difference is identified, label the work a clarification,
+rediscovery or validation, not a new capability or acceleration. A theorem
+strengthening the interpretation of an existing filter may be useful, but must
+say what additional decision it enables. Keep the capability index current when
+an engine's role changes; do not create a second inventory. Summaries guide
+inspection, while code establishes implemented behavior and tests establish only
+their stated checks. Report uncertainty rather than invent a difference.
+
 ## Repository record
 
 The maintained research memory is split by purpose:

@@ -322,3 +322,22 @@ compact decorated-interval contract. ALG-001 is the second strategic priority.**
   formulations remain selected second; the orbit drafts and their unaccepted
   status are preserved with a resumption trigger. The research agenda, not an
   old implementation checklist or a generic hardness citation, selects work.
+
+## 2026-10-21 — Compare proposed advances with implemented capabilities
+
+**Decision `D-016`: require an explicit existing-work/difference comparison
+before presenting a reduction or algorithm as a new project capability.**
+
+- The owner challenged CPLX-002's length-LP framing. Inspection at `a80a11c`
+  confirmed multiple existing length, metric/word and angular engines. The bare
+  existence observation is a theoretical clarification, not a new implementation
+  or demonstrated practical improvement. The original evidence is preserved.
+- The correction belongs to `R0 -> CPLX-001 -> CPLX-002`; it changes the claimed
+  leverage, not proof acceptance or solver behavior. CPLX-003 remains selected,
+  but must identify its difference from existing propagation before proceeding.
+- Reuse `BACKBONE.md` as the capability index, with source symbols, callers and
+  scope guards. Add the short comparison gate to the method and study template,
+  reachable from `AGENTS.md`; no new inventory system, solver change or run.
+- Next: apply that comparison to the compact decorated-interval proposal. If no
+  useful difference is found, return to CPLX-001 and reconsider alternatives,
+  rather than implement another length oracle. Local commits only; never push.

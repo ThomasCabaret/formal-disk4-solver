@@ -34,6 +34,12 @@ placeholders rather than filling them with vague text.
 
 ## Evidence plan
 
+- Existing work inspected (registry IDs, code definitions **and callers** where
+  relevant, revision):
+- Proposed difference and remaining obstacle: what is already done, what this
+  changes, and what parent decision it enables; or explicitly clarification /
+  rediscovery / validation. Do not claim a missing capability without checking:
+
 - Existing sources and proof-review status:
 - Baseline and positive/negative controls:
 - Method:
