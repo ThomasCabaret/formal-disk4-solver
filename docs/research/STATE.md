@@ -19,7 +19,7 @@ See [the study](studies/SPEC-001-problem-domain.md) for scope and remaining revi
 The first `MATH-001` pass produced [a literature map](LITERATURE_FRONTIER.md).
 It identified constructive control families and restricted classifications,
 but did not settle the current general Stein question or audit the local
-stronger theorems. The next target is under discussion with the owner;
+stronger theorems. The owner subsequently selected `MATH-003`;
 `VALID-001` was withdrawn without starting it: its usefulness to the actual
 formal-contour pipeline had not been established. [ROADMAP.md](ROADMAP.md)
 describes competing approaches, not compulsory sequential phases. The live
@@ -29,10 +29,32 @@ algorithmic candidate. The methodology requires a root-to-node path, alternative
 and outcome-to-parent consequences before substantive work, then an explicit
 return to the parent. This changes research governance, not scientific evidence.
 Original mathematical creation
-is an explicit objective; `MATH-003` records one proposed direction. The optional
+is an explicit objective. The optional
 [external RSS-ORB audit](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready
 for submission by the owner; it has no returned answer and does not determine
 the next independent study. No solver or search-performance evidence changed.
+
+### First original-mathematics attempt: MATH-003
+
+[The study](studies/MATH-003-two-orbit-stein.md) now contains a complete
+[proposed proof](../two_orbit_stein_obstruction.tex) excluding two moving orbits
+in a rotational Stein disk tiling for every order `m>=2`. It combines a new
+intrinsic-rotation/sector obstruction for `m>=3` with a five-lens area bound for
+`m=2`. If accepted together with the needed orbit reduction, this strengthens
+the count bound to `N=1+km`, `k>=3` (`N>=3m+1`).
+
+The local dependency deductions were re-derived conditional on KLV's published
+premises, whose statements were checked. Full independent proof acceptance and
+literature novelty remain pending. Finite numerical identity checks are merely
+algebra sanity checks, not an exhaustive geometry search or a proof certificate.
+The tiling conclusion is conditional on the outer-trace premises. A specific
+area-equality issue in the external proof's unrestricted Jordan-boundary domain
+is recorded for review, not asserted to disprove that premise. The new sector
+lemma and lens bound do not depend on it.
+[EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
+optional independent review, not submitted. No new rejection was enabled in code;
+no discovery run or performance benchmark was launched. The larger-orbit and
+asymmetric Stein questions remain untouched.
 
 ## What the history supports
 

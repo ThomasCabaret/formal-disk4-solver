@@ -179,3 +179,40 @@ revisable approach tree and a mandatory relevance/return-to-parent protocol.**
 - The study template and agent entry instructions now carry these requirements.
   Routine steps within one study need no extra node. No new proof, experiment,
   solver change or research target selection occurred in this governance turn.
+
+## 2026-10-21 — First two-orbit Stein obstruction attempt
+
+**Decision `D-012`: pursue the owner-approved MATH-003 proof question, retain
+its proposed exclusion as a reviewable draft, and return to APP-IMP before
+extending the claim or implementing a filter.**
+
+- Path: `R0 -> APP-IMP -> MATH-003`. The alternative was another broad survey
+  or algorithm redesign; the two-orbit class offered a specific geometric proof
+  target independent of the present search engine.
+- Local deductions of the needed rotational normal form were re-derived
+  conditional on KLV's outer-trace facts. The primary statements and their
+  general tiling scope were checked; their full proofs were not independently
+  certified, nor were code premise detectors audited.
+- New artifact: [two_orbit_stein_obstruction.tex](../two_orbit_stein_obstruction.tex).
+  The draft excludes `m>=3` using intrinsic rotation of a sector-confined tile,
+  then treats `m=2` with an upper lens-area bound and measure subadditivity.
+  This avoids assuming zero-area Jordan boundaries. Its proposed consequence
+  is `N=1+km`, `k>=3`, not general Stein nonexistence.
+- Auxiliary checks of two identities for orders 2–200 found no transcription
+  error. They are not proof certificates or performance evidence. The detailed
+  [study](studies/MATH-003-two-orbit-stein.md) also records assumption controls
+  and the limits of a bounded prior-art search; novelty is not certified.
+- A late critical check identified a specific area-equality question in the
+  external proof of outer-trace connectedness for unrestricted Jordan boundaries.
+  It is recorded for audit, not as a refutation of the published lemma. The
+  tiling theorem is explicitly conditional on the outer-trace premises; the
+  new elementary sector/lens arguments are separate. A zero-mean orbit proof
+  removes that dependency from strict containment of the central tile itself.
+- `RSS-SECTOR` and `RSS-2ORB-EXCL` are indexed as proof drafts. The original
+  rotational source is preserved with a status pointer, not silently rewritten
+  as if its earlier reflection-case gap had never existed.
+- [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
+  independent review, not submitted. No independent acceptance has been recorded.
+  Next: review this exact argument; if it fails, return to the affected step.
+  Other root approaches remain open. No solver/filter, learned policy, run data
+  or checkpoint changed; no discovery computation was launched.

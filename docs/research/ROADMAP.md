@@ -85,10 +85,10 @@ withdrawn: its relevance to that chain was not established. No such work was
 started. Any future validation must name the actual stage and property tested;
 it cannot introduce a new placement solver as an unstated prerequisite.
 
-`MATH-003` (two moving orbits in a rotational Stein tiling) remains a possible
-restricted proof question. It should be chosen only after explaining how its
-answer changes the selected broader question. The ready external audit
-`EXT-MATH-001` can review an existing lemma; it does not set research priority
-and need not delay original mathematics.
-
-No new proof study or implementation is selected in this planning turn.
+`MATH-003` (two moving orbits in a rotational Stein tiling) was subsequently
+selected by the owner and delivered a [proof draft](studies/MATH-003-two-orbit-stein.md),
+not an accepted theorem or production gate. Its proposed exclusion returns to
+`APP-IMP` with independent review as the next bounded action. Larger orbit
+counts and other approaches have not been automatically selected.
+`EXT-MATH-001` can review an existing lemma and `EXT-MATH-002` the new argument;
+both are ready, not submitted, and do not determine other research priorities.

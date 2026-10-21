@@ -1,0 +1,264 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,amsthm}
+\usepackage[a4paper,margin=27mm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newcommand{\interior}{\operatorname{int}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\area}{\operatorname{area}}
+\newcommand{\Rot}{\operatorname{Rot}}
+\title{A sector obstruction to two-orbit rotational Stein tilings}
+\author{MATH-003 research draft --- LLM-generated}
+\date{21 October 2026}
+\begin{document}
+\maketitle
+
+\noindent\textbf{Status.} This is a proof draft, not an independently reviewed
+theorem or an enabled software filter. The local deductions have been checked
+within this research iteration. Published premises are identified below;
+neither their full proofs nor literature novelty are certified here. The
+earlier source is \texttt{rotational\_stein\_structural\_note.tex}.
+
+\section{Question and hypotheses}
+
+Let $D=\{x\in\mathbb R^2:|x|\leq1\}$ and $O=0$. A tiling is a finite
+family of congruent compact Jordan regions with pairwise disjoint interiors
+whose union is $D$. Reflected congruences are permitted. Assume $N>1$, one tile
+$C$ satisfies $O\in\interior C$, and rotation $R=\Rot_O(2\pi/m)$, $m\geq2$,
+permutes the geometric tiles. No smoothness, rectifiable tile boundaries,
+connected internal contacts, prescribed graph, or maximality of $m$ is assumed.
+For a different generator of this same cyclic group, use a suitable power to
+obtain $R$.
+
+\begin{theorem}[Two moving orbits are impossible: draft]\label{thm:exclusion}
+Assume the three outer-trace premises stated in Section~\ref{sec:premises}.
+Under the tiling hypotheses above, the noncentral tiles cannot form exactly two
+$R$-orbits. In particular, using the boundary-orbit reduction below,
+\[
+ N=1+km\quad\Longrightarrow\quad k\geq3,
+ \qquad N\geq3m+1.
+\]
+This does not exclude rotational Stein tilings with more orbits, or Stein
+tilings without rotational symmetry.
+\end{theorem}
+
+\section{The required reductions and their dependencies}\label{sec:premises}
+
+We use three published facts about monohedral Jordan-region disk tilings:
+outer traces $S_T=T\cap\partial D$ are connected when nonempty (KLV,
+Lemma~2.6); an outer trace transported to another tile is on the boundary of
+its convex hull (Remark~2.7); two transported traces of positive length either
+coincide or intersect only at endpoints (Remark~2.8) \cite{KLV}.
+These are used for arbitrary tile congruences; empty and point traces do not
+contribute length. Their statements and surrounding scope were checked in the
+primary preprint, not independently reproved in this iteration.
+In particular, the proof of KLV Lemma~2.6 uses tile-area equalities. Their
+justification in the unrestricted positive-area Jordan-boundary case is a
+specific external-review question, not settled here. This observation is not
+a counterexample to the published lemma. The main draft is conditional on
+the stated outer-trace premises until that review is resolved.
+
+\paragraph{Central tile and full orbits.}
+Every other tile omits $O$: otherwise its interior would accumulate at $O$
+inside the open neighborhood occupied by $C$. Hence $R(C)=C$. A noncentral
+tile fixed by a nonidentity power of $R$ would contain $O$ by Brouwer's fixed
+point theorem applied on that Jordan disk. Thus every noncentral orbit has
+size $m$.
+
+Connectedness of $S_C$ and its rotation invariance force $S_C$ to be empty
+or the whole circle. The latter would force the Jordan region $C\subset D$
+to equal $D$ by Jordan separation, contradicting the other tiles. Consequently
+$C$ is contained in a disk of radius $r<1$ about $O$, and
+\[
+ P(\conv C)\leq2\pi r<2\pi.
+\]
+The perimeter inequality follows, for example, by integrating convex-body
+widths (the Cauchy perimeter formula); $\conv C$ has nonempty interior.
+
+There is also an elementary proof of $S_C=\varnothing$ independent of KLV.
+If $u\in C$ with $|u|=1$, then $R^ju\in C$ and
+$\sum_{j=0}^{m-1}R^ju=0$. For a congruence $f(x)=Qx+t$ from $C$ to any
+other tile, disk containment gives
+\[
+ 1\geq\frac1m\sum_{j=0}^{m-1}|QR^ju+t|^2=1+|t|^2.
+\]
+Thus $t=f(O)=0$, putting $O$ in that other tile's interior, a contradiction.
+This proves the strict central containment without boundary regularity or
+outer-trace connectedness.
+
+\paragraph{A centered matching between different outer orbits.}
+The positive-length outer traces cover the circle except for finitely many
+endpoints and have disjoint relative interiors. For the latter assertion,
+at an interior point of an outer circular subarc a Jordan tile locally occupies
+the disk side of that arc; two such tiles would overlap in their interiors.
+Their total length is therefore $2\pi$. Transport all of them to $C$.
+The three KLV facts and $P(\conv C)<2\pi$ force a coincidence.
+
+For an outer representative $T$, choose $f:C\to T$ and, for $T_j=R^jT$,
+choose $f_j=R^jfR^{-j}$. If $\Gamma=f^{-1}(S_T)$, its transported orbit
+is $R^j\Gamma$. Its supporting unit circle has center $q=f^{-1}(O)\ne O$.
+Two distinct rotated copies of $\Gamma$ cannot coincide: coincidence of their
+supporting circles would give $R^{j-\ell}q=q$, hence $q=O$. Thus the forced
+coincidence belongs to different outer orbits. Composing their transports
+gives an isometry $h$ between two tiles and between their complete outer
+arcs. Since a nondegenerate circular arc determines its supporting circle,
+$h(O)=O$. There are at least two outer orbits.
+
+\paragraph{Exactly two orbits imply alternating sectors.}
+If these are the only noncentral orbits, both are outer. A centered matching
+gives the same outer-arc length in both, so every outer trace has length
+$\pi/m$. Around the circle the two rotational orbits alternate.
+After relabeling, a centered matching between adjacent outer tiles is either
+$\rho=\Rot_O(\pi/m)$ or reflection $s$ in their common endpoint radius.
+
+If the matching is $\rho$, it swaps the two orbits and preserves their union:
+$\rho^2=R$. It also preserves $C$, which is the closure of the complement of
+that union in $D$. The same reasoning holds for any symmetry preserving the
+noncentral tiles: the interior of each Jordan tile is dense in it, so those
+tiles contain no interior point of $C$. Under the enlarged rotation $\rho$,
+all noncentral tiles form one orbit, contradicting the preceding outer-orbit
+argument. Therefore the matching is $s$; $R,s$ preserve the whole tiling.
+
+Each reflection $R^js$ sends a tile in one outer orbit to a distinct tile
+in the other. Its axis cannot meet that tile's interior, or the fixed point
+would belong to both interiors. Connectedness of the tile interior confines
+it to one component of the complement of these axes. Taking closures,
+each outer tile is in a closed sector of angle $\pi/m$. Since its outer
+trace has that same angle, the trace is the entire outer arc of that sector.
+
+\paragraph{Intrinsic rotation is not an extra assumption.}
+For every congruence $f:C\to T$, the tile $T$ is invariant under $fRf^{-1}$,
+a rotation through $\pm2\pi/m$ about $P=f(O)\in\interior T$.
+It is therefore invariant under rotation through $2\pi/m$ and its inverse.
+The following lemma applies to that tile, regardless of reflected charts.
+
+\section{The new sector calculation}
+
+Put $\beta=\pi/(2m)$, $c=\cos\beta$, $s=\sin\beta$, and normalize the
+sector bisector to the positive horizontal axis. Write
+\[
+ W=\{(x,y):x\geq0,\ |y|\leq x\tan\beta\},\qquad
+ u_+=(c,s),\quad u_-=(c,-s).
+\]
+Thus $W$ has angle $\pi/m$.
+
+\begin{lemma}[Sector obstruction, order at least three]\label{lem:sector}
+Let $m\geq3$. There is no compact set $T\subset D\cap W$ with
+$u_+,u_-\in T$, $O\notin T$, and rotational invariance of order $m$
+about a point $P\in\interior T$.
+\end{lemma}
+
+\begin{proof}
+First prove $P=(p,0)$ with $p>0$.
+
+If $m$ is even, $T$ is centrally symmetric about $P$. All its vertical
+coordinates lie in $[-s,s]$, and it contains both extrema $u_+,u_-$.
+Their midpoint height is therefore $P_y=0$. The half-turn image of $u_+$
+has height $-s$; the only point of $D\cap W$ at that height is $u_-$.
+Consequently $P=(c,0)$ in the even case.
+
+If $m$ is odd, let $K=\conv T$ and let
+$n_+=(-s,c)$, $n_-=(-s,-c)$ be the two outward unit normals of the sector.
+With $h_K(n)=\max_{x\in K}x\cdot n$, sector containment and the endpoints
+give $h_K(n_+)=h_K(n_-)=0$. Rotation by
+$\theta=(m-1)\pi/m$ is a power of the intrinsic rotation and sends $n_+$
+to $n_-$. The centered support function $h_{K-P}$ has equal values there.
+Thus $P\cdot(n_+-n_-)=0$, and $P_y=0$. Since $P\in\interior T\subset W$,
+we have $p>0$.
+
+In both cases rotate $u_+$ clockwise through $2\pi/m=4\beta$ about $P$.
+The resulting point $v$ belongs to $T\subset D$. Direct expansion gives
+\begin{equation}\label{eq:disk}
+ |v|^2-1
+ =2p(1-\cos4\beta)\left(p-\frac1{2c}\right).
+\end{equation}
+Indeed the expansion first gives
+$2p[(1-\cos4\beta)(p-c)+s\sin4\beta]$, and
+$c-s\cot(2\beta)=1/(2c)$.
+The coefficient outside the final parentheses is positive, so $p\leq1/(2c)$.
+For even $m\geq4$, we already have $p=c$, and $c^2>1/2$ contradicts this.
+
+For odd $m\geq3$, rotate $u_+$ counterclockwise through
+$\theta=\pi-2\beta=(m-1)\pi/m$. The result is
+\begin{equation}\label{eq:ray}
+ z=(2pc-1)(c,-s)\in T.
+\end{equation}
+Sector containment implies $2pc-1\geq0$. Combined with the disk bound it
+forces $p=1/(2c)$, hence $z=O\in T$, a contradiction.
+\end{proof}
+
+Only the endpoints were needed in this lemma, not the full outer arc, Jordan
+regularity, connected contacts, or any equations on the remaining contour.
+
+\begin{lemma}[The remaining order-two lens]\label{lem:lens}
+Let $m=2$ and let a compact set $T\subset D\cap W$ contain $u_+,u_-$ and
+be centrally symmetric about $P$. Then
+\[
+ P=(1/\sqrt2,0),\qquad
+ T\subset D\cap(2P-D),\qquad
+ \area(T)\leq\frac\pi2-1.
+\]
+\end{lemma}
+
+\begin{proof}
+The even-case endpoint argument above gives $P=(c,0)$, now $c=1/\sqrt2$.
+Central symmetry and $T\subset D$ give $T\subset2P-D$. The two unit disks
+have centers separated by $2c=\sqrt2$. Their intersection is a lens made of
+two circular segments of opening angle $\pi/2$, each of area $\pi/4-1/2$.
+This proves the bound.
+\end{proof}
+
+\section{Finishing the proposed obstruction}
+
+For $m\geq3$, the reductions produce an outer tile satisfying
+Lemma~\ref{lem:sector}, a contradiction. For $m=2$ there are five congruent
+tiles. Lemma~\ref{lem:lens} bounds the area of every tile, including $C$.
+Subadditivity of Lebesgue measure would give
+\[
+ \pi=\area(D)\leq\sum_T\area(T)
+ \leq5\left(\frac\pi2-1\right)<\pi,
+\]
+where the strict inequality is equivalent to $\pi<10/3$, for example a
+consequence of $\pi<22/7$. This proves Theorem~\ref{thm:exclusion}, subject
+to the stated proof-review status and external premises.
+
+Importantly, this uses subadditivity, not $\area(T)=\pi/5$. Arbitrary Jordan
+curves may have positive area; disjoint interiors alone do not justify adding
+tile areas as equal shares. No assumption about zero-area tile boundaries is
+needed here.
+
+\section{Limits, attempted falsification and use}
+
+The even/odd split uses only actual intrinsic rotations of a geometric tile,
+not graph automorphisms. The sector argument has not been asserted for a
+shorter outer trace or a wider sector. Order two is not rejected by the
+sector lemma: its lens is a genuine centrally symmetric shape fitting the
+quarter-disk, so the separate coverage-area step is essential. No point-only
+contact has been promoted to a positive outer arc.
+
+For another assumption check, when $m=3$ the equilateral triangle with vertices
+$O,u_+,u_-$ fits the sector and the disk and is intrinsically threefold
+symmetric. It violates precisely the requirement $O\notin T$ of the sector
+lemma. Thus that requirement must not be dropped or silently replaced by
+``$O$ is not an interior point of $T$''.
+
+The proposed count reduction must not be enabled in code until independent
+proof review and a separate premise-detector audit. Nothing here establishes
+nonexistence of all Stein tilings or of known weaker nontrivial disk tilings.
+A limited prior-art search did not certify novelty. An external review
+contract is recorded under \texttt{docs/research/contracts/}.
+
+\begin{thebibliography}{1}
+\bibitem{KLV}
+A. Kurusa, Z. L\'angi and V. V\'igh,
+\emph{Tiling a Circular Disc with Congruent Pieces},
+Mediterranean Journal of Mathematics 17 (2020), Article 156.
+\href{https://doi.org/10.1007/s00009-020-01595-3}{doi:10.1007/s00009-020-01595-3}.
+Statement-level checks used the primary preprint
+\href{https://arxiv.org/html/1910.03836}{arXiv:1910.03836v1},
+Lemma 2.6 and Remarks 2.7--2.8 (accessed 21 October 2026).
+\end{thebibliography}
+\end{document}

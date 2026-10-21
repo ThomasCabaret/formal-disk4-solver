@@ -21,6 +21,12 @@ Published constructions and classifications are indexed in
 external audit tasks live under `contracts/`; their status is tracked through
 the parent study and agenda, separately from validated mathematical results.
 
+[MATH-003](studies/MATH-003-two-orbit-stein.md) supplies a new proof draft:
+`RSS-ORB` and the two-orbit sector reduction, plus intrinsic tile rotation,
+lead to `RSS-SECTOR` and the proposed `RSS-2ORB-EXCL` count bound `N>=3m+1`.
+Independent review is pending. This is mathematical branch elimination in a
+specified class, not an active code filter or a claim about all Stein tilings.
+
 ## Stable map of research areas (not the live question tree)
 
 The authoritative root-to-approach-to-study hierarchy is in
@@ -135,6 +141,9 @@ SSR-NL -------------------> complete local Nielsen--Levi branches
 SSR-PAL ------------------> mirror-fixed word factorization
 SSR-LOOP -----------------> supported unary fixed-context loop compression
 SSR-CONCUR ---------------> non-simple residual SCC => unsupported, not UNSAT
+
+RSS-ORB + RSS-2ORB + intrinsic tile rotation
+    +--> RSS-SECTOR ------> RSS-2ORB-EXCL (new proof draft; no code gate)
 
 CHO-HUB / CHO-WORD -------> candidate early cyclic-hub rejection
 FPR-PER ------------------> proposed graph-only perimeter filter

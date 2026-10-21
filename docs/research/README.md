@@ -122,11 +122,13 @@ or full graph-generator coverage without verifying the specific mode.
 
 The initial inventory is complete; research continues through the live agenda.
 `SPEC-001` supplied the working problem contract; `MATH-001` supplied a first
-[literature map](LITERATURE_FRONTIER.md). The next study is currently under
-discussion with the owner; no new research run or proof study is active.
+[literature map](LITERATURE_FRONTIER.md). The first
+[MATH-003 iteration](studies/MATH-003-two-orbit-stein.md) delivered a proposed
+two-orbit Stein exclusion; independent review is next, not a code change.
+No research computation is running from that study.
 The known-shape/placement replay proposal is withdrawn. Original-mathematics
-targets remain proposed in the agenda, with an existing-lemma audit available
-as an optional external contract.
+targets are traced in the agenda, with existing-lemma and new-proof audits
+available as optional external contracts.
 Historical TODO lists do not select that work.
 Proof audits, search experiments and algorithm choices must each satisfy the
 method above; completing the inventory did not validate the stored mathematics

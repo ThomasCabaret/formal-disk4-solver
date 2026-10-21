@@ -5,15 +5,18 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Current selection
 
-- Active study: none.
-- Default next node: none selected; discuss the next target with the owner.
-- Reason: the owner requests a plain-language explanation of a target's value
-  before starting it and emphasizes original mathematical research. The
-  proposed 12-tile acceptance control is withdrawn. Use the competing approaches
-  in [ROADMAP.md](ROADMAP.md) and the macro-to-micro gate in the methodology;
-  there is no compulsory impossibility-then-existence-then-algorithm sequence.
-- Latest completed iteration: [MATH-001](studies/MATH-001-literature-frontier.md),
-  yielding [the literature map](LITERATURE_FRONTIER.md).
+- Active iteration: none running. [MATH-003](studies/MATH-003-two-orbit-stein.md)
+  completed its first bounded iteration with a proposed two-orbit exclusion
+  for all `m>=2`; independent proof review remains pending.
+- Current path: `R0 -> APP-IMP -> MATH-003`.
+- Next bounded action: critically review the new sector/lens argument and its
+  external premises before treating `k>=3` as established or changing code.
+  In particular, audit the external outer-trace proof's area-equality steps for
+  arbitrary Jordan boundaries; the tiling conclusion remains conditional.
+  [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
+  optional owner-mediated review, not submitted. Other approaches remain open.
+- Latest completed iteration: [MATH-003](studies/MATH-003-two-orbit-stein.md),
+  yielding [a proof draft](../two_orbit_stein_obstruction.tex), not a new filter.
 - Optional external audit: [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
   for `MATH-002`, ready for the owner to submit. No answer is assumed or required
   before continuing independent research.
@@ -61,7 +64,7 @@ R0  Nontrivial monohedral tilings of the disk
 | ID | Status | Parent | Question and deliverable | Dependencies / resumption trigger |
 | --- | --- | --- | --- | --- |
 | `R0` | active | — | Find or understand nontrivial monohedral disk tilings; permit mathematical, constructive and computational outcomes. | Root objective. |
-| `APP-IMP` | proposed | `R0` | Approach: impossibility or classification for an explicitly stated unresolved tiling class. | No unrestricted nonexistence claim: known nontrivial examples exist. A restricted result must state what it changes for the broader question. |
+| `APP-IMP` | active | `R0` | Approach: impossibility or classification for an explicitly stated unresolved tiling class. | No unrestricted nonexistence claim: known nontrivial examples exist. A restricted result must state what it changes for the broader question. |
 | `APP-EXIST` | proposed | `R0` | Alternative approach: prove existence in an unresolved class without necessarily constructing a tile. | Independent of failure or completion of `APP-IMP`; hypotheses and novelty must be specified when selecting a study. |
 | `APP-CONSTRUCT` | proposed | `R0` | Alternative approach: construct and prove a new admissible tiling or family. | Not constrained by the current software representation. Known examples alone are not new discoveries. |
 | `APP-SEARCH` | proposed | `R0` | Alternative approach: obtain discoveries or structural evidence through justified computational search. | Compare representations, scope and scaling; do not assume the formal-contour implementation must be retained. |
@@ -69,8 +72,8 @@ R0  Nontrivial monohedral tilings of the disk
 | `SPEC-001` | supported-in-scope | `R0` | [Working specification](PROBLEM_SPEC.md) and [study](studies/SPEC-001-problem-domain.md): broad Jordan-region target, center predicates, F1/F2/F3 and result semantics. | Delivered as a research contract; independent mathematical review remains pending. Revise if a later target needs different hypotheses. |
 | `VALID-001` | superseded | `R0` | Known-shape/known-placement acceptance exercise withdrawn: no useful dependency on the actual contour pipeline was established. No study or run started. | A future validation task must name a concrete interface/property of the actual solver and the research conclusion it enables. |
 | `MATH-001` | supported-in-scope | `R0` | First [literature pass](LITERATURE_FRONTIER.md) and [study](studies/MATH-001-literature-frontier.md) completed: four primary sources and explicit search limitations. | Proof audits and a comprehensive literature frontier remain open; no complete classification asserted. |
-| `MATH-002` | proposed | `MATH-001` | Audit `RSS-OVERLAP`/`RSS-ORB`: do the precise Jordan/rotation hypotheses force two boundary-reaching orbits and centered matching? | [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md) is ready for optional external review; can also be pursued locally. Only conclusions relying on this theorem await its validation; independent work continues. |
-| `MATH-003` | proposed | `APP-IMP` | Restricted-case study candidate: can a rotational Stein tiling have exactly two moving tile orbits (`N=2m+1`, `m>=2`), or can a new obstruction exclude all or some of them? | Depends on audited orbit/dihedral premises, including `MATH-002` if used. A positive construction would also inform `APP-CONSTRUCT`. No proof or novelty certification claimed; discuss scope/value before starting. |
+| `MATH-002` | proposed | `MATH-001` | Independently audit `RSS-OVERLAP`/`RSS-ORB`: do the precise Jordan/rotation hypotheses force two boundary-reaching orbits and centered matching? | Local deductions conditional on KLV were re-derived in `MATH-003`; full independent acceptance and code-premise audit are still pending. [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md) remains ready, not submitted. |
+| `MATH-003` | supported-in-scope | `APP-IMP` | [First proof-draft deliverable](studies/MATH-003-two-orbit-stein.md): proposed exclusion of exactly two moving tile orbits for every `m>=2`, yielding candidate `N>=3m+1`. | Independent review and novelty check pending; no production rejection. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready. Do not automatically extend to three orbits or assume general Stein nonexistence. |
 | `APPLIED-001` | proposed | `MATH-001` | For one audited result, implement or evaluate the premise detector and measure sound selectivity/cost. | Requires an audited theorem and a trusted positive-control pack. |
 | `ALG-001` | proposed | `APP-SEARCH` | Supporting comparison: formal-contour, incremental obligation, placement-first and constructive/constraint formulations. Deliver state, coverage and certificate analysis, not a large implementation. | Informs selection or creation of sibling approaches under `APP-SEARCH`. Empirical bottleneck claims need relevant evidence; no blanket witness-replay prerequisite. |
 | `ALG-002` | proposed | `ALG-001` | Implement the smallest discriminator for the most promising alternative and compare it on identical controls. | Requires `ALG-001` selection and controls of the actual compared algorithms. |
