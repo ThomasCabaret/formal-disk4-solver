@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from formal_disk4.config import load_config, load_geometry_config
 from formal_disk4.geometry.model import (
@@ -11,11 +12,16 @@ from formal_disk4.geometry.model import (
     FormalGeometryProblem,
     FormalPointSpec,
     FormalSegmentOccurrence,
+    GeometrySolution,
+    GeometryValidation,
     LinearFormula,
     TransformSpec,
     parse_formal_geometry_problem,
 )
-from formal_disk4.geometry.runner import GeometryRunner
+from formal_disk4.geometry.runner import (
+    GeometryRunner,
+    _ProgressiveNumericalContourSolver,
+)
 from formal_disk4.geometry.solver import (
     GeometryAttemptResult,
     GeometrySolverConfig,
@@ -344,6 +350,122 @@ class GeometrySolverTests(unittest.TestCase):
         self.assertEqual(config.max_restarts, 1)
         self.assertEqual(config.max_function_evaluations, 1)
         self.assertEqual(config.candidate_timeout_seconds, 0.0)
+
+    def test_progressive_geometry_stops_after_first_success(self) -> None:
+        progressive = _ProgressiveNumericalContourSolver(
+            {
+                "max_restarts": 1,
+                "resolution_schedule": [
+                    {
+                        "intermediate_points_per_generic_curve": 3,
+                        "candidate_timeout_seconds": 1,
+                    },
+                    {
+                        "intermediate_points_per_generic_curve": 6,
+                        "candidate_timeout_seconds": 2,
+                    },
+                    {
+                        "intermediate_points_per_generic_curve": 12,
+                        "candidate_timeout_seconds": 3,
+                    },
+                ],
+            }
+        )
+        validation = GeometryValidation(
+            passed=True,
+            closure_error=0.0,
+            tangent_closure_error=0.0,
+            maximum_angle_error=0.0,
+            maximum_length_error=0.0,
+            signed_area=1.0,
+            minimum_nonadjacent_distance=1.0,
+            self_intersection_count=0,
+            minimum_edge_length=1.0,
+            checks=(),
+        )
+        solution = GeometrySolution(
+            formal_profile_id="fp-progressive",
+            solution_id="gs-progressive",
+            parameter_values=(),
+            template_parameters=(),
+            points=(),
+            occurrences=(),
+            templates=(),
+            validation=validation,
+            optimization={"existing": True},
+        )
+        calls = []
+
+        class FakeSolver:
+            def __init__(self, config, result):
+                self.config = config
+                self.result = result
+
+            def solve(self, _problem):
+                calls.append(self.config.intermediate_points_per_generic_curve)
+                return self.result
+
+        configs = progressive.stage_configs
+        progressive._solvers = (
+            FakeSolver(
+                configs[0],
+                GeometryAttemptResult(None, "stage_1_failed", 2, 5.0, None),
+            ),
+            FakeSolver(
+                configs[1],
+                GeometryAttemptResult(solution, "solved", 3, 1.0, None),
+            ),
+            FakeSolver(
+                configs[2],
+                GeometryAttemptResult(None, "must_not_run", 100, 0.0, None),
+            ),
+        )
+
+        result = progressive.solve(SimpleNamespace(formal_profile_id="fp-progressive"))
+
+        self.assertEqual(calls, [3, 6])
+        self.assertIsNotNone(result.solution)
+        self.assertEqual(result.attempts, 5)
+        assert result.solution is not None
+        self.assertEqual(result.solution.optimization["resolution_stage_index"], 2)
+        self.assertEqual(
+            result.solution.optimization["resolution_schedule_points"], [3, 6, 12]
+        )
+
+    def test_progressive_geometry_does_not_repeat_fixed_rejection(self) -> None:
+        progressive = _ProgressiveNumericalContourSolver(
+            {
+                "resolution_schedule": [
+                    {"intermediate_points_per_generic_curve": 3},
+                    {"intermediate_points_per_generic_curve": 6},
+                ]
+            }
+        )
+        calls = []
+
+        class FixedRejectingSolver:
+            def __init__(self, config):
+                self.config = config
+
+            def solve(self, _problem):
+                calls.append(self.config.intermediate_points_per_generic_curve)
+                return GeometryAttemptResult(
+                    None,
+                    "fixed geometry failed closure precheck: closed_contour",
+                    0,
+                    None,
+                    None,
+                )
+
+        progressive._solvers = tuple(
+            FixedRejectingSolver(config) for config in progressive.stage_configs
+        )
+
+        result = progressive.solve(SimpleNamespace(formal_profile_id="fp-fixed"))
+
+        self.assertEqual(calls, [3])
+        self.assertEqual(result.attempts, 0)
+        self.assertTrue(result.reason.startswith("fixed geometry failed"))
 
     def test_geometry_runner_writes_reference_and_full_formal_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

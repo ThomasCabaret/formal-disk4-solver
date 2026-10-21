@@ -86,7 +86,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.joint_arrangement_search and args.legacy_cartesian_arrangements:
+        parser.error(
+            "--joint-arrangement-search and --legacy-cartesian-arrangements "
+            "are mutually exclusive"
+        )
     root = Path(args.root).resolve()
     runner = GraphLabRunner.from_file(
         root,
@@ -101,7 +107,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         partial_crown_tile_counts=args.partial_crown_tiles,
         prototype_symmetry_mode=args.prototype_symmetry,
         joint_arrangement_search=(
-            True if args.joint_arrangement_search else None
+            False
+            if args.legacy_cartesian_arrangements
+            else True
+            if args.joint_arrangement_search
+            else None
         ),
         policy_mode=args.policy,
         output_directory=args.output_directory,

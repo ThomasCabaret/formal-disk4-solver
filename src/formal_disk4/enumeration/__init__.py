@@ -6,6 +6,12 @@ from .exterior_arc_repetition import (
 )
 from .symmetry import MappingSymmetryQuotient, SymmetryAction
 from .weak_orders import Placement, WeakOrderEnumerator
+from .frontier_arrangements import (
+    FrontierArrangementEnumerator,
+    PartialArrangementState,
+    PartialArrangementValidator,
+    PartialValidationResult,
+)
 
 __all__ = [
     "AssignmentEnumerator",
@@ -16,5 +22,9 @@ __all__ = [
     "Placement",
     "SymmetryAction",
     "WeakOrderEnumerator",
+    "FrontierArrangementEnumerator",
+    "PartialArrangementState",
+    "PartialArrangementValidator",
+    "PartialValidationResult",
     "build_exterior_arc_repetition_constraint",
 ]

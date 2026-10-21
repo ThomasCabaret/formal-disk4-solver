@@ -81,6 +81,9 @@ def _apply_geometry_overrides(config: Dict[str, Any], args: argparse.Namespace) 
     if getattr(args, "output", None) is not None:
         config["output"]["directory"] = str(args.output)
     if getattr(args, "intermediate_points", None) is not None:
+        # An explicit scalar CLI resolution asks for one solver pass, not for
+        # the progressive schedule supplied by a config file.
+        config["geometry"].pop("resolution_schedule", None)
         config["geometry"]["intermediate_points_per_generic_curve"] = int(
             args.intermediate_points
         )
@@ -91,6 +94,7 @@ def _apply_geometry_overrides(config: Dict[str, Any], args: argparse.Namespace) 
             args.max_function_evaluations
         )
     if getattr(args, "candidate_timeout", None) is not None:
+        config["geometry"].pop("resolution_schedule", None)
         config["geometry"]["candidate_timeout_seconds"] = float(
             args.candidate_timeout
         )

@@ -1,5 +1,9 @@
 # Recommended next steps after 0.6.0
 
+> Historical roadmap retained for context, not the current task queue. See
+> [research/README.md](research/README.md) for the research restart; individual
+> items below may already be implemented, superseded or intentionally parked.
+
 ## Proof-grade preprocessing
 
 1. Replace the remaining **early placement** SciPy strict-feasibility LP calls with an exact rational backend while retaining the oracle interfaces and cache keys. Terminal joint point/curve-turn/length feasibility is already exact.

@@ -73,11 +73,25 @@ class CompiledWordCase:
     def solver_variables(self) -> Tuple[str, ...]:
         output = list(self.atomic_variables)
         seen = set(output)
-        for direct, mirrored in self.mirror_variables:
-            for variable in (direct, mirrored):
-                if variable not in seen:
-                    output.append(variable)
-                    seen.add(variable)
+        equation_variables = {
+            literal.variable
+            for equation in self.effective_solver_equations
+            for literal in (*equation.left, *equation.right)
+        }
+        # The mirror alphabet is needed as a complete sheet when even one
+        # reflected interface couples it to the direct alphabet. With only
+        # orientation-preserving interfaces it is a redundant isomorphic copy
+        # and build_terminal_contact_system can derive it lazily if required.
+        mirror_sheet_active = any(
+            mirrored in equation_variables
+            for _direct, mirrored in self.mirror_variables
+        )
+        if mirror_sheet_active:
+            for direct, mirrored in self.mirror_variables:
+                for variable in (direct, mirrored):
+                    if variable not in seen:
+                        output.append(variable)
+                        seen.add(variable)
         for equation in self.effective_solver_equations:
             for literal in (*equation.left, *equation.right):
                 if literal.variable not in seen:
@@ -193,7 +207,8 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
 
     compiled_interfaces: List[CompiledInterface] = []
     equations: List[Equation] = []
-    solver_equations: List[Equation] = []
+    direct_solver_equations: List[Equation] = []
+    has_reflected_interface = False
     for interface in planar_map.internal_interfaces():
         left_view, right_view = interface.views
         left_word = positive_piece_word(
@@ -210,16 +225,10 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
 
         right_same_direction = inverse_word(right_word)
         if relative_parity == -1:
+            has_reflected_interface = True
             right_same_direction = mirror_word(right_same_direction, mirror_map)
         solver_equation = Equation(left_word, right_same_direction)
-        solver_equations.append(solver_equation)
-        # The mirror image of every physical equality is equally mandatory.
-        solver_equations.append(
-            Equation(
-                mirror_word(solver_equation.left, mirror_map),
-                mirror_word(solver_equation.right, mirror_map),
-            )
-        )
+        direct_solver_equations.append(solver_equation)
         compiled_interfaces.append(
             CompiledInterface(
                 name=interface.name,
@@ -231,6 +240,24 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
                 relative_parity=relative_parity,
             )
         )
+
+    # A reflected interface makes the direct and mirror alphabets interact;
+    # close the complete system under the physical mirror involution. If every
+    # interface preserves orientation, however, the mirrored equations form a
+    # disconnected isomorphic copy. Solving both computes a needless Cartesian
+    # square of the same solution language (more than 20x on small cases), so
+    # solve the direct sheet only. Its mirror image follows functorially and is
+    # never read by an orientation-preserving contact.
+    solver_equations: List[Equation] = []
+    for solver_equation in direct_solver_equations:
+        solver_equations.append(solver_equation)
+        if has_reflected_interface:
+            solver_equations.append(
+                Equation(
+                    mirror_word(solver_equation.left, mirror_map),
+                    mirror_word(solver_equation.right, mirror_map),
+                )
+            )
 
     outer_arcs = []
     for interface in planar_map.outer_interfaces():
@@ -276,7 +303,8 @@ def compile_word_case(planar_map: PlanarMap, placement: Placement) -> CompiledWo
         )
         mirrored_sector = (Literal(mirrored_sector_variable),) * rotation_order
         solver_equations.append(Equation(contour_word, direct_sector))
-        solver_equations.append(Equation(mirrored_contour, mirrored_sector))
+        if has_reflected_interface:
+            solver_equations.append(Equation(mirrored_contour, mirrored_sector))
 
     return CompiledWordCase(
         atomic_variables=atomic_variables,
@@ -699,7 +727,13 @@ def build_terminal_contact_system(
         for literal in environment[variable]:
             if literal.variable not in terminal_renaming:
                 terminal_renaming[literal.variable] = f"T{len(terminal_renaming)}"
-    for variable in compiled.solver_variables:
+    normalization_variables = list(compiled.solver_variables)
+    normalization_variables.extend(
+        variable
+        for variable in complete_environment
+        if variable not in normalization_variables
+    )
+    for variable in normalization_variables:
         for literal in environment[variable]:
             if literal.variable not in terminal_renaming:
                 terminal_renaming[literal.variable] = f"T{len(terminal_renaming)}"
@@ -708,7 +742,7 @@ def build_terminal_contact_system(
             Literal(terminal_renaming[literal.variable], literal.inverse)
             for literal in environment[variable]
         )
-        for variable in compiled.solver_variables
+        for variable in normalization_variables
     }
     mirror_map = compiled.mirror_map()
     mirror_pairs = () if legacy_mirror_environment else compiled.mirror_variables

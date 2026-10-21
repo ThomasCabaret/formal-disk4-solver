@@ -5,13 +5,18 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Mapping
+from typing import Any, Callable, Dict, Iterable, Mapping, Sequence
 
 from formal_disk4.pipeline.output import JsonlWriter, NullJsonlWriter, atomic_write_json
 
-from .model import parse_formal_geometry_problem
-from .solver import GeometrySolverConfig, NumericalContourSolver
+from .model import FormalGeometryProblem, parse_formal_geometry_problem
+from .solver import (
+    GeometryAttemptResult,
+    GeometrySolverConfig,
+    NumericalContourSolver,
+)
 from .status import (
     NO_SOLUTION_FOUND,
     REJECTED_CERTAIN,
@@ -22,6 +27,123 @@ from .status import (
 
 
 GEOMETRY_CHECKPOINT_VERSION = 2
+
+
+class _ProgressiveNumericalContourSolver:
+    """Try increasingly expressive generic-curve discretizations.
+
+    The numerical solver itself deliberately remains responsible for one
+    discretization. This small runner-level adapter gives one formal profile a
+    bounded sequence of attempts and stops as soon as one representation works.
+    """
+
+    def __init__(self, geometry: Mapping[str, Any]) -> None:
+        base = dict(geometry)
+        raw_schedule = base.pop("resolution_schedule", None)
+        if raw_schedule is None:
+            stages: Sequence[Mapping[str, Any]] = ({},)
+        else:
+            if not isinstance(raw_schedule, Sequence) or isinstance(
+                raw_schedule, (str, bytes)
+            ):
+                raise ValueError("geometry.resolution_schedule must be a list")
+            if not raw_schedule:
+                raise ValueError("geometry.resolution_schedule must not be empty")
+            if not all(isinstance(stage, Mapping) for stage in raw_schedule):
+                raise ValueError(
+                    "Every geometry.resolution_schedule entry must be an object"
+                )
+            stages = raw_schedule
+
+        stage_configs = []
+        for stage in stages:
+            merged = dict(base)
+            merged.update(stage)
+            stage_configs.append(GeometrySolverConfig.from_mapping(merged))
+        self._solvers = tuple(NumericalContourSolver(config) for config in stage_configs)
+        # Existing callers and tests treat GeometryRunner.solver as one solver.
+        # Keep that narrow interface while exposing the complete schedule below.
+        self.config = stage_configs[0]
+        self.stage_configs = tuple(stage_configs)
+
+    @property
+    def schedule_label(self) -> str:
+        return "->".join(
+            str(config.intermediate_points_per_generic_curve)
+            for config in self.stage_configs
+        )
+
+    def solve(self, problem: FormalGeometryProblem) -> GeometryAttemptResult:
+        total_attempts = 0
+        best_cost: float | None = None
+        best_validation: Mapping[str, Any] | None = None
+        failures = []
+
+        for stage_index, solver in enumerate(self._solvers, 1):
+            config = solver.config
+            print(
+                "[GEOMETRY STAGE] "
+                f"formal={problem.formal_profile_id} stage={stage_index}/"
+                f"{len(self._solvers)} generic_points="
+                f"{config.intermediate_points_per_generic_curve} "
+                f"timeout={config.candidate_timeout_seconds:g}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            result = solver.solve(problem)
+            total_attempts += result.attempts
+            if result.best_cost is not None and (
+                best_cost is None or result.best_cost < best_cost
+            ):
+                best_cost = result.best_cost
+            if result.best_validation is not None:
+                best_validation = result.best_validation
+
+            if result.solution is not None:
+                optimization = dict(result.solution.optimization)
+                optimization.update(
+                    {
+                        "resolution_stage_index": stage_index,
+                        "resolution_schedule_points": [
+                            item.intermediate_points_per_generic_curve
+                            for item in self.stage_configs
+                        ],
+                        "resolution_schedule_timeouts_seconds": [
+                            item.candidate_timeout_seconds
+                            for item in self.stage_configs
+                        ],
+                        "resolution_schedule_total_attempts": total_attempts,
+                    }
+                )
+                return replace(
+                    result,
+                    solution=replace(result.solution, optimization=optimization),
+                    attempts=total_attempts,
+                )
+
+            # A fixed contour has no generic discretization to refine. Its
+            # deterministic precheck/validation result is therefore final.
+            if result.attempts == 0 and result.reason.startswith(
+                "fixed geometry failed"
+            ):
+                return result
+
+            failures.append(
+                f"points={config.intermediate_points_per_generic_curve}: {result.reason}"
+            )
+
+        reason = (
+            failures[0]
+            if len(failures) == 1
+            else "resolution_schedule_exhausted (" + "; ".join(failures) + ")"
+        )
+        return GeometryAttemptResult(
+            solution=None,
+            reason=reason,
+            attempts=total_attempts,
+            best_cost=best_cost,
+            best_validation=best_validation,
+        )
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -62,9 +184,7 @@ class GeometryRunner:
         self.status_path = self.output_directory / str(
             output.get("status_file", "geometry_status.sqlite3")
         )
-        self.solver = NumericalContourSolver(
-            GeometrySolverConfig.from_mapping(self.config["geometry"])
-        )
+        self.solver = _ProgressiveNumericalContourSolver(self.config["geometry"])
 
     def _initial_state(self) -> Dict[str, Any]:
         return {
@@ -265,8 +385,8 @@ class GeometryRunner:
                     print(
                         "[GEOMETRY] "
                         f"candidate={problem.formal_profile_id} map={problem.map_name} "
-                        f"line={line_number} generic_points="
-                        f"{self.solver.config.intermediate_points_per_generic_curve}",
+                        f"line={line_number} generic_points_schedule="
+                        f"{self.solver.schedule_label}",
                         file=sys.stderr,
                         flush=True,
                     )

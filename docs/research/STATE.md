@@ -1,8 +1,11 @@
 # Research and implementation state
 
 Inventory dated 2026-10-21, based on repository sources/notes and the project
-owner's account. No experiments or test suite were rerun for this inventory.
-“Present” and “previously tested” do not mean currently validated end to end.
+owner's account. The recovered experimental code snapshot was regression-tested
+after this inventory (374 tests passed, one skipped, plus 217 parameterized
+subtests); no research experiment or performance benchmark was rerun.
+“Present”, “previously tested” and a passing regression suite do not mean an
+approach is scientifically or end-to-end validated.
 
 ## What the history supports
 
@@ -27,7 +30,7 @@ owner's account. No experiments or test suite were rerun for this inventory.
 | Web Graph Lab: `graph_lab/app.py` and related modules | Most developed interactive workbench | Prior-driven graph proposal, reporting, geometry queue; good interface does not establish search completeness or efficiency. |
 | Learned policies / Mapping Lab: `mapping_lab/`, learning modules in `graph_lab/` | Parked as a research priority, code retained | No convincing practical benefit established in this project history. Do not tune or reactivate by default. |
 | Tile-frontier / fixed-graph campaigns | Diagnostic experimental baseline | Incremental placement and live progress; inspect budgets and unsupported cases before interpreting exhaustion. See `docs/backtracking_lab.md`. |
-| Contact V2: `search/`, sector bridge and completed-word cache | Partial redesign, not a finished baseline | Exact metric/word propagation and optional retained sectors; missing shared derived state across direct insertions, no demonstrated decisive speedup. See `docs/CONTACT_SEARCH_V2.md`. |
+| Contact V2: `search/`, sector bridge and completed-word cache | Preserved tested experiment, not a finished baseline | Exact metric/word propagation and optional retained sectors; missing shared derived state across direct insertions, no demonstrated decisive speedup. See `docs/CONTACT_SEARCH_V2.md`. |
 | Stein symmetry, crowns, free boundaries, intrinsic prototype symmetry | Restricted domains / diagnostic tools | Useful experiments with distinct hypotheses; not interchangeable with the general disk problem, nor supported by every engine. |
 | Mathematical/design sources: `docs/*.tex` | Sources to review individually | Structural results, candidate reductions and algorithm proposals. Presence in the repository is not proof-review certification. |
 | `docs/legacy/`, `legacy_reference/`, root patch notes/manifests | Historical record | Preserve context; not current instructions or promises of compatibility. |
@@ -66,11 +69,13 @@ place. `output/`, `logs/`, `diagnostics/` and `tmp/` may contain generated or lo
 artifacts; none is declared disposable wholesale by this inventory. Determine
 owners, provenance and active-run status before any cleanup.
 
-The working tree contains substantial modified and untracked code/tests from
-earlier work. This documentation change does not validate, commit, revert or
-remove them. A repository download at HEAD may therefore omit local V2 work:
-before publishing a reproducible baseline, explicitly choose and test the code
-to include, and attach a revision/patch identity to each reported result.
+The formerly modified and untracked implementation files were audited as one
+interdependent historical snapshot and preserved rather than selectively
+discarded. They include Contact V2, tile-frontier backtracking, fixed-graph
+campaigns, Euclidean placement diagnostics, progressive numerical geometry,
+length-sector propagation and word-result caching. The full regression suite
+passed at preservation time, but no speedup or research conclusion was inferred
+from that fact. See decision `D-005` in `HISTORY.md`.
 
 The older root `REFACTOR_STATUS.md`, `docs/NEXT_STEPS.md` and versioned patch
 notes remain engineering history. Their “stable”, “maintained” or “next” labels

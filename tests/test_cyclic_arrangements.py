@@ -3,10 +3,16 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from formal_disk4.config import load_config
 from formal_disk4.enumeration.assignments import AssignmentEnumerator
 from formal_disk4.enumeration.cyclic_arrangements import CyclicArrangementEnumerator
+from formal_disk4.enumeration.frontier_arrangements import (
+    FrontierArrangementEnumerator,
+    PartialValidationResult,
+)
 from formal_disk4.graph_lab.free_outer_boundary import relax_outer_boundary
 from formal_disk4.graph_lab.evaluator import GraphFormalEvaluator
 from formal_disk4.graph_lab.space import (
@@ -58,6 +64,102 @@ def _free_square_grid():
 
 
 class CyclicArrangementTests(unittest.TestCase):
+    def test_tile_frontier_search_adds_complete_tiles_and_reaches_same_small_case(self) -> None:
+        planar_map = build_map("k3-pizza")
+        visited = []
+
+        def observe(state):
+            visited.append(
+                (
+                    state.last_piece_index,
+                    len(state.placed_piece_indices),
+                    len(state.remaining_piece_indices),
+                )
+            )
+            return PartialValidationResult(True)
+
+        search = FrontierArrangementEnumerator(
+            planar_map,
+            partial_validators=(observe,),
+            max_nodes=100,
+        )
+
+        placement = next(search.enumerate(), None)
+
+        self.assertIsNotNone(placement)
+        self.assertTrue(visited)
+        self.assertEqual(visited[0][1:], (1, 2))
+        self.assertEqual(visited[-1][1:], (3, 0))
+        self.assertEqual(
+            {occurrence for block in placement.blocks for occurrence in block},
+            set(range(len(planar_map.occurrences()))),
+        )
+
+    def test_tile_frontier_partial_validator_prunes_before_a_complete_mapping(self) -> None:
+        planar_map = build_map("k3-pizza")
+        visited_depths = []
+
+        def reject_second_tile(state):
+            depth = len(state.placed_piece_indices)
+            visited_depths.append(depth)
+            return depth < 2
+
+        search = FrontierArrangementEnumerator(
+            planar_map,
+            partial_validators=(reject_second_tile,),
+            max_nodes=100,
+        )
+
+        self.assertEqual(list(search.enumerate()), [])
+        self.assertIn(2, visited_depths)
+        self.assertNotIn(3, visited_depths)
+
+    def test_tile_frontier_marks_uncertified_partial_pruning(self) -> None:
+        planar_map = build_map("k3-pizza")
+
+        def bounded_numerical_screen(state):
+            if len(state.placed_piece_indices) >= 2:
+                return PartialValidationResult(
+                    False,
+                    "bounded geometry did not find a witness",
+                    certified=False,
+                )
+            return True
+
+        search = FrontierArrangementEnumerator(
+            planar_map,
+            partial_validators=(bounded_numerical_screen,),
+            max_nodes=100,
+        )
+
+        self.assertEqual(list(search.enumerate()), [])
+        self.assertTrue(search.heuristic_pruning_used)
+
+    def test_tile_frontier_prefers_the_tile_closing_most_exposed_interfaces(self) -> None:
+        dynamic = _free_square_grid()
+        search = FrontierArrangementEnumerator(dynamic.planar_map, max_nodes=1)
+        reference = search.reference_index
+        remaining = tuple(
+            piece
+            for piece in range(len(search.piece_names))
+            if piece != reference
+        )
+
+        first = search._select_next_piece((reference,), remaining)
+        second = search._select_next_piece(
+            (reference, first),
+            tuple(piece for piece in remaining if piece != first),
+        )
+
+        self.assertIn(first, search._piece_neighbors[reference])
+        self.assertGreaterEqual(
+            sum(
+                neighbor in {reference, first}
+                for neighbor in search._piece_neighbors[second]
+            ),
+            1,
+        )
+
     def test_mapping_and_weak_order_are_built_in_one_small_tree(self) -> None:
         planar_map = build_map("k3-pizza")
         search = CyclicArrangementEnumerator(planar_map, max_nodes=100)
@@ -147,6 +249,231 @@ class CyclicArrangementTests(unittest.TestCase):
         self.assertEqual(counters["word_cases_compiled"], 1)
         self.assertEqual(len(result.profiles), 1)
 
+    def test_graph_lab_uses_tile_frontier_engine_without_imposed_symmetry(self) -> None:
+        evaluator = GraphFormalEvaluator(
+            Path.cwd(),
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "joint_arrangement_search": {
+                    "enabled": True,
+                    "strategy": "tile_frontier",
+                    "max_nodes": 100,
+                    "time_limit_seconds": 10,
+                },
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_profiles": 1,
+                        "time_limit_seconds": 10,
+                        "stop_on_first_profile": True,
+                    }
+                },
+            },
+        )
+
+        evaluation = evaluator.evaluate_joint_arrangements(
+            candidate_from_planar_map("k3-pizza", imposed_automorphism=None)
+        )
+
+        self.assertFalse(evaluation.tainted, evaluation.error)
+        self.assertEqual(
+            evaluation.counters.get("arrangement_engine_tile_frontier"), 1
+        )
+        self.assertGreater(
+            evaluation.counters.get("frontier_tile_nodes", 0), 0
+        )
+        self.assertGreaterEqual(len(evaluation.profiles), 1)
+
+    def test_graph_lab_consumes_every_leaf_without_a_placement_batch_cap(self) -> None:
+        evaluator = GraphFormalEvaluator(
+            Path.cwd(),
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "joint_arrangement_search": {
+                    "enabled": True,
+                    "strategy": "tile_frontier",
+                    "max_nodes": 100,
+                    # This retired option used to stop the live backtracker
+                    # after one leaf.  Keeping it here proves it is ignored.
+                    "max_placements": 1,
+                    "time_limit_seconds": 10,
+                },
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_profiles": 100,
+                        "time_limit_seconds": 10,
+                        "stop_on_first_profile": False,
+                    }
+                },
+            },
+        )
+        requests = []
+
+        def reject_leaf(request):
+            requests.append(request)
+            return SimpleNamespace(
+                summary={
+                    "tainted": False,
+                    "statistics": {
+                        "counters": {
+                            "provided_joint_arrangements": 1,
+                            "preword_rejections": 1,
+                        },
+                        "stop_reason": "completed",
+                    },
+                },
+                profiles=(),
+            )
+
+        with patch(
+            "formal_disk4.graph_lab.evaluator.FormalSolverAPI.evaluate",
+            side_effect=reject_leaf,
+        ):
+            evaluation = evaluator.evaluate_joint_arrangements(
+                candidate_from_planar_map("k3-pizza", imposed_automorphism=None)
+            )
+
+        self.assertGreater(len(requests), 1)
+        self.assertEqual(evaluation.stop_reason, "joint_arrangement_node_limit")
+        self.assertEqual(
+            evaluation.counters["joint_arrangement_kernel_calls"], len(requests)
+        )
+        self.assertEqual(
+            evaluation.counters["joint_arrangement_placements"], len(requests)
+        )
+        self.assertEqual(
+            evaluation.counters["preword_rejections"], len(requests)
+        )
+        self.assertTrue(
+            all(
+                len(request.placements[0].placements) == 1
+                and request.config["limits"]["max_placements"] is None
+                for request in requests
+            )
+        )
+
+    def test_graph_lab_joint_arrangement_budgets_can_be_unbounded(self) -> None:
+        evaluator = GraphFormalEvaluator(
+            Path.cwd(),
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "joint_arrangement_search": {
+                    "enabled": True,
+                    "max_nodes": None,
+                    "time_limit_seconds": None,
+                },
+            },
+        )
+
+        self.assertIsNone(evaluator.joint_arrangement_max_nodes)
+        self.assertIsNone(evaluator.joint_arrangement_time_limit_seconds)
+
+    def test_euclidean_leaf_audit_observes_without_pruning(self) -> None:
+        evaluator = GraphFormalEvaluator(
+            Path.cwd(),
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "joint_arrangement_search": {
+                    "enabled": True,
+                    "strategy": "tile_frontier",
+                    "max_nodes": 100,
+                    "time_limit_seconds": 10,
+                    "euclidean_placement_audit": {
+                        "enabled": True,
+                        "max_samples": 2,
+                        "restarts": 1,
+                        "max_nfev": 100,
+                    },
+                },
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_profiles": 100,
+                        "time_limit_seconds": 10,
+                        "stop_on_first_profile": False,
+                    }
+                },
+            },
+        )
+
+        def reject_leaf(_request):
+            return SimpleNamespace(
+                summary={
+                    "tainted": False,
+                    "statistics": {
+                        "counters": {"preword_rejections": 1},
+                        "stop_reason": "completed",
+                    },
+                },
+                profiles=(),
+            )
+
+        with patch(
+            "formal_disk4.graph_lab.evaluator.FormalSolverAPI.evaluate",
+            side_effect=reject_leaf,
+        ):
+            evaluation = evaluator.evaluate_joint_arrangements(
+                candidate_from_planar_map("k3-pizza", imposed_automorphism=None)
+            )
+
+        self.assertEqual(
+            evaluation.counters.get("euclidean_placement_audit_attempts"), 2
+        )
+        self.assertEqual(evaluation.counters.get("euclidean_placement_audits"), 2)
+        self.assertGreater(
+            evaluation.counters.get("joint_arrangement_kernel_calls", 0), 2
+        )
+        self.assertFalse(evaluation.tainted)
+
+    def test_graph_lab_profile_consumer_can_stop_on_geometric_solution(self) -> None:
+        evaluator = GraphFormalEvaluator(
+            Path.cwd(),
+            {
+                "base_search_config": "config/cycle_campaign/search.json",
+                "joint_arrangement_search": {
+                    "enabled": True,
+                    "strategy": "tile_frontier",
+                    "max_nodes": None,
+                    "time_limit_seconds": None,
+                },
+                "mapping_search_overrides": {
+                    "limits": {
+                        "max_profiles": None,
+                        "time_limit_seconds": None,
+                        "stop_on_first_profile": False,
+                    }
+                },
+            },
+        )
+        consumed = []
+
+        def emit_profile(_request):
+            return SimpleNamespace(
+                summary={
+                    "tainted": False,
+                    "statistics": {
+                        "counters": {
+                            "provided_joint_arrangements": 1,
+                            "profiles_emitted": 1,
+                        },
+                        "stop_reason": "completed",
+                    },
+                },
+                profiles=({"formal_profile_id": "fp-test"},),
+            )
+
+        with patch(
+            "formal_disk4.graph_lab.evaluator.FormalSolverAPI.evaluate",
+            side_effect=emit_profile,
+        ):
+            evaluation = evaluator.evaluate_joint_arrangements(
+                candidate_from_planar_map("k3-pizza", imposed_automorphism=None),
+                profile_consumer=lambda profile: consumed.append(profile) or True,
+            )
+
+        self.assertEqual(consumed, [{"formal_profile_id": "fp-test"}])
+        self.assertEqual(
+            evaluation.stop_reason, "joint_arrangement_external_solution"
+        )
+
     def test_graph_lab_joint_entry_point_reaches_a_profile_on_square_grid(self) -> None:
         evaluator = GraphFormalEvaluator(
             Path.cwd(),
@@ -156,7 +483,6 @@ class CyclicArrangementTests(unittest.TestCase):
                 "joint_arrangement_search": {
                     "enabled": True,
                     "max_nodes": 100,
-                    "max_placements": 4,
                     "time_limit_seconds": 10,
                 },
                 "mapping_search_overrides": {
@@ -188,7 +514,6 @@ class CyclicArrangementTests(unittest.TestCase):
                 "joint_arrangement_search": {
                     "enabled": True,
                     "max_nodes": 200_000,
-                    "max_placements": 32,
                     "time_limit_seconds": 10,
                 },
                 "mapping_search_overrides": {

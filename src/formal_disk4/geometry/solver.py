@@ -577,12 +577,17 @@ class NumericalContourSolver:
         built: _BuiltGeometry,
         validation,
     ):
-        if not problem.strict_angle_constraints:
+        if not problem.strict_angle_constraints and not problem.positive_length_sectors:
             return validation
         angles_pi = tuple(value / math.pi for value in built.target_angles)
         checks = list(validation.checks)
         strict_passed = True
         details = []
+        if problem.positive_length_sectors:
+            gaps = [expression.evaluate(built.parameter_values) for expression in problem.positive_length_sectors]
+            sectors_passed = all(math.isfinite(gap) and gap > self.config.minimum_curve_length for gap in gaps)
+            strict_passed = strict_passed and sectors_passed
+            checks.append(("formal_length_sector", sectors_passed, f"strict gaps={gaps}"))
         for constraint in problem.strict_angle_constraints:
             value = constraint.evaluate(angles_pi)
             gap = constraint.upper_pi - value
@@ -921,6 +926,9 @@ class NumericalContourSolver:
         # These are cheap guards for linear formulas whose feasible region is
         # narrower than the box bounds of their free parameters.
         positivity_weight = 10.0
+        for expression in problem.positive_length_sectors:
+            residuals.append(positivity_weight * max(0.0,
+                self.config.minimum_curve_length - expression.evaluate(formal_values)))
         for point in problem.points:
             angle_pi = point.angle_pi.evaluate(formal_values)
             residuals.append(positivity_weight * max(0.0, 1e-7 - angle_pi))

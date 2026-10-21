@@ -1003,6 +1003,10 @@ class GraphLabTests(unittest.TestCase):
                     },
                     "evaluation": {
                         "base_search_config": "config/cycle_campaign/search.json",
+                        # This test exercises the deprecated learned mapping /
+                        # weak-order layers themselves.  The maintained joint
+                        # backtracker deliberately bypasses those rankers.
+                        "joint_arrangement_search": {"enabled": False},
                         "mapping_search_overrides": {
                             "limits": {
                                 "max_nodes": 200,

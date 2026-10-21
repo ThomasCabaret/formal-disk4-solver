@@ -16,7 +16,7 @@ the other domains as exact images.
 """
 
 from dataclasses import dataclass
-from itertools import combinations
+from itertools import combinations, product
 from math import lcm
 from typing import Callable, Iterator, Mapping, Sequence
 
@@ -519,6 +519,61 @@ class CyclicArrangementEnumerator:
         mandatory = (self.anchor_orbit,) if first else ()
         if first and self.anchor_orbit not in remaining:
             return
+
+        # With no imposed action every occurrence orbit is a singleton.  A
+        # block may contain at most one occurrence of each tile, so enumerate
+        # tile subsets first and then choose one remaining occurrence per
+        # selected tile.  Enumerating occurrence subsets directly and rejecting
+        # repeated tiles afterwards spends almost all of the root-node budget
+        # on impossible combinations once maps reach roughly ten tiles.
+        if self.active_transform is None:
+            by_piece: list[list[int]] = [[] for _piece in self.piece_names]
+            for orbit_index in remaining:
+                orbit = self.occurrence_orbits[orbit_index]
+                if len(orbit) != 1:
+                    raise RuntimeError(
+                        "Unconstrained arrangement search expected singleton orbits"
+                    )
+                by_piece[self.occurrence_piece[orbit[0]]].append(orbit_index)
+
+            mandatory_piece = (
+                self.occurrence_piece[self.anchor_occurrence] if mandatory else None
+            )
+            optional_pieces = tuple(
+                piece_index
+                for piece_index, options in enumerate(by_piece)
+                if options and piece_index != mandatory_piece
+            )
+            maximum_size = min(
+                len(self.piece_names), len(optional_pieces) + len(mandatory)
+            )
+            minimum_optional = 0 if mandatory else 1
+            for block_size in range(maximum_size, 0, -1):
+                if self._should_stop():
+                    return
+                optional_size = block_size - len(mandatory)
+                if (
+                    optional_size < minimum_optional
+                    or optional_size > len(optional_pieces)
+                ):
+                    continue
+                for selected_pieces in combinations(optional_pieces, optional_size):
+                    if self._should_stop():
+                        return
+                    choices = tuple(tuple(by_piece[piece]) for piece in selected_pieces)
+                    for selected_optional in product(*choices):
+                        if self._should_stop():
+                            return
+                        selected_orbits = mandatory + tuple(selected_optional)
+                        representatives = tuple(
+                            self.occurrence_orbits[orbit_index][0]
+                            for orbit_index in selected_orbits
+                        )
+                        self._candidate_blocks += 1
+                        self.event_sink("arrangement_candidate_blocks", 1)
+                        yield tuple(sorted(representatives))
+            return
+
         optional = tuple(item for item in remaining if item not in mandatory)
         maximum_size = min(len(remaining), len(self.piece_names))
         minimum_optional = 0 if mandatory else 1

@@ -38,3 +38,25 @@ the mandatory architecture.**
   finite encoded decision problems, completeness, complexity and algorithm
   comparisons are ill-defined.
 - Next node: `SPEC-001` in `AGENDA.md`.
+
+## 2026-10-21 — Recovery of the pre-reset implementation snapshot
+
+**Decision `D-005`: preserve the dirty implementation as one explicitly
+historical experimental snapshot instead of deleting or partially restoring it.**
+
+- Audit: the modified and untracked files form one dependency-connected tranche:
+  tile-frontier/contact traversal, word and metric propagation, retained length
+  sectors, completed-word caching, Euclidean placement diagnostics, progressive
+  numerical geometry, fixed-graph campaigns, dashboards and their tests.
+- Alternatives rejected: splitting it into apparently independent commits would
+  create misleading intermediate states; restoring selected files would discard
+  provenance and potentially useful negative/diagnostic work.
+- Validation: with `PYTHONPATH=src` and a workspace-local temporary directory,
+  the complete suite reported 374 passed, one skipped and 217 parameterized
+  subtests passed in 142.85 seconds.
+- Interpretation: this establishes internal regression coherence only. It does
+  not establish completeness, soundness of every mathematical gate, a search
+  speedup, or scientific validation of Contact V2 or the frontier strategy.
+- Consequence: the code remains available as a tested research artifact while
+  `SPEC-001` and the research methodology, not old engineering checklists,
+  continue to determine future work.

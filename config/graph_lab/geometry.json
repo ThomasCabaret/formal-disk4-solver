@@ -30,6 +30,20 @@
     "minimum_area": 1e-08,
     "minimum_sample_edge_length": 1e-09,
     "candidate_timeout_seconds": 45.0,
+    "resolution_schedule": [
+      {
+        "intermediate_points_per_generic_curve": 3,
+        "candidate_timeout_seconds": 5.0
+      },
+      {
+        "intermediate_points_per_generic_curve": 6,
+        "candidate_timeout_seconds": 10.0
+      },
+      {
+        "intermediate_points_per_generic_curve": 12,
+        "candidate_timeout_seconds": 30.0
+      }
+    ],
     "enable_clearance_refinement": true,
     "coarse_collision_sample_count": 8,
     "max_refinement_evaluations": 320

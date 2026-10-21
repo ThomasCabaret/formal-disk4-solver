@@ -27,6 +27,8 @@ class PrototypeSymmetryMode(str, Enum):
 
 
 class ArrangementStrategy(str, Enum):
+    # Compatibility path: complete contour mappings are fixed before weak
+    # orders are traversed.  Kept only for audits of historical results.
     ENUMERATE = "enumerate"
     JOINT_BACKTRACKING = "joint_backtracking"
 
@@ -107,7 +109,7 @@ class GraphLabSearchRequest:
     region: RegionSelection = RegionSelection()
     boundary: BoundaryConditions = BoundaryConditions()
     prototype: PrototypeConstraints = PrototypeConstraints()
-    arrangement: ArrangementStrategy = ArrangementStrategy.ENUMERATE
+    arrangement: ArrangementStrategy = ArrangementStrategy.JOINT_BACKTRACKING
     policy: PolicyMode = PolicyMode.PRIOR
 
     def __post_init__(self) -> None:
@@ -189,7 +191,7 @@ class GraphLabSearchRequest:
             ),
             arrangement=(
                 ArrangementStrategy.JOINT_BACKTRACKING
-                if bool(arrangement_config.get("enabled", False))
+                if bool(arrangement_config.get("enabled", True))
                 else ArrangementStrategy.ENUMERATE
             ),
             policy=PolicyMode(str(policy.get("mode", PolicyMode.PRIOR.value))),

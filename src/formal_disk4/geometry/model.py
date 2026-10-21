@@ -165,6 +165,7 @@ class FormalGeometryProblem:
     components: Tuple[FormalCurveComponent, ...]
     strict_angle_constraints: Tuple[FormalStrictAngleConstraint, ...] = ()
     prototype_rotation_order: int = 1
+    positive_length_sectors: Tuple[LinearFormula, ...] = ()
 
     @property
     def component_map(self) -> Dict[str, FormalCurveComponent]:
@@ -173,6 +174,8 @@ class FormalGeometryProblem:
     @property
     def parameter_names(self) -> Tuple[str, ...]:
         names = set()
+        for expression in self.positive_length_sectors:
+            names.update(expression.parameters)
         for point in self.points:
             names.update(point.angle_pi.parameters)
         for component in self.components:
@@ -470,6 +473,9 @@ def parse_formal_geometry_problem(
         segments=tuple(sorted(segments, key=lambda item: item.segment_index)),
         components=tuple(components),
         strict_angle_constraints=tuple(strict_angle_constraints),
+        positive_length_sectors=tuple(LinearFormula.from_record(item["expression"])
+            for item in profile.get("formal_constraints", [])
+            if isinstance(item, Mapping) and item.get("kind") == "positive_length_sector"),
         prototype_rotation_order=prototype_rotation_order,
     )
 

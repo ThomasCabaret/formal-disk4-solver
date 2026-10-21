@@ -307,9 +307,23 @@ class PrewordLinearInvariantFilter:
             planar_map, placement, compiled, topology
         )
         if not metric.feasible:
+            if (
+                planar_map.has_free_boundary
+                and not self.enable_radius_measures
+                and not self.enable_smooth_turns
+            ):
+                # With a free outer boundary the disk-wide radius/turn identities
+                # do not apply.  When the two local feature blocks are disabled,
+                # this metric LP contains only the exact interface-length rows,
+                # sum(lengths)=1, and length_i>0.  A rejection therefore proves
+                # that this weak order cannot give every contour atom nonzero
+                # length; it is not a geometric radius obstruction.
+                reason = "preword strictly-positive length system is infeasible"
+            else:
+                reason = "preword metric/radius/turn system is infeasible"
             return PrewordLinearInvariantResult(
                 False,
-                "preword metric/radius/turn system is infeasible",
+                reason,
                 metric.status,
                 "not_run",
                 metric.exact_certificate_used,

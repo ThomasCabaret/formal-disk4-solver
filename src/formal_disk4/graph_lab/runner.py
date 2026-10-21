@@ -404,12 +404,19 @@ class GraphLabRunner:
             f"tiles={format_tile_count_spec(self.space.tile_counts)} "
             f"mode={'stein-symmetric' if self.stein_symmetric else 'general'} "
             f"policy={self.policy_mode} "
+            f"arrangement={self.search_request.arrangement.value} "
             f"partial={self._partial_mode_label()} "
             f"prototype-symmetry={self.prototype_symmetry_mode} "
             f"exclude-rings={'on' if self.exclude_rings else 'off'} "
             f"disk-limit={disk_limit}",
             flush=True,
         )
+        if not self.evaluator.joint_arrangement_search_enabled:
+            print(
+                "[DEPRECATED] complete-mapping-first Cartesian arrangement "
+                "traversal is enabled; use it only to reproduce historical runs.",
+                flush=True,
+            )
 
         last_generation = start - 1
         stop_reason = "completed"

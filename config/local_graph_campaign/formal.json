@@ -1,0 +1,78 @@
+{
+  "maps": [
+    "k4"
+  ],
+  "enumeration": {
+    "allow_reflections": true,
+    "symmetry_mode": "incremental",
+    "track_exact_domain_size": true,
+    "cyclic_equivariance": {
+      "enabled": false
+    },
+    "joint_weak_length": {
+      "enabled": false
+    },
+    "mapping_subdomain": {
+      "enabled": false
+    }
+  },
+  "solver": {
+    "enabled": true,
+    "mode": "exact_partial",
+    "max_graph_nodes_per_placement": 50000,
+    "max_graph_edges_per_placement": 200000,
+    "max_families_per_placement": 128,
+    "max_expression_nodes": 20000,
+    "max_terminal_contour_segments": 40,
+    "max_seconds_per_word_case": null,
+    "max_residual_literals_per_word_case": null,
+    "validation_exponent": 2,
+    "family_expansion": {
+      "policy": "minimum",
+      "maximum_exponent": 1,
+      "max_specializations_per_family": null
+    }
+  },
+  "filters": {
+    "preword_pruning": {
+      "linear_invariants": {
+        "enable_radius_measures": false,
+        "enable_smooth_turns": false
+      }
+    }
+  },
+  "limits": {
+    "max_assignments": null,
+    "max_nodes": null,
+    "max_placements": null,
+    "max_profiles": null,
+    "time_limit_seconds": null,
+    "stop_on_first_profile": true
+  },
+  "output": {
+    "write_candidates": true,
+    "write_families": false,
+    "write_unsupported": true,
+    "write_word_cases": false,
+    "write_deferred_word_cases": true,
+    "write_placements": false,
+    "write_errors": true,
+    "max_unsupported_records": 1000,
+    "max_deferred_word_case_records": 1000,
+    "flush_every": 1
+  },
+  "checkpoint": {
+    "enabled": true,
+    "resume": true,
+    "restart": false,
+    "file": "checkpoint.sqlite3",
+    "interval_seconds": 30
+  },
+  "progress": {
+    "enabled": true,
+    "interval_seconds": 5,
+    "percentage_step": 0.1,
+    "heartbeat_enabled": true,
+    "heartbeat_interval_seconds": 30
+  }
+}

@@ -898,6 +898,8 @@ def _terminal_lengths(
     parameter_names = component_parameter_names + (
         (outer_gap_name,) if open_outer_boundary and compiled.outer_arcs else ()
     )
+    sector_slacks = tuple(f"L_SECTOR_{i}" for i, row in enumerate(placement.length_sector) if row.strict)
+    parameter_names += sector_slacks
     atomic_counts: list[Counter[int]] = []
     for variable in compiled.atomic_variables:
         atomic_counts.append(
@@ -921,6 +923,19 @@ def _terminal_lengths(
     expanded_outer = tuple(
         substitute_word(arc.positive_word, environment) for arc in compiled.outer_arcs
     )
+    # A strict branch row is represented EXACTLY by row(lengths)=slack,
+    # slack>0. Slacks join both length and joint-angle positivity systems;
+    # they must also be exported for geometric parameter validation below.
+    for i, sector in enumerate(placement.length_sector):
+        if len(sector.coefficients) != len(atomic_counts):
+            raise ValueError("Length sector has the wrong number of prototype intervals")
+        coefficients = defaultdict(Fraction)
+        for coefficient, counts in zip(sector.coefficients, atomic_counts):
+            for component, multiplicity in counts.items():
+                coefficients[component_parameter_names[component]] += Fraction(coefficient)*multiplicity
+        if sector.strict:
+            coefficients[f"L_SECTOR_{i}"] -= 1
+        exact_equations.append((dict(coefficients), Fraction(0)))
     normalization: Dict[str, Fraction] = defaultdict(Fraction)
     if expanded_outer:
         for word in expanded_outer:
@@ -973,7 +988,7 @@ def _terminal_lengths(
             b_ub=np.asarray(b_ub),
             A_eq=np.asarray(a_eq),
             b_eq=np.asarray(b_eq),
-            bounds=[(0.0, None)] * count + [(0.0, None)],
+            bounds=[(0.0, None)] * variable_count,
             method="highs",
         )
     except Exception:
@@ -1541,6 +1556,10 @@ def build_decorations(
     )
 
     formal_constraints: list[Dict[str, object]] = []
+    for name, expression in exact_length_solution.expression_map().items():
+        if name.startswith("L_SECTOR_"):
+            formal_constraints.append({"kind": "positive_length_sector",
+                                       "parameter": name, "expression": expression.to_dict()})
     if compiled.prototype_rotation_order > 1:
         sector_length = len(terminal_contour) // compiled.prototype_rotation_order
         formal_constraints.append(

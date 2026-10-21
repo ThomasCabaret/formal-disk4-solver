@@ -1,5 +1,11 @@
 # Refactor status
 
+> Historical engineering checklist. As of 2026-10-21, research direction and
+> approach maturity are described in [docs/research/README.md](docs/research/README.md)
+> and [docs/research/STATE.md](docs/research/STATE.md). The baseline/test counts
+> below have not been revalidated during the restart; this is not an instruction
+> to resume every outstanding refactor.
+
 This file records the current stabilization boundary so later work can resume
 without reconstructing it from the Git history.
 
@@ -12,8 +18,8 @@ without reconstructing it from the Git history.
   constraints independently from the traversal strategy.
 - Graph ordering uses the stochastic prior by default. Learned ordering is an
   explicit experimental policy.
-- Complete enumeration and joint cyclic backtracking are selectable search
-  strategies; changing strategy does not change the mathematical request.
+- Joint backtracking is the maintained Graph Lab arrangement strategy.
+  Complete-mapping-first enumeration is a deprecated compatibility strategy.
 - Run persistence is isolated in `GraphLabRunStore` so future strategies can
   reuse checkpoints and dashboard data.
 - Documentation sources live under `docs/`; generated local PDFs belong under
@@ -38,6 +44,15 @@ without reconstructing it from the Git history.
    `GraphLabReporter`.
 9. Isolated the optional mapping, weak-order, and specialization policies in
    `HierarchicalPolicyRuntime`.
+10. Added exact tile-frontier insertion for graphs without imposed
+    automorphisms.  One search level now chooses a whole tile mapping and its
+    weak-order merge, with a public conservative partial-validation hook.
+11. Connected each complete joint-arrangement leaf synchronously to the shared
+    formal kernel.  Kernel rejection now resumes the same backtracker; the old
+    placement batch/count ceiling no longer truncates a fixed-graph tree.
+12. Added an unbounded fixed-graph Backtracking Lab with live progress,
+    synchronous geometry attempts, explicit tree-exhaustion semantics, and no
+    learned policy dependency.
 
 ## Remaining work
 
@@ -45,9 +60,9 @@ without reconstructing it from the Git history.
    a second caller actually needs it. Proposal, hierarchical policies,
    persistence, and reporting are now independent; avoid adding an interface
    merely to reduce the remaining line count.
-2. Define a common proposal protocol before adding incremental graph or
-   weak-order backtracking. New strategies should produce the same request and
-   observation types as current strategies.
+2. Extend tile-frontier insertion from individual tiles to complete tile
+   orbits under imposed rotational/dihedral actions.  Until then those domains
+   use the existing exact symmetry-aware joint contour-block traversal.
 3. Move generally useful crown/free-boundary graph transformations out of the
    Graph Lab package once their contracts have stabilized.
 4. Add web-side start/stop/resume controls only after orchestration is detached
@@ -64,5 +79,5 @@ $env:PYTHONPATH = "$PWD\src"
 py.exe -m pytest -q
 ```
 
-The stabilization baseline at the time this note was written passed 318 tests,
+The recovered experimental snapshot passed 374 tests,
 with one skipped test and 217 parameterized subtests.

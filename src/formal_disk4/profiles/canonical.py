@@ -37,6 +37,7 @@ def conservative_profile_key(
     assignment_key: object,
     blocks: object,
     environment: Mapping[str, Word],
+    *, length_sector=(),
 ) -> str:
     payload = {
         "map": map_name,
@@ -47,5 +48,7 @@ def conservative_profile_key(
             for variable, word in sorted(environment.items())
         },
     }
+    if length_sector:
+        payload["length_sector"] = [row.to_dict() for row in length_sector]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

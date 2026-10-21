@@ -111,7 +111,9 @@ class PrototypeRotationTests(unittest.TestCase):
         self.assertEqual(compiled.prototype_rotation_order, 3)
         self.assertEqual(compiled.prototype_sector_variable, "ROTATION_SECTOR")
         self.assertIn("ROTATION_SECTOR", compiled.solver_variables)
-        self.assertIn("M_ROTATION_SECTOR", compiled.solver_variables)
+        # No copy is reflected in this map, so solving a disconnected mirror
+        # image would only square the same solution language.
+        self.assertNotIn("M_ROTATION_SECTOR", compiled.solver_variables)
         equation_text = {item.to_text() for item in compiled.effective_solver_equations}
         contour_text = " ".join(f"X{index}" for index in range(placement.interval_count))
         self.assertIn(

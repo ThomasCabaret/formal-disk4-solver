@@ -69,8 +69,15 @@ def add_search_arguments(parser: argparse.ArgumentParser) -> None:
         "--joint-arrangement-search",
         action="store_true",
         help=(
-            "jointly backtrack contour mappings and weak cyclic orders instead "
-            "of enumerating or ranking complete mappings"
+            "explicitly select the default joint arrangement backtracker"
+        ),
+    )
+    parser.add_argument(
+        "--legacy-cartesian-arrangements",
+        action="store_true",
+        help=(
+            "deprecated: fix each complete contour mapping before enumerating "
+            "its weak orders; intended only to reproduce historical runs"
         ),
     )
     parser.add_argument(

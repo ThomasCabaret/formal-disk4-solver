@@ -13,6 +13,15 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 from formal_disk4.config import load_config
 from formal_disk4.enumeration.assignments import AssignmentEnumerator, ContourAssignment
 from formal_disk4.enumeration.cyclic_arrangements import CyclicArrangementEnumerator
+from formal_disk4.enumeration.frontier_arrangements import (
+    FrontierArrangementEnumerator,
+)
+from formal_disk4.geometry.placement_audit import (
+    EuclideanPartialPlacementPruner,
+    EuclideanPlacementAuditConfig,
+    audit_euclidean_placement,
+)
+from formal_disk4.search.placement_adapter import ContactArrangementEnumerator
 from formal_disk4.pipeline.api import (
     AssignmentSelection,
     FormalSolverAPI,
@@ -173,6 +182,10 @@ class GraphFormalEvaluator:
         config: Mapping[str, object],
     ) -> None:
         self.root = root.resolve()
+        self.contact_turn_propagation = bool(config.get("contact_turn_propagation", True))
+        self.contact_word_propagation = bool(config.get("contact_word_propagation", True))
+        self.contact_word_refinement_depth = int(config.get("contact_word_refinement_depth", 0))
+        self.contact_word_sectors = bool(config.get("contact_word_sectors", False))
         base_path = Path(str(config.get("base_search_config", "config/cycle_campaign/search.json")))
         if not base_path.is_absolute():
             base_path = self.root / base_path
@@ -183,14 +196,69 @@ class GraphFormalEvaluator:
         self.joint_arrangement_search_enabled = bool(
             arrangement_config.get("enabled", False)
         )
-        self.joint_arrangement_max_nodes = max(
-            1, int(arrangement_config.get("max_nodes", 100_000))
+        self.joint_arrangement_strategy = str(
+            arrangement_config.get("strategy", "tile_frontier")
         )
-        self.joint_arrangement_max_placements = max(
-            1, int(arrangement_config.get("max_placements", 32))
+        if self.joint_arrangement_strategy not in {
+            "tile_frontier",
+            "contour_blocks",
+            "contact_types",
+        }:
+            raise ValueError(
+                "joint_arrangement_search.strategy must be tile_frontier or "
+                "contour_blocks or contact_types"
+            )
+        raw_arrangement_nodes = arrangement_config.get("max_nodes", 100_000)
+        self.joint_arrangement_max_nodes = (
+            None
+            if raw_arrangement_nodes is None
+            else max(1, int(raw_arrangement_nodes))
         )
-        self.joint_arrangement_time_limit_seconds = max(
-            0.01, float(arrangement_config.get("time_limit_seconds", 30.0))
+        raw_arrangement_seconds = arrangement_config.get(
+            "time_limit_seconds", 30.0
+        )
+        self.joint_arrangement_time_limit_seconds = (
+            None
+            if raw_arrangement_seconds is None
+            else max(0.01, float(raw_arrangement_seconds))
+        )
+        audit_config = dict(
+            arrangement_config.get("euclidean_placement_audit", {})
+        )
+        self.euclidean_placement_audit_enabled = bool(
+            audit_config.get("enabled", False)
+        )
+        self.euclidean_placement_audit_max_samples = max(
+            0, int(audit_config.get("max_samples", 64))
+        )
+        self.euclidean_placement_audit_sample_every = max(
+            1, int(audit_config.get("sample_every", 1))
+        )
+        self.euclidean_placement_audit_config = EuclideanPlacementAuditConfig(
+            restarts=max(1, int(audit_config.get("restarts", 4))),
+            max_nfev=max(1, int(audit_config.get("max_nfev", 300))),
+            tolerance=float(audit_config.get("tolerance", 1.0e-7)),
+            boundary_mode=str(audit_config.get("boundary_mode", "auto")),  # type: ignore[arg-type]
+        )
+        pruning_config = dict(
+            arrangement_config.get("euclidean_partial_pruning", {})
+        )
+        self.euclidean_partial_pruning_enabled = bool(
+            pruning_config.get("enabled", False)
+        )
+        self.euclidean_partial_pruning_minimum_depth = max(
+            1, int(pruning_config.get("minimum_depth", 3))
+        )
+        self.euclidean_partial_pruning_minimum_closed_neighbors = max(
+            1, int(pruning_config.get("minimum_closed_neighbors", 2))
+        )
+        self.euclidean_partial_pruning_config = EuclideanPlacementAuditConfig(
+            restarts=max(1, int(pruning_config.get("restarts", 2))),
+            max_nfev=max(1, int(pruning_config.get("max_nfev", 120))),
+            tolerance=float(pruning_config.get("tolerance", 1.0e-7)),
+            boundary_mode=str(
+                pruning_config.get("boundary_mode", "auto")
+            ),  # type: ignore[arg-type]
         )
         self.partial_crown_tile_counts = _positive_count_domain(
             config.get("partial_crown_tile_counts")  # type: ignore[arg-type]
@@ -787,14 +855,22 @@ class GraphFormalEvaluator:
         )
 
     def evaluate_joint_arrangements(
-        self, candidate: DualGraphCandidate
+        self,
+        candidate: DualGraphCandidate,
+        *,
+        progress_sink: Callable[[Mapping[str, object]], None] | None = None,
+        progress_interval_seconds: float = 1.0,
+        profile_consumer: Callable[[Mapping[str, object]], bool] | None = None,
+        external_stop_predicate: Callable[[], bool] | None = None,
     ) -> GraphEvaluation:
         """Search mapping and weak order together for one fixed graph.
 
         This path deliberately bypasses every mapping/weak-order ranker.  It
-        constructs a complete cyclic arrangement by backtracking, then hands
-        the resulting placements to the same pre-word, word, decoration, and
-        profile kernel as ordinary searches.
+        constructs cyclic arrangements by backtracking.  Every complete leaf
+        is handed immediately to the same pre-word, word, decoration, and
+        profile kernel as ordinary searches.  A rejected leaf therefore gives
+        control straight back to the live backtracker; there is deliberately
+        no intermediate placement batch or placement-count ceiling.
         """
 
         started = time.perf_counter()
@@ -838,56 +914,129 @@ class GraphFormalEvaluator:
                         "Unknown imposed Graph Lab equivariance mode"
                     )
 
-                deadline = started + self.joint_arrangement_time_limit_seconds
+                deadline = (
+                    None
+                    if self.joint_arrangement_time_limit_seconds is None
+                    else started + self.joint_arrangement_time_limit_seconds
+                )
+                profiles: list[Mapping[str, object]] = []
+                profile_ids: set[str] = set()
+                externally_stopped = False
+                last_progress = 0.0
+
+                search = None
+
+                def publish_progress(*, phase: str, force: bool = False) -> None:
+                    nonlocal last_progress
+                    if progress_sink is None:
+                        return
+                    now = time.perf_counter()
+                    if (
+                        not force
+                        and now - last_progress
+                        < max(0.05, float(progress_interval_seconds))
+                    ):
+                        return
+                    last_progress = now
+                    progress_sink(
+                        {
+                            "phase": phase,
+                            "elapsed_seconds": now - started,
+                            "profiles": len(profiles),
+                            "counters": dict(counters),
+                            "search_progress": dict(getattr(search, "progress_snapshot", {})),
+                        }
+                    )
 
                 def stop() -> bool:
-                    return time.perf_counter() >= deadline
+                    nonlocal externally_stopped
+                    if external_stop_predicate is not None and external_stop_predicate():
+                        externally_stopped = True
+                        return True
+                    return deadline is not None and time.perf_counter() >= deadline
 
                 def count(name: str, amount: int = 1) -> None:
                     counters[name] = counters.get(name, 0) + int(amount)
+                    publish_progress(phase="arrangement_search")
 
-                search = CyclicArrangementEnumerator(
-                    dynamic.planar_map,
-                    allow_reflections=bool(
+                search_arguments = {
+                    "allow_reflections": bool(
                         config["enumeration"]["allow_reflections"]
                     ),
-                    required_pointwise_transform=pointwise,
-                    required_cyclic_shift_transform=rotation,
-                    required_reflection_transforms=reflections,
-                    event_sink=count,
-                    stop_predicate=stop,
-                    max_nodes=self.joint_arrangement_max_nodes,
+                    "required_pointwise_transform": pointwise,
+                    "required_cyclic_shift_transform": rotation,
+                    "required_reflection_transforms": reflections,
+                    "event_sink": count,
+                    "stop_predicate": stop,
+                    "max_nodes": self.joint_arrangement_max_nodes,
+                }
+                if self.joint_arrangement_strategy == "contact_types":
+                    if (dynamic.imposed_automorphism is not None or pointwise is not None
+                            or rotation is not None or reflections):
+                        raise ValueError("Contact V2 currently accepts fixed complexes without imposed automorphisms")
+                    if self.euclidean_partial_pruning_enabled:
+                        raise ValueError("The numerical Euclidean pruner belongs to the legacy frontier experiment")
+                    count("arrangement_engine_contact_types", 1)
+                    search = ContactArrangementEnumerator(
+                        dynamic.planar_map,
+                        propagate_turns=self.contact_turn_propagation,
+                        propagate_words=self.contact_word_propagation,
+                        word_refinement_depth=self.contact_word_refinement_depth,
+                        word_sectors=self.contact_word_sectors,
+                        allow_reflections=bool(config["enumeration"]["allow_reflections"]),
+                        event_sink=count, stop_predicate=stop,
+                        max_nodes=self.joint_arrangement_max_nodes,
+                    )
+                elif (
+                    self.joint_arrangement_strategy == "tile_frontier"
+                    and dynamic.imposed_automorphism is None
+                ):
+                    count("arrangement_engine_tile_frontier", 1)
+                    partial_validators = ()
+                    if self.euclidean_partial_pruning_enabled:
+                        count("euclidean_partial_pruning_enabled", 1)
+                        partial_validators = (
+                            EuclideanPartialPlacementPruner(
+                                dynamic.planar_map,
+                                config=self.euclidean_partial_pruning_config,
+                                minimum_depth=(
+                                    self.euclidean_partial_pruning_minimum_depth
+                                ),
+                                minimum_closed_neighbors=(
+                                    self.euclidean_partial_pruning_minimum_closed_neighbors
+                                ),
+                                event_sink=count,
+                            ),
+                        )
+                    search = FrontierArrangementEnumerator(
+                        dynamic.planar_map,
+                        partial_validators=partial_validators,
+                        **search_arguments,
+                    )
+                else:
+                    # The symmetry-aware contour-block engine remains the
+                    # exact implementation for imposed automorphisms until the
+                    # frontier engine can insert complete tile orbits.
+                    count("arrangement_engine_symmetric_contour_blocks", 1)
+                    search = CyclicArrangementEnumerator(
+                        dynamic.planar_map,
+                        **search_arguments,
+                    )
+                kernel_tainted = False
+                stop_reason: str | None = None
+                configured_profile_limit = config["limits"].get("max_profiles")
+                profile_limit = (
+                    None
+                    if configured_profile_limit is None
+                    else max(1, int(configured_profile_limit))
                 )
-                placements = []
-                for placement in search.enumerate():
-                    placements.append(placement)
-                    if len(placements) >= self.joint_arrangement_max_placements:
-                        break
-
-                counters.setdefault("assignments_processed", 1)
-                counters["joint_arrangement_placements"] = len(placements)
-                if not placements:
-                    reason = (
-                        "joint_arrangement_time_limit"
-                        if stop()
-                        else "joint_arrangement_exhausted_or_node_limit"
-                    )
-                    return GraphEvaluation(
-                        candidate=candidate,
-                        stage_index=self._stage(counters),
-                        elapsed_seconds=time.perf_counter() - started,
-                        stop_reason=reason,
-                        counters=counters,
-                        profiles=(),
-                        tainted=False,
-                        evaluated_structure=self._structure_descriptor(
-                            candidate, dynamic
-                        ),
-                    )
+                stop_on_first_profile = bool(
+                    config["limits"].get("stop_on_first_profile", False)
+                )
 
                 # The arrangement has already enforced every mapping and weak
-                # symmetry.  Disable the historical enumeration layer for the
-                # hand-off; it must not quotient or expand the supplied leaves.
+                # symmetry.  Disable the historical enumeration layer for each
+                # leaf hand-off; it must not quotient or expand that leaf.
                 enumeration = config["enumeration"]
                 enumeration["symmetry_mode"] = "off"
                 enumeration["track_exact_domain_size"] = False
@@ -900,45 +1049,204 @@ class GraphFormalEvaluator:
                 enumeration.setdefault("dihedral_equivariance", {})[
                     "enabled"
                 ] = False
-                config["limits"]["max_assignments"] = len(
-                    {item.assignment.assignment_id for item in placements}
-                )
-                config["limits"]["max_placements"] = len(placements)
-                result = FormalSolverAPI.evaluate(
-                    SolverAPIRequest(
-                        config=config,
-                        planar_maps=(dynamic.planar_map,),
-                        placements=(
-                            PlacementSelection(
-                                dynamic.planar_map.name, tuple(placements)
-                            ),
-                        ),
-                        collect_learning_diagnostics=False,
-                        collect_profiles=True,
-                    )
-                )
-                kernel_counters = {
-                    str(name): int(value)
-                    for name, value in dict(
-                        dict(result.summary.get("statistics", {})).get(
-                            "counters", {}
+
+                for placement in search.enumerate():
+                    if stop():
+                        stop_reason = (
+                            "joint_arrangement_external_stop"
+                            if externally_stopped
+                            else "joint_arrangement_time_limit"
                         )
-                    ).items()
-                }
-                for name, amount in kernel_counters.items():
-                    counters[name] = counters.get(name, 0) + amount
+                        break
+                    count("joint_arrangement_placements", 1)
+                    placement_number = int(
+                        counters.get("joint_arrangement_placements", 0)
+                    )
+                    audit_count = int(
+                        counters.get("euclidean_placement_audit_attempts", 0)
+                    )
+                    if (
+                        self.euclidean_placement_audit_enabled
+                        and audit_count
+                        < self.euclidean_placement_audit_max_samples
+                        and (placement_number - 1)
+                        % self.euclidean_placement_audit_sample_every
+                        == 0
+                    ):
+                        audit_started = time.perf_counter()
+                        count("euclidean_placement_audit_attempts", 1)
+                        try:
+                            audit = audit_euclidean_placement(
+                                dynamic.planar_map,
+                                placement,
+                                self.euclidean_placement_audit_config,
+                            )
+                        except Exception:
+                            # This is an observational experiment, not an
+                            # acceptance gate.  An implementation or optimizer
+                            # failure must leave the formal leaf untouched.
+                            count("euclidean_placement_audit_errors", 1)
+                        else:
+                            count("euclidean_placement_audits", 1)
+                            count(
+                                "euclidean_placement_numerically_feasible"
+                                if audit.numerically_feasible
+                                else "euclidean_placement_numerically_unresolved",
+                                1,
+                            )
+                            count(
+                                f"euclidean_placement_boundary_{audit.boundary_mode}",
+                                1,
+                            )
+                            if audit.underdetermined:
+                                count("euclidean_placement_underdetermined", 1)
+                            if audit.maximum_residual <= 1.0e-7:
+                                residual_bucket = "le_1e_7"
+                            elif audit.maximum_residual <= 1.0e-5:
+                                residual_bucket = "le_1e_5"
+                            elif audit.maximum_residual <= 1.0e-3:
+                                residual_bucket = "le_1e_3"
+                            else:
+                                residual_bucket = "gt_1e_3"
+                            count(
+                                f"euclidean_placement_residual_{residual_bucket}",
+                                1,
+                            )
+                            count(
+                                "euclidean_placement_variables_total",
+                                audit.variable_count,
+                            )
+                            count(
+                                "euclidean_placement_residuals_total",
+                                audit.residual_count,
+                            )
+                            count(
+                                "euclidean_placement_optimizer_evaluations",
+                                audit.evaluations,
+                            )
+                        finally:
+                            elapsed_ms = max(
+                                1,
+                                int(
+                                    round(
+                                        1000.0
+                                        * (time.perf_counter() - audit_started)
+                                    )
+                                ),
+                            )
+                            count("euclidean_placement_audit_milliseconds", elapsed_ms)
+                    count("joint_arrangement_kernel_calls", 1)
+                    publish_progress(phase="formal_kernel")
+
+                    # A new production-kernel call gets no fresh wall-clock
+                    # budget: it may consume only the time left to this fixed
+                    # graph.  Its own configured limit may be smaller.
+                    leaf_config = deepcopy(config)
+                    configured_time_limit = leaf_config["limits"].get(
+                        "time_limit_seconds"
+                    )
+                    if deadline is None:
+                        leaf_config["limits"]["time_limit_seconds"] = (
+                            None
+                            if configured_time_limit is None
+                            else float(configured_time_limit)
+                        )
+                    else:
+                        remaining_seconds = max(
+                            0.01, deadline - time.perf_counter()
+                        )
+                        leaf_config["limits"]["time_limit_seconds"] = (
+                            remaining_seconds
+                            if configured_time_limit is None
+                            else min(
+                                float(configured_time_limit), remaining_seconds
+                            )
+                        )
+                    # These limits belong to complete-mapping enumeration.  A
+                    # leaf hand-off already contains exactly one placement;
+                    # neither setting may truncate the surrounding backtracker.
+                    leaf_config["limits"]["max_assignments"] = None
+                    leaf_config["limits"]["max_placements"] = None
+
+                    result = FormalSolverAPI.evaluate(
+                        SolverAPIRequest(
+                            config=leaf_config,
+                            planar_maps=(dynamic.planar_map,),
+                            placements=(
+                                PlacementSelection(
+                                    dynamic.planar_map.name, (placement,)
+                                ),
+                            ),
+                            collect_learning_diagnostics=False,
+                            collect_profiles=True,
+                        )
+                    )
+                    kernel_counters = {
+                        str(name): int(value)
+                        for name, value in dict(
+                            dict(result.summary.get("statistics", {})).get(
+                                "counters", {}
+                            )
+                        ).items()
+                    }
+                    for name, amount in kernel_counters.items():
+                        counters[name] = counters.get(name, 0) + amount
+                    kernel_tainted = kernel_tainted or bool(
+                        result.summary.get("tainted", False)
+                    )
+                    for profile in result.profiles:
+                        identifiers = formal_profile_ids((profile,))
+                        identifier = identifiers[0] if identifiers else None
+                        if identifier is not None and identifier in profile_ids:
+                            continue
+                        if identifier is not None:
+                            profile_ids.add(identifier)
+                        profiles.append(profile)
+                        if profile_consumer is not None and profile_consumer(profile):
+                            externally_stopped = True
+                            stop_reason = "joint_arrangement_external_solution"
+                            break
+
+                    publish_progress(phase="formal_kernel")
+                    if stop_reason == "joint_arrangement_external_solution":
+                        break
+
+                    if profiles and stop_on_first_profile:
+                        stop_reason = "joint_arrangement_first_profile"
+                        break
+                    if profile_limit is not None and len(profiles) >= profile_limit:
+                        stop_reason = "joint_arrangement_profile_limit"
+                        break
+                heuristic_pruning_used = bool(
+                    getattr(search, "heuristic_pruning_used", False)
+                )
+
+                counters.setdefault("assignments_processed", 1)
+                if stop_reason is None:
+                    if externally_stopped:
+                        stop_reason = "joint_arrangement_external_stop"
+                    elif stop():
+                        stop_reason = (
+                            "joint_arrangement_external_stop"
+                            if externally_stopped
+                            else "joint_arrangement_time_limit"
+                        )
+                    elif (
+                        search.max_nodes is not None
+                        and search.statistics.nodes >= search.max_nodes
+                    ):
+                        stop_reason = "joint_arrangement_node_limit"
+                    else:
+                        stop_reason = "joint_arrangement_exhausted"
+                publish_progress(phase=stop_reason, force=True)
                 return GraphEvaluation(
                     candidate=candidate,
                     stage_index=self._stage(counters),
                     elapsed_seconds=time.perf_counter() - started,
-                    stop_reason=str(
-                        dict(result.summary.get("statistics", {})).get(
-                            "stop_reason", "joint_arrangement_kernel"
-                        )
-                    ),
+                    stop_reason=stop_reason,
                     counters=counters,
-                    profiles=tuple(result.profiles),
-                    tainted=bool(result.summary.get("tainted", False)),
+                    profiles=tuple(profiles),
+                    tainted=kernel_tainted or heuristic_pruning_used,
                     evaluated_structure=self._structure_descriptor(
                         candidate, dynamic
                     ),
@@ -955,6 +1263,7 @@ class GraphFormalEvaluator:
                 error=f"{type(error).__name__}: {error}",
                 evaluated_structure=self._structure_descriptor(candidate),
             )
+
     @staticmethod
     def _stage(counters: Mapping[str, int]) -> int:
         stage = 0

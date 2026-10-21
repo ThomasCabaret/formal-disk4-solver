@@ -14,6 +14,7 @@ from formal_disk4.constraints.angle_lp import (
     AngleInequality,
 )
 from formal_disk4.constraints.length_lp import LengthFeasibilityOracle
+from formal_disk4.constraints.length_sector import LengthSectorRow
 from formal_disk4.maps.base import InterfaceSpec, Occurrence, PlanarMap
 
 from .assignments import AssignmentTransform, ContourAssignment, rotate
@@ -130,6 +131,7 @@ class Placement:
     angle_margin: float
     angle_witness: Tuple[float, ...]
     angle_inequalities: Tuple[AngleInequality, ...] = ()
+    length_sector: Tuple[LengthSectorRow, ...] = ()
 
     @property
     def interval_count(self) -> int:
@@ -146,6 +148,7 @@ class Placement:
             "length_margin": self.length_margin,
             "length_witness": list(self.length_witness),
             "length_rows": [list(row) for row in self.length_rows],
+            "length_sector": [row.to_dict() for row in self.length_sector],
             "angle_margin": self.angle_margin,
             "signed_turn_witness_pi": list(self.angle_witness),
             "prototype_angle_witness_pi": [1.0 - value for value in self.angle_witness],

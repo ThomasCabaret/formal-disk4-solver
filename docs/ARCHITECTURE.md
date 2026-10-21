@@ -1,4 +1,10 @@
-# Architecture 1.3
+# Architecture 1.4
+
+> Implementation reference, not a claim of algorithmic efficiency or complete
+> mathematical coverage. For the 2026-10-21 research restart and current status
+> of competing approaches, read [research/README.md](research/README.md) and
+> [research/STATE.md](research/STATE.md). The historical baseline terminology
+> below does not designate a scientifically validated winning method.
 
 ## 0. Maintained runtime boundary
 
@@ -17,6 +23,10 @@ word compilation, exact pruning, decoration, or profile acceptance.
 The stable Graph Lab default is the unlearned structural prior. Experimental
 learning is selected explicitly with `--policy learned`. Policy choice affects
 ordering only and must never change the mathematical acceptance rules.
+
+The stable arrangement strategy is joint backtracking.  The historical
+Cartesian traversal (complete mapping first, weak order second) is available
+only through `--legacy-cartesian-arrangements` for reproducing old runs.
 
 ## 0.1 Composable search request
 
@@ -111,6 +121,61 @@ case files, including cases generated from the family template.
 A search node is a nonempty sequence of coincidence blocks. Each block consumes the next occurrence of any nonempty subset of copies and contains at most one occurrence per copy. Thus all allowed degeneracies between different copies are represented.
 
 `placement_nodes` counts these partial prefixes, not word systems. A complete prefix that survives early constraints becomes a `Placement`.
+
+### 3.1 Tile-frontier arrangement search
+
+For a graph without an imposed automorphism, the maintained joint strategy
+starts from the reference tile and repeatedly selects an unplaced tile that
+has the largest number of neighbours already present.  Adding that tile is one
+search decision containing both:
+
+- its direct/reflected cyclic contour mapping;
+- a complete weak cyclic merge of its marked contour occurrences with the
+  current prototype order.
+
+After each tile insertion, every newly resolved positive-length and point-angle
+constraint is checked.  Failure backtracks to a different merge or mapping of
+the last tile.  The public `PartialArrangementValidator` hook may later add a
+sound word-prefix or partial-geometry extension oracle without coupling that
+oracle to the recursion.  Validators distinguish certified contradictions from
+heuristic/numerical failures.  The latter may guide an exploratory run but
+taint exhaustion, so they can never produce a negative certificate.
+
+This insertion traversal is complete for the same unconstrained formal domain:
+restricting any complete weak cyclic arrangement to the previously inserted
+tiles gives its unique ancestor in the search tree.  Heuristics order branches
+but do not remove them.  An explicit wall-clock or node budget still makes a
+run incomplete.
+
+Complete leaves are consumed synchronously by the production formal kernel.
+If pre-word pruning, word solving, decoration, or profile filtering rejects a
+leaf, control returns to the same live backtracker and exploration resumes at
+the next branch.  There is no intermediate placement batch and no
+placement-count limit in this strategy; `max_placements` belongs only to the
+deprecated complete-mapping-first traversal.
+
+An optional **observational Euclidean placement audit** can run on a bounded
+sample of complete leaves before that kernel hand-off.  It fits one
+direct/reflected Euclidean isometry per tile to the landmark coincidences fixed
+by the mapping and weak order.  It never prunes the arrangement tree:
+optimization failure is recorded as `numerically_unresolved`, not as
+infeasibility.  Its free-boundary model uses only incidence and holonomy.  Unit
+circle and disk-containment residuals form a separate boundary model and are
+absent when the exterior is free.  This audit measures whether a future exact
+partial-placement contractor is likely to be selective before that contractor
+is allowed to affect traversal.
+
+The standalone fixed-graph Backtracking Lab sets both the node and wall-clock
+budgets to `None`.  In that mode `joint_arrangement_exhausted` means that the
+enumerator itself returned after covering its entire tree.  Downstream
+unsupported or deliberately deferred word systems remain explicit proof gaps;
+they never turn traversal completion into a false impossibility certificate.
+See `docs/backtracking_lab.md` for the live campaign interface.
+
+Imposed rotational/reflectional actions currently continue to use the exact
+symmetry-aware joint contour-block engine.  Extending tile-frontier insertion
+to whole tile orbits is tracked separately; the implementation does not
+silently claim that individual-tile insertion handles those actions.
 
 ## 4. Early linear constraints
 

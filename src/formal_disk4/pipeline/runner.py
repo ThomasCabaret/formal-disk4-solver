@@ -44,6 +44,7 @@ from formal_disk4.words.compile import (
     refine_mirror_compatible_terminal_environment,
 )
 from formal_disk4.words.exact_partial import ExactPartialWordSolver, SolverLimits
+from formal_disk4.words.completed_cache import CompletedWordCache
 from formal_disk4.words.families import FamilyExpansionPolicy, expand_family
 from formal_disk4.words.specialization_policy import (
     FamilySpecializationPolicy,
@@ -227,6 +228,7 @@ class SolverRunner:
                     "Dynamic planar-map names must exactly match config['maps']"
                 )
         self.stats = RunStats()
+        self._completed_word_cache = CompletedWordCache(event_sink=self.stats.increment)
         self._last_progress = self.stats.started_at
         self._stop_requested = False
         self._seen_profile_keys: set[str] = set()
@@ -1867,14 +1869,20 @@ class SolverRunner:
                         self.stats.increment("solver_cases")
                         families_before = self.stats.get("word_families")
                         solver_failed = False
+                        family_iterator = None
                         try:
-                            family_iterator = iter(
-                                solver.solve(
-                                    solver_limits,
+                            if placement.length_sector:
+                                # Algebraic families are sector-independent;
+                                # decoration below still checks this placement's
+                                # strict/equality rows on every cache replay.
+                                family_iterator = iter(self._completed_word_cache.iterate(
+                                    (compiled, solver_limits, expansion_policy), solver, solver_limits,
                                     stop_predicate=should_stop_word_case,
-                                    family_predicate=mirror_family_admissible,
-                                )
-                            )
+                                    family_predicate=mirror_family_admissible))
+                            else:
+                                family_iterator = iter(solver.solve(
+                                    solver_limits, stop_predicate=should_stop_word_case,
+                                    family_predicate=mirror_family_admissible))
                             def register_family(family: object) -> None:
                                 self._set_stage(
                                     "family_processing",
@@ -2000,6 +2008,7 @@ class SolverRunner:
                                     assignment.canonical_key,
                                     placement.blocks,
                                     specialization.environment_map(),
+                                    length_sector=placement.length_sector,
                                 )
                                 formal_profile_id = "fp-" + key[:32]
                                 if bool(
@@ -2207,6 +2216,8 @@ class SolverRunner:
                                 },
                             )
 
+                        if family_iterator is not None and hasattr(family_iterator, "close"):
+                            family_iterator.close()
                         summary = solver.last_summary
                         if not solver_failed:
                             self.stats.increment(

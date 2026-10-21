@@ -28,7 +28,9 @@ class GraphLabSearchRequestTests(unittest.TestCase):
 
         self.assertEqual(request.policy, PolicyMode.PRIOR)
         self.assertEqual(request.region.mode, RegionMode.FULL)
-        self.assertEqual(request.arrangement, ArrangementStrategy.ENUMERATE)
+        self.assertEqual(
+            request.arrangement, ArrangementStrategy.JOINT_BACKTRACKING
+        )
 
     def test_cli_style_overrides_form_one_valid_typed_request(self) -> None:
         request = GraphLabSearchRequest.from_config({}).with_overrides(
