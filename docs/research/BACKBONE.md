@@ -28,6 +28,14 @@ interior-circumcenter trace lemma `RSS-TRACE-IC`, removing the earlier KLV trace
 premise from that draft. Independent review is pending; this is not an active
 code filter or a claim about all Stein tilings.
 
+The owner deferred independent review and selected generalization in
+[MATH-004](studies/MATH-004-multiple-orbit-boundary.md). Its
+[new draft](../stein_boundary_multiplicity.tex) gives weighted arc repetitions,
+a local mirror-capacity constraint and a pure-rotational-shell exclusion.
+The capacity bound does not use the connected-trace draft; the stronger
+boundary consequences explicitly do. No unconditional general Stein exclusion
+or automatic symmetry extension to inner tiles is asserted.
+
 ## Stable map of research areas (not the live question tree)
 
 The authoritative root-to-approach-to-study hierarchy is in
@@ -148,6 +156,14 @@ RSS-TRACE-IC + intrinsic rotation of the Stein center tile
 
 RSS-ORB + RSS-2ORB + intrinsic tile rotation
     +--> RSS-SECTOR ------> RSS-2ORB-EXCL (new proof draft; no code gate)
+
+Connected-trace premise (MATH-002 draft) + intrinsic tile rotation
+    +--> RSS-MULT (weighted repetitions for arbitrary orbit counts)
+    `--> RSS-ROT-SHELL (pure rotational shell needs extra interior tiles)
+Centered mirror pair + intrinsic rotation + disk containment
+    +--> RSS-MIRROR-CAP (no connected-trace premise)
+RSS-MULT + RSS-MIRROR-CAP
+    +--> RSS-MIRROR-ORB (conditional many-orbit lower bound)
 
 CHO-HUB / CHO-WORD -------> candidate early cyclic-hub rejection
 FPR-PER ------------------> proposed graph-only perimeter filter

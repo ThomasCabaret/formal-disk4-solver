@@ -5,19 +5,26 @@ every branch. Selection follows [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Current selection
 
-- Active iteration: none running. [MATH-002](studies/MATH-002-outer-trace-audit.md)
-  supplied a local area-free replacement in the interior-circumcenter class,
-  which contains all rotational Stein candidates considered in `MATH-003`.
-- Owning path: `R0 -> MATH-001 -> MATH-002`; cross-dependency served:
-  `R0 -> APP-IMP -> MATH-003`. No solver experiment or code change.
-- Next bounded action: critically review the integrated circumcenter/crosscut
-  and sector/lens proof before treating `k>=3` as accepted or changing code.
-  The draft no longer assumes the disputed outer-trace premises. The source
-  lemma's general area question remains unresolved outside the substitute's scope.
+- Active iteration: none running. [MATH-004](studies/MATH-004-multiple-orbit-boundary.md)
+  delivered weighted boundary repetitions, a local mirror-capacity bound and
+  a conditional outer-shell obstruction for arbitrary orbit counts.
+- Owning path: `R0 -> APP-IMP -> MATH-004`; sibling/dependencies: `MATH-003`
+  and `MATH-002`. The owner explicitly deferred independent review; those
+  results remain unaccepted drafts, not assumed certified theorems.
+- Next bounded action: study the orientation-preserving centered-match branch
+  with three moving orbits. Separate two outer plus one interior orbit from
+  three outer orbits in multiple direct matching classes. Seek a geometric
+  obstruction without assuming that shell symmetry preserves the inner
+  partition. If counting alone cannot advance, return to `APP-IMP`.
+  No solver experiment or code change.
+  The source lemma's general area question remains unresolved outside the substitute's scope.
   [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
   optional owner-mediated review, not submitted. Other approaches remain open.
-- Latest completed iteration: [MATH-002](studies/MATH-002-outer-trace-audit.md),
-  integrated into [the proof draft](../two_orbit_stein_obstruction.tex).
+- Latest completed iteration: [MATH-004](studies/MATH-004-multiple-orbit-boundary.md),
+  [conditional/general local proof drafts](../stein_boundary_multiplicity.tex).
+  Boundary counts retain the unaccepted connected-trace dependency; the local
+  mirror-capacity bound does not need it. Neither old nor new proofs are
+  independently accepted and no production filter changed.
 - Optional external audit: [EXT-MATH-001](contracts/EXT-MATH-001-stein-boundary-orbits.md)
   for `MATH-002`, ready for the owner to submit. No answer is assumed or required
   before continuing independent research.
@@ -36,7 +43,8 @@ studies can inform several branches through the cross-dependencies below.
 R0  Nontrivial monohedral tilings of the disk
 |
 +-- APP-IMP  Impossibility / classification under explicit hypotheses
-|   `-- MATH-003  Test the minimal two-orbit Stein architecture (restricted case)
+|   +-- MATH-003  Test the minimal two-orbit Stein architecture (restricted case)
+|   `-- MATH-004  Generalize circular-boundary constraints to multiple orbits
 |
 +-- APP-EXIST  Nonconstructive existence
 |
@@ -75,6 +83,7 @@ R0  Nontrivial monohedral tilings of the disk
 | `MATH-001` | supported-in-scope | `R0` | First [literature pass](LITERATURE_FRONTIER.md) and [study](studies/MATH-001-literature-frontier.md) completed: four primary sources and explicit search limitations. | Proof audits and a comprehensive literature frontier remain open; no complete classification asserted. |
 | `MATH-002` | supported-in-scope | `MATH-001` | [Replacement-proof draft](studies/MATH-002-outer-trace-audit.md): interior circumcenters imply connected outer traces; rotational Stein candidates have that property. The other two transport facts are locally derived too. | Independent review pending. The general published Jordan-boundary area question is not settled; code premise detectors are unaudited. Updated `EXT-MATH-002` ready, not submitted. |
 | `MATH-003` | supported-in-scope | `APP-IMP` | [Integrated proof draft](studies/MATH-003-two-orbit-stein.md): proposed exclusion of exactly two moving tile orbits for every `m>=2`, with candidate `N>=3m+1`; no additional outer-trace assumptions after `MATH-002`. | Independent review and novelty check pending; no production rejection. [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready. Do not automatically extend to three orbits or assume general Stein nonexistence. |
+| `MATH-004` | supported-in-scope | `APP-IMP` | [Multiple-orbit study](studies/MATH-004-multiple-orbit-boundary.md): weighted repetitions force one class of at least `ceil(1/r)` outer orbits; a centered mirror pair gives `r<=1/sqrt(F_m)` and, conditionally, at least `ceil(sqrt(F_m))` outer orbits. A pure rotational shell cannot be the entire noncentral tiling. | Owner deferred independent review. Boundary counts/shell exclusion explicitly assume connected traces; local mirror capacity does not. All are drafts, no code promotion. Next: three-orbit direct-match branch. |
 | `APPLIED-001` | proposed | `MATH-001` | For one audited result, implement or evaluate the premise detector and measure sound selectivity/cost. | Requires an audited theorem and a trusted positive-control pack. |
 | `ALG-001` | proposed | `APP-SEARCH` | Supporting comparison: formal-contour, incremental obligation, placement-first and constructive/constraint formulations. Deliver state, coverage and certificate analysis, not a large implementation. | Informs selection or creation of sibling approaches under `APP-SEARCH`. Empirical bottleneck claims need relevant evidence; no blanket witness-replay prerequisite. |
 | `ALG-002` | proposed | `ALG-001` | Implement the smallest discriminator for the most promising alternative and compare it on identical controls. | Requires `ALG-001` selection and controls of the actual compared algorithms. |

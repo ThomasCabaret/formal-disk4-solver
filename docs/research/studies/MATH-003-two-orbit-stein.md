@@ -1,5 +1,10 @@
 # MATH-003 — Can two moving orbits form a rotational Stein tiling?
 
+Continuation decision, 2026-10-21: the owner subsequently deferred independent
+review and selected [MATH-004](MATH-004-multiple-orbit-boundary.md), a conditional
+many-orbit generalization. The review-first recommendation below is historical,
+not the current target. This draft's acceptance status did not change.
+
 Update after the first iteration: [MATH-002](MATH-002-outer-trace-audit.md)
 supplied an area-free outer-trace proof for the interior-circumcenter class,
 which contains all rotational Stein candidates here. The integrated TeX no

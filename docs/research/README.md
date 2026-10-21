@@ -124,8 +124,12 @@ The initial inventory is complete; research continues through the live agenda.
 `SPEC-001` supplied the working problem contract; `MATH-001` supplied a first
 [literature map](LITERATURE_FRONTIER.md). The first
 [MATH-003 iteration](studies/MATH-003-two-orbit-stein.md) delivered a proposed
-two-orbit Stein exclusion; independent review is next, not a code change.
-No research computation is running from that study.
+two-orbit Stein exclusion. The owner then deferred independent review and
+selected generalization: [MATH-004](studies/MATH-004-multiple-orbit-boundary.md)
+delivered many-orbit boundary and mirror-capacity drafts. Next is the surviving
+orientation-preserving matching branch, not a code change. Earlier proof
+dependencies remain unaccepted and explicitly conditional where used.
+No research computation is running from those studies.
 The known-shape/placement replay proposal is withdrawn. Original-mathematics
 targets are traced in the agenda, with existing-lemma and new-proof audits
 available as optional external contracts.

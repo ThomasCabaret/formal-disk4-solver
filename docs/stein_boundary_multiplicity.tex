@@ -1,0 +1,250 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,amsthm}
+\usepackage[a4paper,margin=27mm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}[proposition]{Corollary}
+\newcommand{\Int}{\operatorname{int}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\Rot}{\operatorname{Rot}}
+\title{Boundary multiplicities and mirror capacity in rotational Stein tilings}
+\author{MATH-004 --- LLM-generated research draft}
+\date{21 October 2026}
+\begin{document}
+\maketitle
+
+\noindent\textbf{Status and dependency boundary.}
+These are proposed deductions, not independently accepted theorems or enabled
+software filters. The owner chose generalization instead of reviewing the
+earlier MATH-002/003 proofs. We do not use the two-orbit exclusion as a premise.
+Statements requiring connected outer traces explicitly assume \textup{(CT)}
+below. Removing that premise in the Stein setting relies on the unaccepted
+MATH-002 proof, not on an audit performed here. No novelty claim is made.
+
+\section{Setting and the precise generalization question}
+
+Let $D=\{x\in\mathbb R^2:|x|\leq1\}$ and $O=0$. Finitely many congruent
+compact Jordan regions tile $D$, with pairwise disjoint interiors and $N>1$.
+One tile $C$ has $O\in\Int C$. An actual rotation
+$R=\Rot_O(2\pi/m)$, $m\geq2$, permutes the tiles. Reflections are allowed;
+no prescribed graph, connected internal interfaces, boundary smoothness, or
+maximality of $m$ is assumed. This is a complete disk, not a free patch.
+
+The center tile is fixed by $R$ and every other tile omits $O$. Brouwer's fixed
+point theorem applied to any noncentral Jordan tile fixed by a nonidentity
+power of $R$ shows that all noncentral orbits have size $m$. Write
+$N=1+km$. Intrinsic order-$m$ symmetry of every tile follows by conjugating
+$R|_C$ with a congruence, including a reflected congruence.
+
+Put $r=\max_{x\in C}|x|$. A farthest-point rotation orbit has mean zero, so
+any enclosing disk of $C$ with center $a$ and radius $t$ satisfies
+$t^2\geq r^2+|a|^2$. Thus $O$ is its circumcenter and all tiles have common
+circumradius $r$ and an interior circumcenter. Moreover $r<1$: if $|u|=1$
+for $u\in C$, any congruence $f(x)=Qx+a$ from $C$ onto another tile gives
+\[
+ 1\geq\frac1m\sum_{j=0}^{m-1}|QR^ju+a|^2=1+|a|^2,
+\]
+so $a=0$, contradicting disjoint interiors. In particular
+$P(\conv C)\leq2\pi r<2\pi$, where $P$ denotes convex perimeter.
+
+For the boundary-counting statements, assume explicitly:
+\begin{quote}
+\textup{(CT)} Every nonempty tile intersection with $\partial D$ is a
+closed connected circular arc, possibly a singleton.
+\end{quote}
+The replacement argument in \texttt{two\_orbit\_stein\_obstruction.tex},
+Lemma \texttt{lem:circumtrace}, proposes to deduce (CT) in this setting;
+it remains unaccepted and is not revalidated by this note.
+
+An outer tile has a positive-length outer trace. Let $b\leq k$ be the number
+of its rotational orbits. Under (CT), their traces partition the circle up to
+finitely many endpoints. Indeed two Jordan tiles cannot both occupy the disk
+side of an open boundary subarc. Their total trace length is $2\pi$.
+
+\section{Weighted repetitions for arbitrarily many orbits}
+
+Choose one representative $T_i$ and congruence $f_i:C\to T_i$ for each
+outer orbit. Use $f_{ij}=R^jf_iR^{-j}$ for the other copies, and put
+\[
+ q_i=f_i^{-1}(O)\ne O,\qquad
+ A_i=f_i^{-1}(T_i\cap\partial D)
+     =C\cap\partial\overline B(q_i,1).
+\]
+We have $C\subset\overline B(q_i,1)$, and the other transported arcs in
+this orbit are $R^j A_i$ with supporting centers $R^j q_i$.
+
+Partition these $b$ representatives by $q_i\sim q_j$ if
+$q_i=R^\ell q_j$ for some integer $\ell$. Denote the classes by $a$, their
+sizes by $s_a$, and their common arc lengths by $\alpha_a>0$.
+This is a chart-dependent sufficient matching partition; it is not claimed
+to identify every centered congruence when the prototype has extra symmetries.
+Each class nevertheless contains genuinely centered-congruent outer orbits:
+if $q_j=R^\ell q_i$, then $f_jR^\ell f_i^{-1}$ fixes $O$ and maps
+$T_i$ onto $T_j$.
+
+\begin{proposition}[Weighted boundary multiplicity, conditional on (CT)]
+\label{prop:multiplicity}
+With these definitions,
+\[
+ m\sum_a s_a\alpha_a=2\pi,\qquad
+ m\sum_a\alpha_a\leq P(\conv C)\leq2\pi r.
+\]
+Consequently the arc-length-weighted mean multiplicity satisfies
+\[
+ \frac{\sum_a s_a\alpha_a}{\sum_a\alpha_a}\geq\frac1r,
+ \qquad
+ \max_a s_a\geq\left\lceil\frac1r\right\rceil,
+ \qquad b\geq\left\lceil\frac1r\right\rceil.
+\]
+The ceiling inequalities are non-strict at integer thresholds.
+\end{proposition}
+
+\begin{proof}
+Circle coverage proves the first equality. Every supporting disk above
+contains $C$, so its contact arc is on $\partial\conv C$. Equal supporting
+disks give the same complete arc. Distinct supporting circles cannot intersect
+in the relative interior of either arc: at a transverse crossing that arc
+would leave the other containing disk; distinct equal-radius tangent disks
+have only one common point, inconsistent with the interior of $C$.
+Thus different arcs meet only at endpoints.
+
+For each class there are exactly $m$ distinct supporting centers, since
+$q_i\ne O$. Different classes give disjoint sets of centers. The union of
+all distinct transported arcs therefore has length $m\sum_a\alpha_a$,
+bounded by convex perimeter. Dividing the two sums proves the weighted bound;
+an integer maximum is at least its ceiling. Also $\sum_a s_a=b$.
+\end{proof}
+
+For example, $r<1/2$ forces at least three outer orbits in a single such
+matching class, not merely three unrelated outer orbits. This is a conditional
+geometric requirement, not an immediately detectable contact-graph filter.
+
+\section{A local mirror constraint that needs no trace premise}
+
+Suppose an isometry $s$ fixes $O$, reverses orientation, and maps a noncentral
+tile $A$ to a tile $B$ in a different $R$-orbit. Then $s$ is reflection in a
+line through $O$. No assertion that $s$ preserves the whole tiling is needed.
+
+\begin{proposition}[Mirror capacity, without (CT)]\label{prop:mirror}
+For $m\geq3$, put
+\[
+ c_m=\cos(\pi/m),\qquad
+ \lambda_m=\frac{c_m}{\sin(\pi/(2m))},\qquad
+ F_m=1+\lambda_m^2+2\lambda_m c_m.
+\]
+The existence of the reflected pair above forces
+\[
+ r\leq F_m^{-1/2},\qquad N\geq F_m,
+ \qquad k\geq\left\lceil\frac{F_m-1}{m}\right\rceil.
+\]
+These necessary conditions allow additional interior and outer orbits, arbitrary
+internal contacts, and positive-area Jordan boundaries.
+\end{proposition}
+
+\begin{proof}
+The $m$ reflections $R^js$ send $A$ to distinct tiles $R^jB$. None of their
+axes can meet $\Int A$, since a fixed point would then belong to two tile
+interiors. Connectedness confines $\Int A$ to one component of the complement
+of these axes. Taking closures, $A$ lies in a closed wedge $W$ of angle
+$\pi/m$. This conclusion concerns $A$ only, not the entire tiling.
+
+Let $P\in\Int A$ be its circumcenter and $d=|P|$. The convex hull
+$K=\conv A$ contains the regular $m$-gon formed by the intrinsic rotation
+orbit of any farthest point at distance $r$ from $P$. Hence
+\[
+ \overline B(P,r c_m)\subset K\subset W.
+\]
+Set $\beta=\pi/(2m)$ and use wedge-bisector coordinates $P=(x,y)$.
+The two side-line distances give
+\[
+ x\sin\beta-|y|\cos\beta\geq r c_m,
+ \qquad d\geq x\geq\lambda_m r.
+\]
+Among the $m$ farthest-orbit directions, one makes angle at most $\pi/m$
+with the direction of $P$. Since its point is in $A\subset D$,
+\[
+ 1\geq d^2+r^2+2dr c_m\geq F_m r^2.
+\]
+This proves the circumradius bound. Each congruent tile is contained in a
+disk of area $\pi r^2$. Measure subadditivity, not equal tile-area sharing,
+gives $\pi\leq N\pi r^2$, hence $N\geq F_m$. Substituting $N=1+km$
+gives the stated orbit bound.
+\end{proof}
+
+\begin{corollary}[Boundary amplification, conditional on (CT)]
+\label{cor:amplification}
+If such a mirror pair exists, some transported-arc class satisfies
+\[
+ s_a\geq\left\lceil\sqrt{F_m}\right\rceil,
+ \qquad b\geq\left\lceil\sqrt{F_m}\right\rceil,
+ \qquad k\geq\left\lceil\sqrt{F_m}\right\rceil.
+\]
+The large matching class need not contain the original reflected pair.
+As $m\to\infty$, $\sqrt{F_m}/m\to2/\pi$ and
+$F_m/m^2\to4/\pi^2$.
+\end{corollary}
+
+\begin{proof}
+Combine Propositions \ref{prop:multiplicity} and \ref{prop:mirror}.
+The limits follow from $m\sin(\pi/(2m))\to\pi/2$ and
+$\cos(\pi/m)\to1$.
+\end{proof}
+
+\section{A rotational outer shell cannot be promoted silently}
+
+\begin{proposition}[A pure rotational shell needs additional interior tiles]
+\label{prop:shell}
+Assume (CT). It is impossible for every noncentral tile to be outer and
+for all these tiles to be rotations about $O$ of one fixed tile.
+\end{proposition}
+
+\begin{proof}
+Let $M=N-1$. All $M$ traces have the same positive length, hence length
+$2\pi/M$, and partition the circle into equal successive arcs. The unique
+rotation $\rho$ by $2\pi/M$ mapping one such arc to the next maps the
+corresponding tiles: each is a centered rotation of the fixed tile, and a
+proper positive circular arc determines that rotation uniquely.
+Thus $\rho$ permutes all noncentral tiles. Their union is invariant; the
+closure of its complement in $D$ is $C$, so $\rho(C)=C$ as well.
+
+The whole tiling now has order-$M$ rotational symmetry with just one
+noncentral orbit. Proposition \ref{prop:multiplicity}, applied to this
+larger rotation, would require $1\geq1/r$, contrary to $r<1$.
+\end{proof}
+
+With additional interior tiles only their union, not their individual
+partition, is forced to inherit this outer-shell rotation. In particular,
+two rotationally matched outer orbits can create an order-$2m$ outer shell
+without proving that the center tile or the inner tile partition has that
+symmetry. That missing implication is not supplied by this note.
+
+\section{Scope, controls and next mathematical decision}
+
+The mirror capacity applies even if the reflected pair is not outer. It uses
+no connected-trace lemma, no sector-endpoint coincidence and no two-orbit
+exclusion. The stronger matching-class count and pure-shell exclusion retain
+the explicit (CT) dependency. None of these implies that every forced centered
+matching is reflective, or rules out all rotational Stein tilings.
+
+For $m=3$, an equilateral triangle placed with one vertex at $O$ and opposite
+edge on the outer chord of a $\pi/3$ wedge has circumradius $1/\sqrt3$ and
+attains the mirror-capacity geometry. It is not a Stein outer tile, since it
+contains $O$; it checks the constants, not the existence of a tiling. For
+$m=2$, $c_m=0$ and the inscribed-polygon disk degenerates: no useful bound is
+claimed here in that case. The earlier separate lens draft is not used.
+
+The next bounded question is the orientation-preserving branch with three
+moving orbits. In particular, for $m=5$ the mirror branch would require at
+least four outer orbits by Corollary \ref{cor:amplification}; a hypothetical
+three-orbit candidate would therefore have only orientation-preserving
+centered matchings. Here the threshold does not depend on rounding:
+$F_5=(13+5\sqrt5)/2>9$, hence $\sqrt{F_5}>3$.
+Surviving possibilities include two outer orbits and one
+interior orbit, or three outer orbits not all in one direct matching class.
+Neither is excluded by counting alone. Seek the missing geometric constraint
+there rather than assuming the outer-shell symmetry extends to the interior.
+
+Independent review and a focused novelty check remain separate pending work.
+No experimental solver behavior is used to infer any of these statements.
+\end{document}

@@ -1,5 +1,11 @@
 # MATH-002 — Outer-trace connectedness and the area-equality question
 
+Continuation decision, 2026-10-21: the owner subsequently deferred independent
+review and selected [MATH-004](MATH-004-multiple-orbit-boundary.md). New work
+retains connected traces as an explicit conditional premise where needed;
+this replacement proof is still not independently accepted. The review-first
+recommendation at the end records the earlier decision, not a current blocker.
+
 ## Identity
 
 - Node / parent: `MATH-002` / `MATH-001`; supporting mathematical audit.

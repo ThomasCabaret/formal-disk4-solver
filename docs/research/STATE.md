@@ -57,8 +57,28 @@ finite numerical identity checks are algebra sanity checks, not proof
 certificates; no numerical test is claimed to validate the new topology proof.
 [EXT-MATH-002](contracts/EXT-MATH-002-two-orbit-obstruction.md) is ready for
 optional independent review, not submitted. No new rejection was enabled in code;
-no discovery run or performance benchmark was launched. The larger-orbit and
-asymmetric Stein questions remain untouched.
+no discovery run or performance benchmark was launched. That iteration did not
+address the larger-orbit or asymmetric Stein questions.
+
+### Many-orbit generalization: MATH-004
+
+At the owner's request, independent review is deferred, not silently considered
+complete. [MATH-004](studies/MATH-004-multiple-orbit-boundary.md) delivers
+[proposed weighted boundary and mirror-capacity constraints](../stein_boundary_multiplicity.tex).
+Boundary repetitions explicitly assume connected traces from the earlier
+unaccepted draft. A separate local argument needs no such premise: a centered
+reflection between different moving orbits confines a tile to a narrow wedge,
+bounding its circumradius and forcing a quadratic necessary tile count as
+symmetry order grows. Combined conditionally with the boundary count, it forces
+at least `ceil(sqrt(F_m))` outer orbits. This generalizes a constraint, not the
+full nonexistence theorem.
+
+The exact obstruction to copying the old global argument is now explicit:
+an outer-shell symmetry may preserve the remaining region without preserving
+its inner tile partition. The orientation-preserving centered-match branch
+survives, particularly with three moving orbits. That is the next proposed
+mathematical target. No code, discovery run, checkpoint or performance evidence
+changed; all statements remain proof drafts, and novelty is not certified.
 
 ## What the history supports
 

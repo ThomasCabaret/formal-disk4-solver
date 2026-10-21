@@ -384,3 +384,7 @@ If the work is incomplete, leave the study resumable: exact stopping point,
 remaining uncertainty and next bounded action. Make local commits according to
 the version-control policy above. Deleting historical data or launching an
 unbounded run still requires the user's authorization.
+
+End each user-facing research report with the proposed next bounded action,
+its benefit to the parent question, and any condition that would redirect it.
+Do not make the owner ask for the continuation plan after every result.

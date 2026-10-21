@@ -247,3 +247,39 @@ the next check rather than extend the orbit count or change code.**
   complete replacement argument. Next: independent review of the integrated
   proof, especially trapping of the connected interior and sector geometry.
   Other root approaches remain available; no discovery computation was launched.
+
+## 2026-10-21 — Generalize before independent review, at the owner's request
+
+**Decision `D-014`: defer independent review without promoting the existing
+proofs; investigate MATH-004 and retain the resulting many-orbit constraints
+as explicitly scoped drafts. Next study the surviving direct-match branch.**
+
+- Path: `R0 -> APP-IMP -> MATH-004`, sibling of `MATH-003` and conditional
+  user of `MATH-002`. The owner overrode D-013's review-first continuation.
+  No independent acceptance or external answer is inferred from that choice.
+- [New source](../stein_boundary_multiplicity.tex) and
+  [study](studies/MATH-004-multiple-orbit-boundary.md) derive a weighted
+  repetition inequality for arbitrary orbit counts. Connected outer traces
+  are an explicit premise; the previous draft proposes to discharge it but
+  was not independently checked this iteration.
+- A separate local deduction does not need connected traces: a centered
+  mirror pair between different moving orbits confines a tile between the
+  rotated reflection axes. Its intrinsic regular polygon and disk containment
+  bound its circumradius by `1/sqrt(F_m)` and force `N>=F_m`.
+- Combining the bounds conditionally forces one matching class and at least
+  `ceil(sqrt(F_m))` outer orbits. For `m=5`, three moving orbits therefore
+  cannot admit such a mirror pair; direct matches remain an open alternative.
+  No universal Stein nonexistence, independent proof review or certified
+  literature novelty is claimed.
+- A further conditional deduction excludes the case in which all noncentral
+  tiles are outer and centered rotations of one tile. Additional interior
+  tiles destroy the unique-central-remainder argument: shell symmetry fixes
+  their union, not necessarily their partition. This is the precise missing
+  implication, not an assumed global symmetry.
+- Next bounded action: investigate the three-moving-orbit orientation-preserving
+  branch, separating inner-orbit and multiple-outer-class possibilities. If no
+  geometric constraint beyond counting is found, reassess at `APP-IMP` rather
+  than extend arithmetic indefinitely. Other root approaches remain open.
+- The methodology now explicitly asks every research report to finish with
+  the next bounded action and its parent benefit, as requested by the owner.
+  No solver code, runs, histories or checkpoints changed; no push.

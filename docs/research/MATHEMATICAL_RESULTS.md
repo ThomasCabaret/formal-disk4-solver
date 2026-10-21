@@ -67,6 +67,33 @@ Removing a premise reservation is not independent proof certification.
 The exclusion does not address three or more moving orbits, asymmetric Stein
 tilings, free-boundary patches, or general weaker nontrivial disk tilings.
 
+## MATH-004 — many-orbit generalization, all proof drafts
+
+The owner explicitly deferred independent review of MATH-002/003 and selected
+generalization. [The study](studies/MATH-004-multiple-orbit-boundary.md) and
+[standalone source](../stein_boundary_multiplicity.tex) distinguish the explicit
+connected-outer-trace premise `(CT)` from local geometry that does not need it.
+No previous draft or new deduction is promoted to independent acceptance.
+None is used in code; novelty has not been certified.
+
+Let `m>=2` be the actual global rotation order, `N=1+km`, `b<=k` the number
+of positive-outer-trace orbits, and `r<1` the common circumradius in a unit disk.
+For `m>=3`, set `c=cos(pi/m)`, `lambda=c/sin(pi/(2m))`,
+`F_m=1+lambda^2+2*lambda*c`.
+
+| ID | Proposed result | Domain and dependencies | Proof status / label |
+| --- | --- | --- | --- |
+| `RSS-MULT` | An arc-length-weighted mean matching multiplicity is at least `1/r`; one class contains at least `ceil(1/r)` outer orbits. | Rotational Stein setting plus explicit `(CT)`. Supporting centers are grouped modulo intrinsic `C_m` after equivariant charts; this is sufficient matching, not a complete classifier of all centered congruences. | Conditional proof draft, `prop:multiplicity`; no two-orbit exclusion is used. |
+| `RSS-MIRROR-CAP` | A center-fixing mirror match between tiles in different moving orbits implies `r<=1/sqrt(F_m)` and `N>=F_m`. | `m>=3`; congruent Jordan tiles; actual rotation and reflection. Pair need not be outer. Local axis confinement, regular-polygon inradius and disk containment; **no `(CT)` or two-orbit exclusion**. | Local proof draft, `prop:mirror`. Area conclusion uses subadditivity, not equal tile-area shares. |
+| `RSS-MIRROR-ORB` | Such a mirror pair forces a matching class and at least `ceil(sqrt(F_m))` outer orbits; asymptotically at least `(2/pi+o(1))*m`. | `RSS-MIRROR-CAP` plus `RSS-MULT`, hence conditional on `(CT)`. The large matching class need not contain the original mirror pair. | Conditional proof draft, `cor:amplification`. At `m=5`, `F_m=(13+5*sqrt(5))/2>9` excludes mirror matching when `k=3`, not the whole three-orbit class. |
+| `RSS-ROT-SHELL` | All noncentral tiles cannot simultaneously be outer and rotations about the big disk center of one fixed tile. | Rotational Stein setting plus `(CT)`. Equal arcs create a larger rotation preserving the unique central remainder; that gives one moving orbit and contradicts `RSS-MULT`. | Conditional proof draft, `prop:shell`. Additional interior tiles invalidate the unique-remainder step; no extension to them is claimed. |
+
+The mirror capacity gives a quadratic necessary total-tile count on its branch,
+not a general computational complexity bound. The direct-match alternatives
+with multiple arc classes or an inner tile partition remain open. Independent
+review is deferred by the owner, not completed or required before conditional
+mathematical exploration; no production rejection may assume acceptance.
+
 ## Priority 1: claims with direct implementation dependencies
 
 | ID | Claim recorded by the source | Exact scope to preserve | Source and label | Implementation evidence | Review status |
